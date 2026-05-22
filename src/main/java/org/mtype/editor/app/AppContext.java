@@ -8,9 +8,11 @@ import org.mtype.editor.ui.output.OutputPane;
 import org.mtype.editor.ui.status.StatusBar;
 import org.mtype.editor.ui.tree.WorkspaceTreeView;
 import org.mtype.editor.workspace.Workspace;
+import org.mtype.editor.workspace.WorkspaceSettings;
 
 public class AppContext {
     private Workspace workspace;
+    private WorkspaceSettings settings = WorkspaceSettings.defaults();
     private LspBridge lspBridge;
     private RunController runController;
     private EditorTabPane tabPane;
@@ -20,6 +22,7 @@ public class AppContext {
     private GitChangesView gitChangesView;
 
     public Workspace getWorkspace() { return workspace; }
+    public WorkspaceSettings getSettings() { return settings; }
     public LspBridge getLspBridge() { return lspBridge; }
     public RunController getRunController() { return runController; }
     public EditorTabPane getTabPane() { return tabPane; }
@@ -29,6 +32,7 @@ public class AppContext {
     public GitChangesView getGitChangesView() { return gitChangesView; }
 
     public void setWorkspace(Workspace w) { this.workspace = w; }
+    public void setSettings(WorkspaceSettings s) { this.settings = s != null ? s : WorkspaceSettings.defaults(); }
     public void setLspBridge(LspBridge b) { this.lspBridge = b; }
     public void setRunController(RunController r) { this.runController = r; }
     public void setTabPane(EditorTabPane p) { this.tabPane = p; }

@@ -8,13 +8,21 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+/**
+ * Loads and saves user-global editor settings.
+ * Path: %USERPROFILE%\.mtype-editor\settings.json
+ */
 public final class SettingsStore {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private SettingsStore() {}
 
-    public static WorkspaceSettings load(Path workspaceRoot) {
-        Path file = workspaceRoot.resolve(".editor").resolve("settings.json");
+    public static Path settingsFile() {
+        return Path.of(System.getProperty("user.home"), ".mtype-editor", "settings.json");
+    }
+
+    public static WorkspaceSettings load() {
+        Path file = settingsFile();
         if (!Files.isRegularFile(file)) {
             return WorkspaceSettings.defaults();
         }
@@ -30,10 +38,9 @@ public final class SettingsStore {
         }
     }
 
-    public static void save(Path workspaceRoot, WorkspaceSettings settings) throws IOException {
-        Path dir = workspaceRoot.resolve(".editor");
-        Files.createDirectories(dir);
-        Path file = dir.resolve("settings.json");
+    public static void save(WorkspaceSettings settings) throws IOException {
+        Path file = settingsFile();
+        Files.createDirectories(file.getParent());
         Files.writeString(file, GSON.toJson(settings), StandardCharsets.UTF_8);
     }
 }

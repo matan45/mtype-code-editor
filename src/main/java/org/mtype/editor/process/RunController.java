@@ -31,7 +31,7 @@ public class RunController {
             ctx.getStatusBar().setMessage("No workspace open");
             return;
         }
-        WorkspaceSettings settings = ws.getSettings();
+        WorkspaceSettings settings = ctx.getSettings();
         String exe = settings.toolchain.interpreter;
 
         ProcessBuilder pb = new ProcessBuilder(exe, file.toString())

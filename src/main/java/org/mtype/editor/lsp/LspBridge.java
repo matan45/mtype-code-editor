@@ -80,7 +80,7 @@ public class LspBridge {
     public synchronized void start(Workspace ws) throws IOException {
         stop();
 
-        String lspExe = ws.getSettings().toolchain.languageServer;
+        String lspExe = ctx.getSettings().toolchain.languageServer;
         ProcessBuilder pb = new ProcessBuilder(lspExe, "--stdio")
                 .directory(ws.getRoot().toFile())
                 .redirectErrorStream(false);

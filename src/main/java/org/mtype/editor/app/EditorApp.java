@@ -50,6 +50,7 @@ public class EditorApp extends Application {
         this.stage = stage;
         loadBundledFonts();
         ctx = new AppContext();
+        ctx.setSettings(SettingsStore.load());
 
         StatusBar status = new StatusBar();
         ctx.setStatusBar(status);
@@ -132,10 +133,14 @@ public class EditorApp extends Application {
         save.setAccelerator(new KeyCodeCombination(KeyCode.S, KeyCombination.SHORTCUT_DOWN));
         save.setOnAction(e -> ctx.getTabPane().saveActive());
 
+        MenuItem settings = new MenuItem("Settings...");
+        settings.setAccelerator(new KeyCodeCombination(KeyCode.COMMA, KeyCombination.SHORTCUT_DOWN));
+        settings.setOnAction(e -> openSettings());
+
         MenuItem exit = new MenuItem("Exit");
         exit.setOnAction(e -> { shutdown(); stage.close(); });
 
-        file.getItems().addAll(openFolder, save, new SeparatorMenuItem(), exit);
+        file.getItems().addAll(openFolder, save, new SeparatorMenuItem(), settings, new SeparatorMenuItem(), exit);
 
         Menu code = new Menu("Code");
         MenuItem format = new MenuItem("Format Document");
@@ -162,14 +167,27 @@ public class EditorApp extends Application {
         return mb;
     }
 
+    private void openSettings() {
+        org.mtype.editor.ui.settings.SettingsDialog dlg =
+                new org.mtype.editor.ui.settings.SettingsDialog(stage, ctx.getSettings());
+        dlg.showAndWait().ifPresent(updated -> {
+            ctx.setSettings(updated);
+            try {
+                SettingsStore.save(updated);
+                ctx.getStatusBar().setMessage("Settings saved — restart to apply fonts/theme/LSP path");
+            } catch (java.io.IOException ex) {
+                ctx.getStatusBar().setMessage("Save failed: " + ex.getMessage());
+            }
+        });
+    }
+
     private void openFolder() {
         DirectoryChooser dc = new DirectoryChooser();
         dc.setTitle("Open Folder");
         File chosen = dc.showDialog(stage);
         if (chosen == null) return;
         Path root = chosen.toPath();
-        WorkspaceSettings settings = SettingsStore.load(root);
-        Workspace ws = new Workspace(root, settings);
+        Workspace ws = new Workspace(root);
         ctx.openWorkspace(ws);
         stage.setTitle("mType Editor - " + root.getFileName());
     }

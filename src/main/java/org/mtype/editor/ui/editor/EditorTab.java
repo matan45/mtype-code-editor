@@ -147,6 +147,25 @@ public class EditorTab extends Tab {
     public boolean isDirty() { return dirty.get(); }
 
     public void save() {
+        boolean formatFirst = ctx.getSettings() != null
+                && ctx.getSettings().editor != null
+                && ctx.getSettings().editor.formatOnSave;
+        LspBridge lsp = ctx.getLspBridge();
+        if (formatFirst && lsp != null && lsp.isReady()) {
+            lsp.format(path, 4, true).thenAcceptAsync(edits -> {
+                if (edits != null && !edits.isEmpty()) {
+                    LspEdits.applyToCodeArea(codeArea, edits);
+                    lastDiagnosticSpans = null;
+                    applyHighlightingNow();
+                }
+                writeToDisk();
+            }, Platform::runLater);
+            return;
+        }
+        writeToDisk();
+    }
+
+    private void writeToDisk() {
         try {
             Files.writeString(path, codeArea.getText(), StandardCharsets.UTF_8);
             dirty.set(false);

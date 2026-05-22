@@ -28,9 +28,10 @@ public class WorkspaceSettings {
     }
 
     public static class EditorPrefs {
-        public String fontFamily = "Consolas";
+        public String fontFamily = "JetBrains Mono";
         public int fontSize = 14;
         public String theme = "dark";
+        public boolean formatOnSave = false;
 
         public static EditorPrefs defaults() {
             return new EditorPrefs();
