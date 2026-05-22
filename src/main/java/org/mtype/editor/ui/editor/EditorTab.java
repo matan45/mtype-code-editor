@@ -753,6 +753,7 @@ public class EditorTab extends Tab {
             codeArea.replaceText("");
             ctx.getStatusBar().setMessage("Open failed: " + ex.getMessage());
         }
+        codeArea.getUndoManager().forgetHistory();
     }
 
     private void markDirty() {
