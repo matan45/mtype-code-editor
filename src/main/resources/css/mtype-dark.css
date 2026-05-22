@@ -86,6 +86,7 @@
     -fx-background-color: #21252b;
     -fx-text-fill: #abb2bf;
     -fx-padding: 2 4 2 4;
+    -fx-graphic-text-gap: 6;
 }
 .tree-cell:filled:selected {
     -fx-background-color: #3e4451;

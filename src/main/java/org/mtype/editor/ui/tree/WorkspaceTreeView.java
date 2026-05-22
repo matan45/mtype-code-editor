@@ -15,7 +15,6 @@ import java.nio.file.Path;
 import java.util.Comparator;
 
 public class WorkspaceTreeView extends TreeView<Path> {
-    private static final String[] ALLOWED_EXTENSIONS = {".mt", ".mtc", ".mtproj", ".mtworkspace"};
     private final AppContext ctx;
 
     public WorkspaceTreeView(AppContext ctx) {
@@ -44,13 +43,6 @@ public class WorkspaceTreeView extends TreeView<Path> {
         });
     }
 
-    private static boolean acceptFile(Path p) {
-        String name = p.getFileName().toString().toLowerCase();
-        for (String ext : ALLOWED_EXTENSIONS) {
-            if (name.endsWith(ext)) return true;
-        }
-        return false;
-    }
 
     private static class LazyTreeItem extends TreeItem<Path> {
         private boolean loaded;
@@ -83,9 +75,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
                 for (Path child : ds) {
                     String name = child.getFileName().toString();
                     if (name.startsWith(".")) continue;
-                    if (Files.isDirectory(child) || acceptFile(child)) {
-                        children.add(child);
-                    }
+                    children.add(child);
                 }
                 children.sort(Comparator
                         .comparing((Path p) -> !Files.isDirectory(p))
@@ -99,17 +89,46 @@ public class WorkspaceTreeView extends TreeView<Path> {
     }
 
     private static class FileTreeCell extends TreeCell<Path> {
+        private final javafx.beans.value.ChangeListener<Boolean> expandListener =
+                (obs, oldV, newV) -> refreshIcon();
+        private TreeItem<Path> watchedItem;
+
         @Override
         protected void updateItem(Path item, boolean empty) {
             super.updateItem(item, empty);
+
+            // Detach old expand listener if the item changed
+            if (watchedItem != null) {
+                watchedItem.expandedProperty().removeListener(expandListener);
+                watchedItem = null;
+            }
+
             if (empty || item == null) {
                 setText(null);
                 setGraphic(null);
                 return;
             }
+
+            TreeItem<Path> ti = getTreeItem();
+            if (ti != null && Files.isDirectory(item)) {
+                ti.expandedProperty().addListener(expandListener);
+                watchedItem = ti;
+            }
+
             String name = item.getFileName() == null ? item.toString() : item.getFileName().toString();
-            String icon = Files.isDirectory(item) ? "📁 " : "📄 ";
-            setText(icon + name);
+            setText(name);
+            refreshIcon();
+        }
+
+        private void refreshIcon() {
+            Path item = getItem();
+            if (item == null) {
+                setGraphic(null);
+                return;
+            }
+            TreeItem<Path> ti = getTreeItem();
+            boolean expanded = ti != null && ti.isExpanded();
+            setGraphic(IconFactory.iconForPath(item, expanded));
         }
     }
 }
