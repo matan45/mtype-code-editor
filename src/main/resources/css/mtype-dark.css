@@ -1,5 +1,5 @@
 /* ===========================================================
-   mType Dark — Atom One Dark palette
+   mType Dark - Atom One Dark palette
    ported from C:\matan\mType\mtype-vscode-extension\themes\mtype-dark-theme.json
    =========================================================== */
 
@@ -10,6 +10,8 @@
     -fx-text-fill: #abb2bf;
     -fx-focus-color: transparent;
     -fx-faint-focus-color: transparent;
+    -fx-font-family: "Segoe UI", "Inter", "Arial", sans-serif;
+    -fx-font-size: 12.5;
 }
 
 .label, .menu, .menu-item, .check-menu-item,
@@ -19,22 +21,26 @@
 
 .menu-bar {
     -fx-background-color: #21252b;
+    -fx-padding: 0;
 }
 
 .menu-bar > .menu > .label {
     -fx-text-fill: #abb2bf;
+    -fx-padding: 4 9 4 9;
 }
 
 .tool-bar {
     -fx-background-color: #21252b;
-    -fx-padding: 4 6 4 6;
+    -fx-border-color: #181a1f transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 5 8 5 8;
 }
 
 .button {
     -fx-background-color: #3a3f4b;
     -fx-text-fill: #abb2bf;
     -fx-background-radius: 3;
-    -fx-padding: 4 10 4 10;
+    -fx-padding: 4 11 4 11;
 }
 .button:hover {
     -fx-background-color: #4b5263;
@@ -49,7 +55,7 @@
 }
 .split-pane > .split-pane-divider {
     -fx-background-color: #181a1f;
-    -fx-padding: 0 1 0 1;
+    -fx-padding: 0 1.25 0 1.25;
 }
 
 /* ----- Tabs ----- */
@@ -58,11 +64,13 @@
 }
 .tab-pane > .tab-header-background {
     -fx-background-color: #21252b;
+    -fx-border-color: transparent transparent #181a1f transparent;
+    -fx-border-width: 0 0 1 0;
 }
 .tab-pane > .tab-header-area > .headers-region > .tab {
     -fx-background-color: #21252b;
     -fx-background-insets: 0;
-    -fx-padding: 4 12 4 12;
+    -fx-padding: 5 12 5 12;
 }
 .tab-pane > .tab-header-area > .headers-region > .tab:selected {
     -fx-background-color: #282c34;
@@ -71,6 +79,7 @@
 }
 .tab-pane > .tab-header-area > .headers-region > .tab .tab-label {
     -fx-text-fill: #abb2bf;
+    -fx-font-size: 12;
 }
 .tab-pane > .tab-header-area > .headers-region > .tab:selected .tab-label {
     -fx-text-fill: #ffffff;
@@ -85,8 +94,9 @@
 .tree-cell {
     -fx-background-color: #21252b;
     -fx-text-fill: #abb2bf;
-    -fx-padding: 2 4 2 4;
-    -fx-graphic-text-gap: 6;
+    -fx-padding: 3 8 3 8;
+    -fx-graphic-text-gap: 7;
+    -fx-font-size: 12.5;
 }
 .tree-cell:filled:selected {
     -fx-background-color: #3e4451;
@@ -94,6 +104,117 @@
 }
 .tree-cell:filled:hover {
     -fx-background-color: #2c313c;
+}
+
+/* ----- Side tool panel ----- */
+.mt-side-panel {
+    -fx-background-color: #21252b;
+    -fx-border-color: transparent #181a1f transparent transparent;
+    -fx-border-width: 0 1 0 0;
+}
+.mt-panel-header {
+    -fx-background-color: #21252b;
+    -fx-border-color: transparent transparent #181a1f transparent;
+    -fx-border-width: 0 0 1 0;
+}
+.mt-panel-title {
+    -fx-text-fill: #ffffff;
+    -fx-font-size: 12;
+    -fx-font-weight: bold;
+}
+.mt-panel-button {
+    -fx-background-color: transparent;
+    -fx-border-color: #3e4451;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+    -fx-text-fill: #abb2bf;
+    -fx-font-size: 11.5;
+    -fx-padding: 3 8 3 8;
+}
+.mt-panel-button:hover {
+    -fx-background-color: #2c313c;
+    -fx-text-fill: #ffffff;
+}
+.mt-activity-bar {
+    -fx-background-color: #21252b;
+    -fx-border-color: transparent #181a1f transparent transparent;
+    -fx-border-width: 0 1 0 0;
+    -fx-padding: 8 0 0 0;
+    -fx-spacing: 8;
+    -fx-pref-width: 44;
+    -fx-min-width: 44;
+    -fx-max-width: 44;
+}
+.mt-activity-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 0;
+    -fx-border-color: transparent;
+    -fx-padding: 6 6 6 6;
+    -fx-min-width: 44;
+    -fx-pref-width: 44;
+    -fx-min-height: 44;
+    -fx-pref-height: 44;
+    -fx-cursor: hand;
+}
+.mt-activity-button:hover {
+    -fx-background-color: #2c313c;
+}
+.mt-activity-button:selected {
+    -fx-background-color: #2c313c;
+    -fx-border-color: transparent transparent transparent #528bff;
+    -fx-border-width: 0 0 0 2;
+}
+.mt-activity-graphic {
+    -fx-scale-x: 0.9;
+    -fx-scale-y: 0.9;
+}
+.mt-activity-icon {
+    -fx-fill: transparent;
+    -fx-stroke: #636d83;
+    -fx-stroke-width: 2.2;
+    -fx-stroke-line-cap: round;
+    -fx-stroke-line-join: round;
+}
+.mt-activity-icon-muted {
+    -fx-fill: transparent;
+    -fx-stroke: #636d83;
+    -fx-stroke-width: 1.8;
+    -fx-stroke-line-cap: round;
+    -fx-stroke-line-join: round;
+}
+.mt-activity-button:hover .mt-activity-icon,
+.mt-activity-button:hover .mt-activity-icon-muted,
+.mt-activity-button:selected .mt-activity-icon,
+.mt-activity-button:selected .mt-activity-icon-muted {
+    -fx-stroke: #abb2bf;
+}
+
+/* ----- Git panel ----- */
+.mt-git-view {
+    -fx-background-color: #21252b;
+}
+.mt-empty-state {
+    -fx-background-color: #21252b;
+    -fx-text-fill: #636d83;
+    -fx-alignment: top-left;
+    -fx-padding: 14 12 0 12;
+    -fx-font-size: 12.5;
+}
+.mt-git-tree {
+    -fx-background-color: #21252b;
+    -fx-control-inner-background: #21252b;
+}
+.mt-git-tree .tree-cell.mt-git-group {
+    -fx-text-fill: #636d83;
+    -fx-font-size: 11.5;
+    -fx-font-weight: bold;
+    -fx-padding: 7 8 3 8;
+}
+.mt-git-tree .tree-cell.mt-git-file {
+    -fx-text-fill: #abb2bf;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 12;
+    -fx-padding: 4 8 4 14;
 }
 
 /* ----- Read-only output panels ----- */
@@ -104,7 +225,7 @@
 }
 .mt-output {
     -fx-font-family: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
-    -fx-font-size: 12.5;
+    -fx-font-size: 12;
     -fx-background-color: #282c34;
     -fx-text-fill: #abb2bf;
 }
@@ -127,10 +248,20 @@
 .styled-text-area {
     -fx-background-color: #282c34;
     -fx-font-family: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", "Consolas", "Courier New", monospace;
-    -fx-font-size: 14;
+    -fx-font-size: 14.25;
 }
 
-/* Default text fill — applied to every Text node RichTextFX renders */
+.code-area .paragraph-box,
+.styled-text-area .paragraph-box {
+    -fx-background-color: #282c34;
+}
+
+.code-area .paragraph-box:has-caret,
+.styled-text-area .paragraph-box:has-caret {
+    -fx-background-color: #2c313c;
+}
+
+/* Default text fill - applied to every Text node RichTextFX renders */
 .styled-text-area .text,
 .code-area .text,
 .styled-text-area > .scroll-pane > .viewport > * > .paragraph-box > .paragraph-text > .text {
@@ -155,8 +286,15 @@
     -fx-text-fill: #636d83;
     -fx-background-color: #282c34;
     -fx-font-family: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
-    -fx-font-size: 12.5;
-    -fx-padding: 0 10 0 8;
+    -fx-font-size: 12;
+    -fx-alignment: center-right;
+    -fx-min-width: 44;
+    -fx-pref-width: 44;
+    -fx-padding: 0 11 0 6;
+}
+.paragraph-box:has-caret .lineno {
+    -fx-text-fill: #abb2bf;
+    -fx-background-color: #2c313c;
 }
 
 /* ===========================================================
@@ -228,14 +366,14 @@
     -fx-background-color: #21252b;
     -fx-border-color: #181a1f;
     -fx-border-width: 1;
-    -fx-padding: 2;
+    -fx-padding: 4;
 }
 .menu-item {
-    -fx-padding: 3 12 3 12;
+    -fx-padding: 5 16 5 12;
 }
 .menu-item .label {
     -fx-text-fill: #abb2bf;
-    -fx-font-family: "JetBrains Mono", "Consolas", monospace;
+    -fx-font-family: "Segoe UI", "Inter", "Arial", sans-serif;
     -fx-font-size: 12.5;
 }
 .menu-item:focused {

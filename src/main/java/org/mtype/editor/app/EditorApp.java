@@ -3,23 +3,34 @@ package org.mtype.editor.app;
 import javafx.application.Application;
 import javafx.geometry.Orientation;
 import javafx.scene.Scene;
-import javafx.scene.text.Font;
+import javafx.scene.Group;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.ToggleButton;
+import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.ToolBar;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
+import javafx.scene.shape.Circle;
+import javafx.scene.shape.Line;
+import javafx.scene.shape.SVGPath;
+import javafx.scene.text.Font;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.process.RunController;
 import org.mtype.editor.ui.editor.EditorTabPane;
+import org.mtype.editor.ui.git.GitChangesView;
 import org.mtype.editor.ui.output.OutputPane;
 import org.mtype.editor.ui.status.StatusBar;
 import org.mtype.editor.ui.tree.WorkspaceTreeView;
@@ -52,6 +63,9 @@ public class EditorApp extends Application {
         WorkspaceTreeView tree = new WorkspaceTreeView(ctx);
         ctx.setTreeView(tree);
 
+        GitChangesView gitChanges = new GitChangesView(ctx);
+        ctx.setGitChangesView(gitChanges);
+
         LspBridge lsp = new LspBridge(ctx);
         ctx.setLspBridge(lsp);
 
@@ -81,9 +95,11 @@ public class EditorApp extends Application {
         verticalSplit.setOrientation(Orientation.VERTICAL);
         verticalSplit.setDividerPositions(0.72);
 
-        SplitPane mainSplit = new SplitPane(tree, verticalSplit);
+        Node sidePanel = buildSidePanel(tree, gitChanges);
+
+        SplitPane mainSplit = new SplitPane(sidePanel, verticalSplit);
         mainSplit.setOrientation(Orientation.HORIZONTAL);
-        mainSplit.setDividerPositions(0.2);
+        mainSplit.setDividerPositions(0.22);
 
         BorderPane root = new BorderPane();
         root.setTop(topBar);
@@ -107,7 +123,7 @@ public class EditorApp extends Application {
     private MenuBar buildMenuBar() {
         MenuBar mb = new MenuBar();
         Menu file = new Menu("File");
-        MenuItem openFolder = new MenuItem("Open Folder…");
+        MenuItem openFolder = new MenuItem("Open Folder...");
         openFolder.setAccelerator(new KeyCodeCombination(KeyCode.O,
                 KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN));
         openFolder.setOnAction(e -> openFolder());
@@ -155,7 +171,93 @@ public class EditorApp extends Application {
         WorkspaceSettings settings = SettingsStore.load(root);
         Workspace ws = new Workspace(root, settings);
         ctx.openWorkspace(ws);
-        stage.setTitle("mType Editor — " + root.getFileName());
+        stage.setTitle("mType Editor - " + root.getFileName());
+    }
+
+    private Node buildSidePanel(WorkspaceTreeView tree, GitChangesView gitChanges) {
+        StackPane content = new StackPane(tree, gitChanges);
+        gitChanges.setVisible(false);
+        gitChanges.setManaged(false);
+
+        ToggleGroup group = new ToggleGroup();
+        ToggleButton explorerButton = activityButton("Explorer", explorerIcon());
+        ToggleButton gitButton = activityButton("Git", gitIcon());
+        explorerButton.setToggleGroup(group);
+        gitButton.setToggleGroup(group);
+        explorerButton.setSelected(true);
+
+        explorerButton.setOnAction(e -> {
+            explorerButton.setSelected(true);
+            showPanel(content, tree);
+        });
+        gitButton.setOnAction(e -> {
+            gitButton.setSelected(true);
+            showPanel(content, gitChanges);
+        });
+
+        VBox activityBar = new VBox(explorerButton, gitButton);
+        activityBar.getStyleClass().add("mt-activity-bar");
+
+        BorderPane sidePanel = new BorderPane(content);
+        sidePanel.setLeft(activityBar);
+        sidePanel.getStyleClass().add("mt-side-panel");
+        sidePanel.setMinWidth(220);
+        sidePanel.setPrefWidth(280);
+        return sidePanel;
+    }
+
+    private ToggleButton activityButton(String tooltip, Node graphic) {
+        ToggleButton button = new ToggleButton();
+        button.setGraphic(graphic);
+        button.setTooltip(new Tooltip(tooltip));
+        button.getStyleClass().add("mt-activity-button");
+        return button;
+    }
+
+    private void showPanel(StackPane content, Node active) {
+        for (Node child : content.getChildren()) {
+            boolean show = child == active;
+            child.setVisible(show);
+            child.setManaged(show);
+        }
+    }
+
+    private Node explorerIcon() {
+        SVGPath file = new SVGPath();
+        file.setContent("M6 3 H18 L24 9 V29 H6 Z M18 3 V9 H24");
+        file.getStyleClass().add("mt-activity-icon");
+
+        SVGPath back = new SVGPath();
+        back.setContent("M3 8 V32 H20");
+        back.getStyleClass().add("mt-activity-icon-muted");
+
+        Group group = new Group(back, file);
+        group.getStyleClass().add("mt-activity-graphic");
+        return group;
+    }
+
+    private Node gitIcon() {
+        Circle top = activityCircle(16, 6);
+        Circle middle = activityCircle(24, 15);
+        Circle bottom = activityCircle(11, 27);
+        Line main = activityLine(16, 8, 11, 25);
+        Line branch = activityLine(17, 8, 23, 14);
+
+        Group group = new Group(main, branch, top, middle, bottom);
+        group.getStyleClass().add("mt-activity-graphic");
+        return group;
+    }
+
+    private Circle activityCircle(double x, double y) {
+        Circle circle = new Circle(x, y, 4);
+        circle.getStyleClass().add("mt-activity-icon");
+        return circle;
+    }
+
+    private Line activityLine(double x1, double y1, double x2, double y2) {
+        Line line = new Line(x1, y1, x2, y2);
+        line.getStyleClass().add("mt-activity-icon");
+        return line;
     }
 
     private void shutdown() {
