@@ -4,6 +4,7 @@ import javafx.application.Platform;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tab;
@@ -36,6 +37,10 @@ public class DiffTab extends Tab {
 
     private final AppContext ctx;
     private final Path path;
+    private final List<Integer> chunkStarts = new ArrayList<>();
+    private int currentChunk = -1;
+    private CodeArea leftArea;
+    private CodeArea rightArea;
 
     public DiffTab(AppContext ctx, Path path, String title, String leftText, String rightText, boolean binary) {
         this.ctx = ctx;
@@ -67,8 +72,18 @@ public class DiffTab extends Tab {
         int leftMaxDigits = Math.max(1, (int) Math.floor(Math.log10(Math.max(1, lc))) + 1);
         int rightMaxDigits = Math.max(1, (int) Math.floor(Math.log10(Math.max(1, rc))) + 1);
 
+        // Collapse contiguous non-equal rows into one "change chunk" for nav.
+        boolean inChunk = false;
+        for (int i = 0; i < rows.size(); i++) {
+            boolean isChange = rows.get(i).op() != DiffComputer.Op.EQUAL;
+            if (isChange && !inChunk) chunkStarts.add(i);
+            inChunk = isChange;
+        }
+
         CodeArea left = makeArea();
         CodeArea right = makeArea();
+        this.leftArea = left;
+        this.rightArea = right;
         applyFontFromSettings(left);
         applyFontFromSettings(right);
 
@@ -114,14 +129,56 @@ public class DiffTab extends Tab {
         VirtualizedScrollPane<CodeArea> leftScroll = new VirtualizedScrollPane<>(left);
         VirtualizedScrollPane<CodeArea> rightScroll = new VirtualizedScrollPane<>(right);
 
-        left.estimatedScrollYProperty().bindBidirectional(right.estimatedScrollYProperty());
-        left.estimatedScrollXProperty().bindBidirectional(right.estimatedScrollXProperty());
+        bindSyncedScroll(left, right);
 
-        SplitPane split = new SplitPane(wrapWithHeader("HEAD", leftScroll),
-                                        wrapWithHeader("Working Tree", rightScroll));
+        SplitPane split = new SplitPane(wrapWithHeader("HEAD", leftScroll, false),
+                                        wrapWithHeader("Working Tree", rightScroll, true));
         split.setOrientation(Orientation.HORIZONTAL);
         split.setDividerPositions(0.5);
         setContent(split);
+    }
+
+    private static void bindSyncedScroll(CodeArea a, CodeArea b) {
+        // Gated one-way listeners — avoids the feedback loop that
+        // bindBidirectional hits when the two viewports clamp to
+        // slightly different max-scroll values at the document ends.
+        boolean[] syncing = {false};
+        a.estimatedScrollYProperty().addListener((obs, oldV, newV) -> {
+            if (syncing[0] || newV == null) return;
+            syncing[0] = true;
+            try { b.estimatedScrollYProperty().setValue(newV); }
+            finally { syncing[0] = false; }
+        });
+        b.estimatedScrollYProperty().addListener((obs, oldV, newV) -> {
+            if (syncing[0] || newV == null) return;
+            syncing[0] = true;
+            try { a.estimatedScrollYProperty().setValue(newV); }
+            finally { syncing[0] = false; }
+        });
+        a.estimatedScrollXProperty().addListener((obs, oldV, newV) -> {
+            if (syncing[0] || newV == null) return;
+            syncing[0] = true;
+            try { b.estimatedScrollXProperty().setValue(newV); }
+            finally { syncing[0] = false; }
+        });
+        b.estimatedScrollXProperty().addListener((obs, oldV, newV) -> {
+            if (syncing[0] || newV == null) return;
+            syncing[0] = true;
+            try { a.estimatedScrollXProperty().setValue(newV); }
+            finally { syncing[0] = false; }
+        });
+    }
+
+    private void jumpToChunk(int direction) {
+        if (chunkStarts.isEmpty()) return;
+        if (currentChunk < 0) {
+            currentChunk = direction > 0 ? 0 : chunkStarts.size() - 1;
+        } else {
+            currentChunk = (currentChunk + direction + chunkStarts.size()) % chunkStarts.size();
+        }
+        int row = chunkStarts.get(currentChunk);
+        if (rightArea != null) rightArea.showParagraphAtTop(Math.max(0, row - 2));
+        ctx.getStatusBar().setMessage("Change " + (currentChunk + 1) + " of " + chunkStarts.size());
     }
 
     public Path getPath() { return path; }
@@ -271,17 +328,34 @@ public class DiffTab extends Tab {
         return text != null && text.contains("\r\n") ? "\r\n" : "\n";
     }
 
-    private static BorderPane wrapWithHeader(String headerText, VirtualizedScrollPane<CodeArea> body) {
+    private BorderPane wrapWithHeader(String headerText, VirtualizedScrollPane<CodeArea> body, boolean includeNav) {
         Label header = new Label(headerText);
         header.getStyleClass().add("mt-diff-header");
-        HBox headerBar = new HBox(header);
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        HBox headerBar = new HBox(header, spacer);
+        if (includeNav) {
+            Button prev = new Button("↑");
+            prev.getStyleClass().add("mt-diff-nav-btn");
+            prev.setTooltip(new Tooltip("Previous change"));
+            prev.setOnAction(e -> jumpToChunk(-1));
+            Button next = new Button("↓");
+            next.getStyleClass().add("mt-diff-nav-btn");
+            next.setTooltip(new Tooltip("Next change"));
+            next.setOnAction(e -> jumpToChunk(1));
+            boolean hasChanges = !chunkStarts.isEmpty();
+            prev.setDisable(!hasChanges);
+            next.setDisable(!hasChanges);
+            headerBar.getChildren().addAll(prev, next);
+        }
+        headerBar.setSpacing(4);
         headerBar.setAlignment(Pos.CENTER_LEFT);
         headerBar.getStyleClass().add("mt-diff-header-bar");
+
         BorderPane wrap = new BorderPane();
         wrap.setTop(headerBar);
         wrap.setCenter(body);
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
         return wrap;
     }
 }

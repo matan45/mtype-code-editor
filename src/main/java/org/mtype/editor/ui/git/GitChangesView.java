@@ -5,14 +5,18 @@ import javafx.beans.binding.Bindings;
 import javafx.beans.property.SimpleIntegerProperty;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.geometry.Orientation;
 import javafx.scene.control.Button;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
+import javafx.scene.control.ListView;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuButton;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeCell;
@@ -27,6 +31,7 @@ import javafx.scene.layout.VBox;
 import javafx.stage.Window;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.git.GitService;
+import org.mtype.editor.git.GitService.CommitEntry;
 import org.mtype.editor.git.GitService.StatusEntry;
 import org.mtype.editor.ui.dialogs.Dialogs;
 import org.mtype.editor.ui.dialogs.QuickPickDialog;
@@ -41,9 +46,16 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 public class GitChangesView extends BorderPane {
+    private static final int HISTORY_LIMIT = 50;
+
     private final AppContext ctx;
     private final Label stateLabel = new Label("Open a folder to view Git changes");
     private final TreeView<GitNode> tree = new TreeView<>();
+    private final SplitPane contentSplit = new SplitPane();
+    private final BorderPane changesPane = new BorderPane();
+    private final BorderPane historyPane = new BorderPane();
+    private final ListView<CommitEntry> historyList = new ListView<>();
+    private final Label historyStateLabel = new Label("No Git history");
     private final TextArea commitMessage = new TextArea();
     private final Button commitButton = new Button("Commit");
     private final Label branchChip = new Label("");
@@ -120,6 +132,26 @@ public class GitChangesView extends BorderPane {
             }
         });
 
+        historyList.setCellFactory(tv -> new CommitHistoryCell());
+        historyList.getStyleClass().add("mt-git-history-list");
+        historyList.setFocusTraversable(false);
+
+        Label historyTitle = new Label("History");
+        historyTitle.getStyleClass().add("mt-git-history-title");
+        HBox historyHeader = new HBox(historyTitle);
+        historyHeader.setAlignment(Pos.CENTER_LEFT);
+        historyHeader.getStyleClass().add("mt-git-history-header");
+
+        historyStateLabel.getStyleClass().add("mt-empty-state");
+        historyPane.setTop(historyHeader);
+        historyPane.setCenter(historyStateLabel);
+        historyPane.getStyleClass().add("mt-git-history-pane");
+
+        contentSplit.setOrientation(Orientation.VERTICAL);
+        contentSplit.getItems().addAll(changesPane, historyPane);
+        contentSplit.setDividerPositions(0.58);
+        contentSplit.getStyleClass().add("mt-git-content-split");
+
         stateLabel.getStyleClass().add("mt-empty-state");
         setTop(top);
         setCenter(stateLabel);
@@ -155,6 +187,16 @@ public class GitChangesView extends BorderPane {
             return null;
         }, Platform::runLater);
 
+        git.recentCommits(HISTORY_LIMIT).handleAsync((commits, err) -> {
+            if (workspace != ws) return null;
+            if (err != null) {
+                showHistoryMessage("No Git history");
+                return null;
+            }
+            renderHistory(commits);
+            return null;
+        }, Platform::runLater);
+
         git.currentBranch().thenCombineAsync(git.aheadBehind(), (branch, ab) -> {
             if (workspace != ws) return null;
             currentBranch = branch == null ? "" : branch;
@@ -181,7 +223,7 @@ public class GitChangesView extends BorderPane {
         stagedCount.set(staged);
 
         if (entries.isEmpty()) {
-            showMessage("No Git changes");
+            showChangesMessage("No Git changes");
             return;
         }
 
@@ -191,7 +233,8 @@ public class GitChangesView extends BorderPane {
         addGroup(root, "Untracked", entries);
         root.setExpanded(true);
         tree.setRoot(root);
-        setCenter(tree);
+        changesPane.setCenter(tree);
+        showGitContent();
     }
 
     private void addGroup(TreeItem<GitNode> root, String group, List<StatusEntry> entries) {
@@ -210,6 +253,34 @@ public class GitChangesView extends BorderPane {
     private void showMessage(String text) {
         stateLabel.setText(text);
         setCenter(stateLabel);
+    }
+
+    private void showChangesMessage(String text) {
+        stateLabel.setText(text);
+        changesPane.setCenter(stateLabel);
+        showGitContent();
+    }
+
+    private void showGitContent() {
+        if (getCenter() != contentSplit) {
+            setCenter(contentSplit);
+        }
+    }
+
+    private void renderHistory(List<CommitEntry> commits) {
+        if (commits == null || commits.isEmpty()) {
+            showHistoryMessage("No Git history");
+            return;
+        }
+        historyList.getItems().setAll(commits);
+        historyPane.setCenter(historyList);
+        showGitContent();
+    }
+
+    private void showHistoryMessage(String text) {
+        historyStateLabel.setText(text);
+        historyPane.setCenter(historyStateLabel);
+        if (workspace != null) showGitContent();
     }
 
     private Window window() {
@@ -555,6 +626,87 @@ public class GitChangesView extends BorderPane {
                 }
             }
             return out;
+        }
+    }
+
+    private class CommitHistoryCell extends ListCell<CommitEntry> {
+        @Override
+        protected void updateItem(CommitEntry item, boolean empty) {
+            super.updateItem(item, empty);
+            if (empty || item == null) {
+                setText(null);
+                setGraphic(null);
+                setTooltip(null);
+                return;
+            }
+
+            Label graph = new Label(renderGraph(item.graph()));
+            graph.getStyleClass().add("mt-git-history-graph");
+
+            Label subject = new Label(item.subject());
+            subject.getStyleClass().add("mt-git-history-subject");
+            subject.setMaxWidth(Double.MAX_VALUE);
+            HBox.setHgrow(subject, Priority.ALWAYS);
+
+            HBox subjectRow = new HBox(subject);
+            subjectRow.setAlignment(Pos.CENTER_LEFT);
+            subjectRow.setSpacing(5);
+            addDecorationChips(subjectRow, item.decorations());
+
+            Label meta = new Label(item.author() + "  " + item.date() + "  " + item.shortHash());
+            meta.getStyleClass().add("mt-git-history-meta");
+
+            VBox text = new VBox(subjectRow, meta);
+            text.setSpacing(1);
+            HBox.setHgrow(text, Priority.ALWAYS);
+
+            HBox row = new HBox(graph, text);
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.setSpacing(8);
+            row.getStyleClass().add("mt-git-history-row");
+
+            setText(null);
+            setGraphic(row);
+            setTooltip(new Tooltip(item.shortHash() + " " + item.subject()));
+        }
+
+        private String renderGraph(String graph) {
+            if (graph == null || graph.isBlank()) return "●";
+            return graph
+                    .replace('*', '●')
+                    .replace('|', '│')
+                    .replace('\\', '╲')
+                    .replace('/', '╱')
+                    .replace('_', '─');
+        }
+
+        private void addDecorationChips(HBox row, String decorations) {
+            if (decorations == null || decorations.isBlank()) return;
+            String[] parts = decorations.split(",");
+            int shown = 0;
+            for (String raw : parts) {
+                String text = decorationLabel(raw.trim());
+                if (text.isBlank()) continue;
+                if (shown == 3) {
+                    Label more = decorationChip("+" + (parts.length - shown));
+                    row.getChildren().add(more);
+                    return;
+                }
+                row.getChildren().add(decorationChip(text));
+                shown++;
+            }
+        }
+
+        private String decorationLabel(String raw) {
+            if (raw == null) return "";
+            if (raw.startsWith("HEAD -> ")) return raw.substring("HEAD -> ".length());
+            return raw;
+        }
+
+        private Label decorationChip(String text) {
+            Label chip = new Label(text);
+            chip.getStyleClass().add("mt-git-history-chip");
+            return chip;
         }
     }
 }

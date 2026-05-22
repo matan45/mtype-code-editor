@@ -33,6 +33,14 @@ public class GitService {
     public record StatusEntry(String code, Path path, String group, String label) {}
     public record AheadBehind(int ahead, int behind, boolean hasUpstream) {}
     public record DiffPair(String oldContent, String newContent, boolean binary) {}
+    public record CommitEntry(
+            String graph,
+            String hash,
+            String shortHash,
+            String subject,
+            String author,
+            String date,
+            String decorations) {}
 
     public record ProcResult(int exitCode, List<String> stdout, List<String> stderr) {
         public boolean ok() { return exitCode == 0; }
@@ -100,6 +108,27 @@ public class GitService {
                 if (list.contains("master")) return "master";
                 return "";
             });
+        });
+    }
+
+    public CompletableFuture<List<CommitEntry>> recentCommits(int limit) {
+        int cappedLimit = Math.max(1, Math.min(limit, 500));
+        return exec(false,
+                "log",
+                "--graph",
+                "--decorate=short",
+                "--date=short",
+                "--pretty=format:%x1f%H%x1f%h%x1f%s%x1f%an%x1f%ad%x1f%D",
+                "-n",
+                Integer.toString(cappedLimit)
+        ).thenApply(r -> {
+            if (!r.ok()) throw new RuntimeException("git log failed: " + r.stderrJoined());
+            List<CommitEntry> out = new ArrayList<>();
+            for (String line : r.stdout) {
+                CommitEntry entry = parseCommitLine(line);
+                if (entry != null) out.add(entry);
+            }
+            return out;
         });
     }
 
@@ -322,6 +351,23 @@ public class GitService {
         if (code.indexOf('R') >= 0) return "R";
         if (code.indexOf('C') >= 0) return "C";
         return "M";
+    }
+
+    private static CommitEntry parseCommitLine(String line) {
+        if (line == null) return null;
+        int firstField = line.indexOf('\u001f');
+        if (firstField < 0) return null;
+        String graph = line.substring(0, firstField);
+        String[] fields = line.substring(firstField + 1).split("\u001f", -1);
+        if (fields.length < 6) return null;
+        return new CommitEntry(
+                graph,
+                fields[0],
+                fields[1],
+                fields[2],
+                fields[3],
+                fields[4],
+                fields[5]);
     }
 
     private Path workspaceRootOrThrow() {
