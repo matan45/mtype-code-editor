@@ -3,8 +3,6 @@ package org.mtype.editor.ui.dialogs;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
-import javafx.scene.control.Alert;
-import javafx.scene.control.Alert.AlertType;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
@@ -36,6 +34,7 @@ public class NewWorkspaceDialog extends Dialog<Path> {
         initOwner(owner);
         setTitle("New mType Workspace");
         setHeaderText("Create a new workspace (.mtworkspace) in " + workspaceRoot.getFileName());
+        Dialogs.theme(this);
 
         GridPane grid = new GridPane();
         grid.setHgap(8);
@@ -54,11 +53,9 @@ public class NewWorkspaceDialog extends Dialog<Path> {
         Button removeBtn = new Button("Remove");
         removeBtn.disableProperty().bind(membersList.getSelectionModel().selectedItemProperty().isNull());
         addBtn.setOnAction(e -> {
-            TextInputDialog d = new TextInputDialog();
-            d.initOwner(owner);
-            d.setTitle("Add Member");
-            d.setHeaderText("Relative path to a member project (folder or .mtproj)");
-            d.setContentText("Path:");
+            TextInputDialog d = Dialogs.prompt(owner, "Add Member",
+                    "Relative path to a member project (folder or .mtproj)",
+                    "Path:", null);
             Optional<String> r = d.showAndWait();
             r.map(String::trim).filter(s -> !s.isEmpty()).ifPresent(members::add);
         });
@@ -87,11 +84,11 @@ public class NewWorkspaceDialog extends Dialog<Path> {
             if (bt != ButtonType.OK) return null;
             String name = nameField.getText() == null ? "" : nameField.getText().trim();
             if (name.isEmpty()) {
-                new Alert(AlertType.ERROR, "Name is required.").showAndWait();
+                Dialogs.error(getOwner(), null, "Name is required.").showAndWait();
                 return null;
             }
             if (name.contains("/") || name.contains("\\") || name.contains("..")) {
-                new Alert(AlertType.ERROR, "Name cannot contain path separators.").showAndWait();
+                Dialogs.error(getOwner(), null, "Name cannot contain path separators.").showAndWait();
                 return null;
             }
             String version = trimOrDefault(versionField.getText(), "1.0.0");
@@ -99,7 +96,7 @@ public class NewWorkspaceDialog extends Dialog<Path> {
 
             Path file = workspaceRoot.resolve(name + ".mtworkspace");
             if (Files.exists(file)) {
-                new Alert(AlertType.ERROR, file.getFileName() + " already exists.").showAndWait();
+                Dialogs.error(getOwner(), null, file.getFileName() + " already exists.").showAndWait();
                 return null;
             }
 
@@ -119,7 +116,7 @@ public class NewWorkspaceDialog extends Dialog<Path> {
             try {
                 Files.writeString(file, xml, StandardCharsets.UTF_8);
             } catch (IOException ex) {
-                new Alert(AlertType.ERROR, "Failed to write " + file + ":\n" + ex.getMessage()).showAndWait();
+                Dialogs.error(getOwner(), null, "Failed to write " + file + ":\n" + ex.getMessage()).showAndWait();
                 return null;
             }
             return file;

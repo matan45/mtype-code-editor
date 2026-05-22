@@ -562,6 +562,78 @@
 .mt-dialog .button:default:hover {
     -fx-background-color: #6ea1ff;
 }
+.mt-dialog .text-field,
+.mt-dialog .text-input {
+    -fx-background-color: #1c1f25;
+    -fx-text-fill: #ffffff;
+    -fx-prompt-text-fill: #636d83;
+    -fx-border-color: #3e4451;
+    -fx-border-width: 1;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+    -fx-padding: 5 8 5 8;
+    -fx-font-family: "JetBrains Mono", "Consolas", monospace;
+    -fx-font-size: 13;
+    -fx-caret-color: #528bff;
+    -fx-highlight-fill: #3e4451;
+}
+.mt-dialog .text-field:focused,
+.mt-dialog .text-input:focused {
+    -fx-border-color: #528bff;
+}
+.mt-dialog .list-view {
+    -fx-background-color: #1c1f25;
+    -fx-control-inner-background: #1c1f25;
+    -fx-border-color: #3e4451;
+    -fx-border-width: 1;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+    -fx-padding: 0;
+}
+.mt-dialog .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: #abb2bf;
+    -fx-padding: 4 8 4 8;
+    -fx-font-family: "JetBrains Mono", "Consolas", monospace;
+    -fx-font-size: 12;
+}
+.mt-dialog .list-cell:filled:selected,
+.mt-dialog .list-cell:filled:hover {
+    -fx-background-color: #3e4451;
+    -fx-text-fill: #ffffff;
+}
+.mt-dialog > .button-bar > .container {
+    -fx-background-color: transparent;
+}
+.mt-dialog .scroll-pane,
+.mt-dialog .scroll-pane > .viewport,
+.mt-dialog .virtual-flow {
+    -fx-background-color: transparent;
+}
+.mt-dialog .scroll-bar {
+    -fx-background-color: #21252b;
+}
+.mt-dialog .scroll-bar .thumb {
+    -fx-background-color: #3e4451;
+    -fx-background-radius: 4;
+}
+.mt-dialog .scroll-bar .thumb:hover {
+    -fx-background-color: #4b5263;
+}
+.mt-dialog .scroll-bar .track,
+.mt-dialog .scroll-bar .track-background {
+    -fx-background-color: transparent;
+}
+.mt-dialog .scroll-bar .increment-button,
+.mt-dialog .scroll-bar .decrement-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+.mt-dialog .scroll-bar .increment-arrow,
+.mt-dialog .scroll-bar .decrement-arrow {
+    -fx-shape: " ";
+    -fx-padding: 0;
+}
 
 .mt-rename-field {
     -fx-background-color: #1c1f25;

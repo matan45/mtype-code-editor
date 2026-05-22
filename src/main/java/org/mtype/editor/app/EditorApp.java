@@ -265,9 +265,12 @@ public class EditorApp extends Application {
     }
 
     private Path resolveTargetRoot(String chooserTitle) {
-        if (ctx.getWorkspace() != null) return ctx.getWorkspace().getRoot();
         DirectoryChooser dc = new DirectoryChooser();
         dc.setTitle(chooserTitle);
+        if (ctx.getWorkspace() != null) {
+            File initial = ctx.getWorkspace().getRoot().toFile();
+            if (initial.isDirectory()) dc.setInitialDirectory(initial);
+        }
         File chosen = dc.showDialog(stage);
         return chosen == null ? null : chosen.toPath();
     }
@@ -296,19 +299,7 @@ public class EditorApp extends Application {
     }
 
     private Node buildSidePanel(WorkspaceTreeView tree, GitChangesView gitChanges) {
-        Button newProjectBtn = new Button("+ Project");
-        Button newWorkspaceBtn = new Button("+ Workspace");
-        newProjectBtn.setTooltip(new Tooltip("Create a new .mtproj — picks a folder if none is open"));
-        newWorkspaceBtn.setTooltip(new Tooltip("Create a new .mtworkspace — picks a folder if none is open"));
-        newProjectBtn.setOnAction(e -> openNewProjectDialog());
-        newWorkspaceBtn.setOnAction(e -> openNewWorkspaceDialog());
-        ToolBar treeToolbar = new ToolBar(newProjectBtn, newWorkspaceBtn);
-        treeToolbar.getStyleClass().add("mt-tree-toolbar");
-
-        BorderPane treeWithToolbar = new BorderPane(tree);
-        treeWithToolbar.setBottom(treeToolbar);
-
-        StackPane content = new StackPane(treeWithToolbar, gitChanges);
+        StackPane content = new StackPane(tree, gitChanges);
         gitChanges.setVisible(false);
         gitChanges.setManaged(false);
 
@@ -321,7 +312,7 @@ public class EditorApp extends Application {
 
         explorerButton.setOnAction(e -> {
             explorerButton.setSelected(true);
-            showPanel(content, treeWithToolbar);
+            showPanel(content, tree);
         });
         gitButton.setOnAction(e -> {
             gitButton.setSelected(true);

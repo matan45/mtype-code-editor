@@ -98,6 +98,17 @@ public class EditorTabPane extends TabPane {
         return open.get(p);
     }
 
+    public void closeByPath(Path p) {
+        EditorTab t = open.get(p);
+        if (t != null) getTabs().remove(t);
+    }
+
+    public void closeUnder(Path dir) {
+        for (EditorTab t : new java.util.ArrayList<>(open.values())) {
+            if (t.getPath().startsWith(dir)) getTabs().remove(t);
+        }
+    }
+
     /** Snapshot of all open tabs — used by services that need to scan tabs (e.g. diagnostics router). */
     public java.util.Collection<EditorTab> openTabs() {
         return new java.util.ArrayList<>(open.values());
