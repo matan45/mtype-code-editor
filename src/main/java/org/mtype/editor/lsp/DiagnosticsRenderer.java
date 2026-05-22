@@ -51,7 +51,12 @@ public class DiagnosticsRenderer {
                 : new ArrayList<>(params.getDiagnostics());
 
         if (len == 0 || diags.isEmpty()) {
-            tab.applyDiagnosticSpans(new StyleSpansBuilder<Collection<String>>().create());
+            // RichTextFX throws "No spans have been added" on an empty builder —
+            // seed a zero-length empty span so create() succeeds and clears any
+            // previously-overlaid diagnostic styles.
+            StyleSpansBuilder<Collection<String>> empty = new StyleSpansBuilder<>();
+            empty.add(Collections.emptyList(), Math.max(len, 1));
+            tab.applyDiagnosticSpans(empty.create());
             tab.applyDiagnosticLines(Collections.emptyMap());
             return;
         }

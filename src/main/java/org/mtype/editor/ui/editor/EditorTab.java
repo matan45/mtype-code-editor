@@ -44,7 +44,7 @@ import org.mtype.editor.app.AppContext;
 import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.lsp.LspEdits;
 import org.mtype.editor.lsp.Positions;
-import org.mtype.editor.syntax.MTypeTokenizer;
+import org.mtype.editor.syntax.Tokenizers;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -451,8 +451,10 @@ public class EditorTab extends Tab {
 
         javafx.scene.control.Menu quickFix = new javafx.scene.control.Menu("Quick Fix...");
         this.quickFixMenu = quickFix;
-        quickFix.setOnShowing(e -> populateQuickFix(quickFix));
-        quickFix.getItems().add(disabledItem("(no actions)"));
+        // Populated on right-click (see MOUSE_PRESSED handler). No setOnShowing —
+        // that would overwrite the freshly-fetched actions with a new "Loading..."
+        // every time the user hovers the submenu.
+        quickFix.getItems().add(disabledItem("(right-click on a diagnostic)"));
 
         MenuItem goToDef = new MenuItem("Go to Definition");
         goToDef.setAccelerator(new KeyCodeCombination(KeyCode.F12));
@@ -516,7 +518,7 @@ public class EditorTab extends Tab {
             int count = actions == null ? 0 : actions.size();
             ctx.getOutputPane().appendLspLog("[codeAction] returned " + count + " action(s)");
             if (count == 0) {
-                quickFix.getItems().setAll(disabledItem("(no actions)"));
+                replaceQuickFixItems(quickFix, java.util.List.of(disabledItem("(no actions)")));
                 return;
             }
             java.util.List<MenuItem> next = new java.util.ArrayList<>();
@@ -525,17 +527,27 @@ public class EditorTab extends Tab {
                 if (mi != null) next.add(mi);
             }
             if (next.isEmpty()) {
-                quickFix.getItems().setAll(disabledItem("(no actions)"));
+                replaceQuickFixItems(quickFix, java.util.List.of(disabledItem("(no actions)")));
             } else {
-                quickFix.getItems().setAll(next);
+                replaceQuickFixItems(quickFix, next);
             }
         }, Platform::runLater).exceptionally(t -> {
             Platform.runLater(() -> {
                 ctx.getOutputPane().appendLspLog("[codeAction error] " + t.getMessage());
-                quickFix.getItems().setAll(disabledItem("(error: " + t.getMessage() + ")"));
+                replaceQuickFixItems(quickFix, java.util.List.of(disabledItem("(error: " + t.getMessage() + ")")));
             });
             return null;
         });
+    }
+
+    /** Replace submenu items. If it's already shown, force JavaFX to re-layout it. */
+    private void replaceQuickFixItems(javafx.scene.control.Menu quickFix, java.util.List<MenuItem> next) {
+        boolean wasShowing = quickFix.isShowing();
+        quickFix.getItems().setAll(next);
+        if (wasShowing) {
+            quickFix.hide();
+            Platform.runLater(quickFix::show);
+        }
     }
 
     private MenuItem quickFixMenuItem(org.eclipse.lsp4j.jsonrpc.messages.Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction> either) {
@@ -790,7 +802,7 @@ public class EditorTab extends Tab {
         if (pendingHighlight != null) pendingHighlight.cancel(false);
         String snapshot = codeArea.getText();
         pendingHighlight = BG_EXEC.schedule(() -> {
-            StyleSpans<Collection<String>> spans = MTypeTokenizer.compute(snapshot);
+            StyleSpans<Collection<String>> spans = Tokenizers.computeFor(path, snapshot);
             Platform.runLater(() -> {
                 lastTokenSpans = spans;
                 applyCombinedStyles();
@@ -799,7 +811,7 @@ public class EditorTab extends Tab {
     }
 
     private void applyHighlightingNow() {
-        StyleSpans<Collection<String>> spans = MTypeTokenizer.compute(codeArea.getText());
+        StyleSpans<Collection<String>> spans = Tokenizers.computeFor(path, codeArea.getText());
         lastTokenSpans = spans;
         applyCombinedStyles();
     }
@@ -924,19 +936,30 @@ public class EditorTab extends Tab {
     }
 
     private void applyCompletion(CompletionItem ci) {
-        // Prefer textEdit if present (server may dictate exact range), else replace current word.
+        // The mType server sometimes returns a textEdit range narrower than the typed
+        // prefix (e.g. only the last char), so we widen the replacement to the union of
+        // the server's range and the word currently under the caret.
         TextEdit te = ci.getTextEdit() != null && ci.getTextEdit().isLeft()
                 ? ci.getTextEdit().getLeft() : null;
+        String newText;
+        int serverStart = -1, serverEnd = -1;
+        String text = codeArea.getText();
         if (te != null) {
-            LspEdits.applyToCodeArea(codeArea, java.util.Collections.singletonList(te));
+            newText = te.getNewText();
+            serverStart = Positions.offset(text, te.getRange().getStart());
+            serverEnd = Positions.offset(text, te.getRange().getEnd());
+            if (serverStart > serverEnd) { int t = serverStart; serverStart = serverEnd; serverEnd = t; }
         } else {
-            String insert = ci.getInsertText() != null ? ci.getInsertText() : ci.getLabel();
-            int caret = codeArea.getCaretPosition();
-            String text = codeArea.getText();
-            int start = caret;
-            while (start > 0 && isWordChar(text.charAt(start - 1))) start--;
-            codeArea.replaceText(start, caret, insert);
+            newText = ci.getInsertText() != null ? ci.getInsertText() : ci.getLabel();
         }
+        if (newText == null) { completionMenu.hide(); return; }
+
+        int caret = codeArea.getCaretPosition();
+        int wordStart = caret;
+        while (wordStart > 0 && isWordChar(text.charAt(wordStart - 1))) wordStart--;
+        int start = serverStart >= 0 ? Math.min(serverStart, wordStart) : wordStart;
+        int end = serverEnd >= 0 ? Math.max(serverEnd, caret) : caret;
+        codeArea.replaceText(start, end, newText);
         completionMenu.hide();
     }
 

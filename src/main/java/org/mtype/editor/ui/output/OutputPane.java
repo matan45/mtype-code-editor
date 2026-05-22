@@ -60,10 +60,12 @@ public class OutputPane extends TabPane {
     public void attachProblems(AppContext ctx) {
         problemsPane = new ProblemsPane(ctx);
         problemsTab.setContent(problemsPane);
-        ctx.getDiagnosticsBus().addListener((uri, diags) -> {
-            int total = ctx.getDiagnosticsBus().totalCount();
-            javafx.application.Platform.runLater(() ->
-                    problemsTab.setText(total > 0 ? "Problems (" + total + ")" : "Problems"));
+        // Bind the tab label to the visible row count so the Clear button
+        // (which clears rows but not the bus) also resets the label.
+        problemsPane.rowCountBinding().addListener((obs, oldV, newV) -> {
+            int n = newV.intValue();
+            Platform.runLater(() ->
+                    problemsTab.setText(n > 0 ? "Problems (" + n + ")" : "Problems"));
         });
     }
 

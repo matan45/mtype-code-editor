@@ -31,6 +31,11 @@ public class ProblemsPane extends BorderPane {
     private final ObservableList<Row> rows = FXCollections.observableArrayList();
     private final TableView<Row> table = new TableView<>(rows);
 
+    /** Live binding to the number of visible rows — used by the Problems tab label. */
+    public javafx.beans.binding.IntegerBinding rowCountBinding() {
+        return javafx.beans.binding.Bindings.size(rows);
+    }
+
     public ProblemsPane(AppContext ctx) {
         this.ctx = ctx;
         getStyleClass().add("mt-problems");
