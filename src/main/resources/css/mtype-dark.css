@@ -1032,6 +1032,9 @@
     -fx-control-inner-background: #1c1f25;
     -fx-background-color: #1c1f25;
     -fx-text-fill: #d7dae0;
+    -fx-prompt-text-fill: #636d83;
+    -fx-highlight-fill: #3e4451;
+    -fx-highlight-text-fill: #ffffff;
     -fx-font-family: "Segoe UI", "Inter", "Arial", sans-serif;
     -fx-font-size: 12.5;
     -fx-border-color: #3e4451;
@@ -1040,6 +1043,9 @@
 }
 .mt-git-commit-msg .content {
     -fx-background-color: #1c1f25;
+}
+.mt-git-commit-msg .text {
+    -fx-fill: #d7dae0;
 }
 .mt-git-commit-btn {
     -fx-background-color: #2d4263;
@@ -1188,6 +1194,28 @@
 .mt-quickpick-desc {
     -fx-text-fill: #636d83;
     -fx-font-size: 11;
+}
+.mt-quickpick-header {
+    -fx-text-fill: #636d83;
+    -fx-font-size: 10.5;
+    -fx-font-weight: bold;
+    -fx-padding: 0 0 0 0;
+}
+.mt-dialog .list-cell.mt-quickpick-header-cell {
+    -fx-background-color: #1c1f25;
+    -fx-padding: 6 10 3 10;
+    -fx-border-color: transparent transparent #2c313a transparent;
+    -fx-border-width: 0 0 1 0;
+}
+.mt-dialog .list-cell.mt-quickpick-header-cell:hover,
+.mt-dialog .list-cell.mt-quickpick-header-cell:filled:selected {
+    -fx-background-color: #1c1f25;
+    -fx-cursor: hand;
+}
+.mt-quickpick-chevron {
+    -fx-text-fill: #636d83;
+    -fx-font-size: 9;
+    -fx-min-width: 12;
 }
 
 /* ===========================================================

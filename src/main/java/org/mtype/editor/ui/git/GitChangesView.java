@@ -329,26 +329,56 @@ public class GitChangesView extends BorderPane {
     public void openBranchQuickPick() {
         GitService git = ctx.getGitService();
         if (git == null || workspace == null) return;
-        git.localBranches().thenCombineAsync(git.currentBranch(),
-                (branches, current) -> branches.stream()
-                        .filter(b -> !b.equals(current))
-                        .collect(Collectors.toList()),
-                Platform::runLater
-        ).thenAcceptAsync(branches -> {
-            if (branches.isEmpty()) {
-                ctx.getStatusBar().setMessage("No other local branches");
+        var localF = git.localBranches();
+        var remoteF = git.remoteBranches();
+        var currentF = git.currentBranch();
+
+        localF.thenCombineAsync(remoteF, (locals, remotes) -> {
+            List<BranchOption> all = new ArrayList<>();
+            for (String b : locals) all.add(new BranchOption(b, b, false));
+            for (String b : remotes) {
+                if (b.endsWith("/HEAD")) continue;
+                all.add(new BranchOption(b, b, true));
+            }
+            return all;
+        }, Platform::runLater).thenCombineAsync(currentF, (all, current) -> {
+            List<BranchOption> filtered = new ArrayList<>();
+            for (BranchOption o : all) {
+                if (!o.remote() && o.displayName().equals(current)) continue;
+                filtered.add(o);
+            }
+            return filtered;
+        }, Platform::runLater).thenAcceptAsync(options -> {
+            if (options.isEmpty()) {
+                ctx.getStatusBar().setMessage("No branches available");
                 return;
             }
-            QuickPickDialog<String> q = new QuickPickDialog<>(window(),
-                    "Switch Branch", branches, b -> b, null);
-            q.showAndWait().ifPresent(this::doCheckout);
+            QuickPickDialog<BranchOption> q = new QuickPickDialog<>(window(),
+                    "Switch Branch", options,
+                    BranchOption::displayName,
+                    null,
+                    o -> o.remote() ? "Remote" : "Local");
+            q.showAndWait().ifPresent(this::doCheckoutOption);
         }, Platform::runLater);
+    }
+
+    private void doCheckoutOption(BranchOption opt) {
+        // For a remote branch like "origin/feature-x", checkout by short name so git
+        // creates a local tracking branch (or switches to an existing local of the same name).
+        String target = opt.displayName();
+        if (opt.remote()) {
+            int slash = target.indexOf('/');
+            if (slash >= 0 && slash < target.length() - 1) target = target.substring(slash + 1);
+        }
+        doCheckout(target);
     }
 
     private void doCheckout(String branch) {
         runOp(ctx.getGitService().checkoutBranch(branch),
                 "Switched to " + branch, "Checkout failed");
     }
+
+    private record BranchOption(String displayName, String fullRef, boolean remote) {}
 
     private void doMerge() {
         GitService git = ctx.getGitService();
