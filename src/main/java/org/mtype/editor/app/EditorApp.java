@@ -1,6 +1,7 @@
 package org.mtype.editor.app;
 
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.geometry.Orientation;
 import javafx.scene.Scene;
 import javafx.scene.Group;
@@ -44,6 +45,7 @@ import java.nio.file.Path;
 public class EditorApp extends Application {
     private AppContext ctx;
     private Stage stage;
+    private boolean shutdownStarted;
 
     @Override
     public void start(Stage stage) {
@@ -138,7 +140,7 @@ public class EditorApp extends Application {
         settings.setOnAction(e -> openSettings());
 
         MenuItem exit = new MenuItem("Exit");
-        exit.setOnAction(e -> { shutdown(); stage.close(); });
+        exit.setOnAction(e -> { shutdown(); Platform.exit(); });
 
         file.getItems().addAll(openFolder, save, new SeparatorMenuItem(), settings, new SeparatorMenuItem(), exit);
 
@@ -278,7 +280,14 @@ public class EditorApp extends Application {
         return line;
     }
 
-    private void shutdown() {
+    @Override
+    public void stop() {
+        shutdown();
+    }
+
+    private synchronized void shutdown() {
+        if (shutdownStarted) return;
+        shutdownStarted = true;
         try { if (ctx.getRunController() != null) ctx.getRunController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getLspBridge() != null) ctx.getLspBridge().stop(); } catch (Exception ignored) {}
     }

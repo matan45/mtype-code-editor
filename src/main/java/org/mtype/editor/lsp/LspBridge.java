@@ -58,6 +58,8 @@ import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
@@ -68,8 +70,10 @@ public class LspBridge {
     private LanguageServer server;
     private Launcher<LanguageServer> launcher;
     private Future<?> listening;
+    private ExecutorService rpcExecutor;
     private MTypeLanguageClient client;
     private boolean ready;
+    private long session;
 
     public LspBridge(AppContext ctx) {
         this.ctx = ctx;
@@ -79,6 +83,7 @@ public class LspBridge {
 
     public synchronized void start(Workspace ws) throws IOException {
         stop();
+        long startSession = ++session;
 
         String lspExe = ctx.getSettings().toolchain.languageServer;
         ProcessBuilder pb = new ProcessBuilder(lspExe, "--stdio")
@@ -91,9 +96,20 @@ public class LspBridge {
                 "mtype-lsp-stderr").start();
 
         client = new MTypeLanguageClient(ctx);
-        launcher = LSPLauncher.createClientLauncher(client, process.getInputStream(), process.getOutputStream());
+        rpcExecutor = Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "mtype-lsp-rpc");
+            t.setDaemon(true);
+            return t;
+        });
+        launcher = LSPLauncher.createClientLauncher(
+                client,
+                process.getInputStream(),
+                process.getOutputStream(),
+                rpcExecutor,
+                consumer -> consumer);
         listening = launcher.startListening();
-        server = launcher.getRemoteProxy();
+        LanguageServer startedServer = launcher.getRemoteProxy();
+        server = startedServer;
 
         InitializeParams init = new InitializeParams();
         init.setProcessId((int) ProcessHandle.current().pid());
@@ -131,7 +147,10 @@ public class LspBridge {
         caps.setWorkspace(wc);
         init.setCapabilities(caps);
 
-        server.initialize(init).whenComplete((InitializeResult result, Throwable err) -> {
+        startedServer.initialize(init).whenComplete((InitializeResult result, Throwable err) -> {
+            synchronized (LspBridge.this) {
+                if (startSession != session || server != startedServer) return;
+            }
             if (err != null) {
                 Platform.runLater(() -> {
                     ctx.getStatusBar().setLspState("LSP: error");
@@ -139,31 +158,50 @@ public class LspBridge {
                 });
                 return;
             }
-            server.initialized(new InitializedParams());
-            ready = true;
+            startedServer.initialized(new InitializedParams());
+            synchronized (LspBridge.this) {
+                if (startSession != session || server != startedServer) return;
+                ready = true;
+            }
             Platform.runLater(() -> ctx.getStatusBar().setLspState("LSP: ready"));
         });
     }
 
     public synchronized void stop() {
+        session++;
         ready = false;
-        if (server != null) {
-            try { server.shutdown().get(1, TimeUnit.SECONDS); } catch (Exception ignored) {}
-            try { server.exit(); } catch (Exception ignored) {}
-        }
-        if (listening != null) { listening.cancel(true); listening = null; }
-        if (process != null) {
-            try {
-                process.destroy();
-                if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly();
-            } catch (Exception ignored) {
-                process.destroyForcibly();
-            }
-            process = null;
-        }
+        LanguageServer serverToStop = server;
+        Future<?> listeningToStop = listening;
+        Process processToStop = process;
+        ExecutorService executorToStop = rpcExecutor;
+
         server = null;
+        listening = null;
+        process = null;
+        rpcExecutor = null;
         client = null;
         launcher = null;
+
+        if (serverToStop != null) {
+            try { serverToStop.shutdown().get(1, TimeUnit.SECONDS); } catch (Exception ignored) {}
+            try { serverToStop.exit(); } catch (Exception ignored) {}
+        }
+        if (listeningToStop != null) {
+            listeningToStop.cancel(true);
+        }
+        if (processToStop != null) {
+            try {
+                try { processToStop.getOutputStream().close(); } catch (Exception ignored) {}
+                try { processToStop.getInputStream().close(); } catch (Exception ignored) {}
+                processToStop.destroy();
+                if (!processToStop.waitFor(2, TimeUnit.SECONDS)) processToStop.destroyForcibly();
+            } catch (Exception ignored) {
+                processToStop.destroyForcibly();
+            }
+        }
+        if (executorToStop != null) {
+            executorToStop.shutdownNow();
+        }
     }
 
     /* ============================== sync ============================== */
