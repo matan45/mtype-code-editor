@@ -82,7 +82,7 @@ public class EditorApp extends Application {
         Button stopBtn = new Button("Stop");
         runBtn.disableProperty().bind(runController.runningProperty());
         stopBtn.disableProperty().bind(runController.runningProperty().not());
-        runBtn.setOnAction(e -> {
+        runBtn.setOnAction(_ -> {
             Path active = tabPane.activePath();
             if (active != null) runController.run(active);
         });

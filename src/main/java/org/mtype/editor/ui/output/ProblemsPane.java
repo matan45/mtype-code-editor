@@ -67,7 +67,7 @@ public class ProblemsPane extends BorderPane {
             return r;
         });
 
-        TableColumn<Row, String> severityCol = new TableColumn<>("");
+        TableColumn<Row, String> severityCol = new TableColumn<>();
         severityCol.setCellValueFactory(c -> c.getValue().severityProp);
         severityCol.setCellFactory(c -> new SeverityCell());
         severityCol.setPrefWidth(32);
@@ -75,20 +75,33 @@ public class ProblemsPane extends BorderPane {
         severityCol.setMaxWidth(32);
         severityCol.setSortable(false);
 
-        TableColumn<Row, String> messageCol = new TableColumn<>("Description");
+        TableColumn<Row, String> messageCol = new TableColumn<>();
+        messageCol.setGraphic(alignedHeader("Description", Pos.CENTER_LEFT));
         messageCol.setCellValueFactory(c -> c.getValue().messageProp);
+        messageCol.setStyle("-fx-alignment: CENTER-LEFT;");
         messageCol.setPrefWidth(600);
 
-        TableColumn<Row, String> fileCol = new TableColumn<>("File");
+        TableColumn<Row, String> fileCol = new TableColumn<>();
+        fileCol.setGraphic(alignedHeader("File", Pos.CENTER_LEFT));
         fileCol.setCellValueFactory(c -> c.getValue().fileProp);
+        fileCol.setStyle("-fx-alignment: CENTER-LEFT;");
         fileCol.setPrefWidth(180);
 
-        TableColumn<Row, String> lineCol = new TableColumn<>("Line");
+        TableColumn<Row, String> lineCol = new TableColumn<>();
+        lineCol.setGraphic(alignedHeader("Line", Pos.CENTER_RIGHT));
         lineCol.setCellValueFactory(c -> c.getValue().lineProp);
-        lineCol.setPrefWidth(60);
         lineCol.setStyle("-fx-alignment: CENTER-RIGHT;");
+        lineCol.setPrefWidth(60);
 
         table.getColumns().addAll(severityCol, messageCol, fileCol, lineCol);
+    }
+
+    /** A column header that fills its slot and respects an explicit alignment. */
+    private static Label alignedHeader(String text, Pos alignment) {
+        Label l = new Label(text);
+        l.setMaxWidth(Double.MAX_VALUE);
+        l.setAlignment(alignment);
+        return l;
     }
 
     private void refreshFor(String uri, List<Diagnostic> diags) {
