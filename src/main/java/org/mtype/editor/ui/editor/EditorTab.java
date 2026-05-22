@@ -231,12 +231,17 @@ public class EditorTab extends Tab {
             return;
         }
         lsp.format(path, 4, true).thenAcceptAsync(edits -> {
-            if (edits == null || edits.isEmpty()) {
-                ctx.getStatusBar().setMessage("No formatting changes");
-                return;
+            boolean hadChanges = edits != null && !edits.isEmpty();
+            if (hadChanges) {
+                LspEdits.applyToCodeArea(codeArea, edits);
             }
-            LspEdits.applyToCodeArea(codeArea, edits);
-            ctx.getStatusBar().setMessage("Formatted " + path.getFileName());
+            // RichTextFX clears styles in replaced ranges, and any cached diagnostic spans
+            // reference old offsets — so always re-tokenize before showing the result.
+            lastDiagnosticSpans = null;
+            applyHighlightingNow();
+            ctx.getStatusBar().setMessage(hadChanges
+                    ? "Formatted " + path.getFileName()
+                    : "No formatting changes");
         }, Platform::runLater);
     }
 
@@ -293,9 +298,22 @@ public class EditorTab extends Tab {
                 return;
             }
             TextInputDialog dlg = new TextInputDialog(placeholder);
+            dlg.initStyle(javafx.stage.StageStyle.UTILITY);
+            dlg.initOwner(codeArea.getScene() != null ? codeArea.getScene().getWindow() : null);
             dlg.setTitle("Rename Symbol");
             dlg.setHeaderText("Rename '" + placeholder + "'");
-            dlg.setContentText("New name:");
+            dlg.setContentText("New name");
+            dlg.setGraphic(null);
+            javafx.scene.control.DialogPane pane = dlg.getDialogPane();
+            pane.getStyleClass().add("mt-dialog");
+            var cssUrl = EditorTab.class.getResource("/css/mtype-dark.css");
+            if (cssUrl != null) pane.getStylesheets().add(cssUrl.toExternalForm());
+            javafx.scene.control.TextField field = dlg.getEditor();
+            field.getStyleClass().add("mt-rename-field");
+            javafx.application.Platform.runLater(() -> {
+                field.selectAll();
+                field.requestFocus();
+            });
             Optional<String> result = dlg.showAndWait();
             if (result.isEmpty()) return;
             String newName = result.get().trim();
@@ -307,6 +325,8 @@ public class EditorTab extends Tab {
                     return;
                 }
                 int files = LspEdits.applyWorkspaceEdit(ctx, edit);
+                lastDiagnosticSpans = null;
+                applyHighlightingNow();
                 ctx.getStatusBar().setMessage("Renamed in " + files + " file(s)");
             }, Platform::runLater);
         }, Platform::runLater);

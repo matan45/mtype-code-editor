@@ -305,6 +305,78 @@
 }
 
 /* ===========================================================
+   Dialogs (Rename Symbol etc.)
+   =========================================================== */
+.mt-dialog {
+    -fx-background-color: #21252b;
+    -fx-border-color: #181a1f;
+    -fx-border-width: 1;
+    -fx-padding: 0;
+}
+.mt-dialog .header-panel {
+    -fx-background-color: #2c313c;
+    -fx-padding: 12 16 12 16;
+    -fx-border-color: transparent transparent #181a1f transparent;
+    -fx-border-width: 0 0 1 0;
+}
+.mt-dialog .header-panel .label {
+    -fx-text-fill: #ffffff;
+    -fx-font-size: 14;
+    -fx-font-weight: 600;
+    -fx-font-family: "JetBrains Mono", "Consolas", monospace;
+}
+.mt-dialog .content {
+    -fx-background-color: #21252b;
+    -fx-padding: 16 16 8 16;
+}
+.mt-dialog .content .label {
+    -fx-text-fill: #abb2bf;
+    -fx-font-size: 12;
+    -fx-padding: 0 8 0 0;
+}
+.mt-dialog .button-bar {
+    -fx-background-color: #21252b;
+    -fx-padding: 8 16 16 16;
+}
+.mt-dialog .button {
+    -fx-background-color: #3a3f4b;
+    -fx-text-fill: #abb2bf;
+    -fx-background-radius: 3;
+    -fx-padding: 5 16 5 16;
+    -fx-min-width: 80;
+    -fx-font-family: "JetBrains Mono", "Consolas", monospace;
+}
+.mt-dialog .button:hover {
+    -fx-background-color: #4b5263;
+    -fx-text-fill: #ffffff;
+}
+.mt-dialog .button:default {
+    -fx-background-color: #528bff;
+    -fx-text-fill: #ffffff;
+}
+.mt-dialog .button:default:hover {
+    -fx-background-color: #6ea1ff;
+}
+
+.mt-rename-field {
+    -fx-background-color: #1c1f25;
+    -fx-text-fill: #ffffff;
+    -fx-prompt-text-fill: #636d83;
+    -fx-border-color: #528bff;
+    -fx-border-width: 1;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+    -fx-padding: 6 10 6 10;
+    -fx-font-family: "JetBrains Mono", "Consolas", monospace;
+    -fx-font-size: 13;
+    -fx-caret-color: #528bff;
+    -fx-highlight-fill: #3e4451;
+}
+.mt-rename-field:focused {
+    -fx-border-color: #6ea1ff;
+}
+
+/* ===========================================================
    Tooltips (hover info)
    =========================================================== */
 .tooltip {
