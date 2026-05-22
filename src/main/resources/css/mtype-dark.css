@@ -1,0 +1,255 @@
+/* ===========================================================
+   mType Dark — Atom One Dark palette
+   ported from C:\matan\mType\mtype-vscode-extension\themes\mtype-dark-theme.json
+   =========================================================== */
+
+.root {
+    -fx-base: #282c34;
+    -fx-background: #282c34;
+    -fx-control-inner-background: #282c34;
+    -fx-text-fill: #abb2bf;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+.label, .menu, .menu-item, .check-menu-item,
+.menu-bar > .menu .label {
+    -fx-text-fill: #abb2bf;
+}
+
+.menu-bar {
+    -fx-background-color: #21252b;
+}
+
+.menu-bar > .menu > .label {
+    -fx-text-fill: #abb2bf;
+}
+
+.tool-bar {
+    -fx-background-color: #21252b;
+    -fx-padding: 4 6 4 6;
+}
+
+.button {
+    -fx-background-color: #3a3f4b;
+    -fx-text-fill: #abb2bf;
+    -fx-background-radius: 3;
+    -fx-padding: 4 10 4 10;
+}
+.button:hover {
+    -fx-background-color: #4b5263;
+}
+.button:disabled {
+    -fx-opacity: 0.45;
+}
+
+.split-pane {
+    -fx-background-color: #282c34;
+    -fx-padding: 0;
+}
+.split-pane > .split-pane-divider {
+    -fx-background-color: #181a1f;
+    -fx-padding: 0 1 0 1;
+}
+
+/* ----- Tabs ----- */
+.tab-pane {
+    -fx-background-color: #282c34;
+}
+.tab-pane > .tab-header-background {
+    -fx-background-color: #21252b;
+}
+.tab-pane > .tab-header-area > .headers-region > .tab {
+    -fx-background-color: #21252b;
+    -fx-background-insets: 0;
+    -fx-padding: 4 12 4 12;
+}
+.tab-pane > .tab-header-area > .headers-region > .tab:selected {
+    -fx-background-color: #282c34;
+    -fx-border-color: transparent transparent #528bff transparent;
+    -fx-border-width: 0 0 2 0;
+}
+.tab-pane > .tab-header-area > .headers-region > .tab .tab-label {
+    -fx-text-fill: #abb2bf;
+}
+.tab-pane > .tab-header-area > .headers-region > .tab:selected .tab-label {
+    -fx-text-fill: #ffffff;
+}
+
+/* ----- Tree (file explorer) ----- */
+.tree-view {
+    -fx-background-color: #21252b;
+    -fx-control-inner-background: #21252b;
+    -fx-border-color: transparent;
+}
+.tree-cell {
+    -fx-background-color: #21252b;
+    -fx-text-fill: #abb2bf;
+    -fx-padding: 2 4 2 4;
+}
+.tree-cell:filled:selected {
+    -fx-background-color: #3e4451;
+    -fx-text-fill: #ffffff;
+}
+.tree-cell:filled:hover {
+    -fx-background-color: #2c313c;
+}
+
+/* ----- Read-only output panels ----- */
+.text-area, .text-area .content {
+    -fx-background-color: #282c34;
+    -fx-control-inner-background: #282c34;
+    -fx-text-fill: #abb2bf;
+}
+.mt-output {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12.5;
+    -fx-background-color: #282c34;
+    -fx-text-fill: #abb2bf;
+}
+
+/* ----- Status bar ----- */
+.mt-status-bar {
+    -fx-background-color: #21252b;
+    -fx-border-color: #181a1f transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+.mt-status-bar .label {
+    -fx-text-fill: #abb2bf;
+    -fx-font-size: 11.5;
+}
+
+/* ===========================================================
+   Code editor (RichTextFX CodeArea)
+   =========================================================== */
+.code-area,
+.styled-text-area {
+    -fx-background-color: #282c34;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", "Consolas", "Courier New", monospace;
+    -fx-font-size: 14;
+}
+
+/* Default text fill — applied to every Text node RichTextFX renders */
+.styled-text-area .text,
+.code-area .text,
+.styled-text-area > .scroll-pane > .viewport > * > .paragraph-box > .paragraph-text > .text {
+    -fx-fill: #abb2bf;
+    -fx-font-smoothing-type: lcd;
+}
+
+.code-area .caret,
+.styled-text-area .caret {
+    -fx-stroke: #528bff;
+    -fx-fill: #528bff;
+    -fx-stroke-width: 2;
+}
+
+.code-area .selection,
+.styled-text-area .selection {
+    -fx-fill: #3e4451;
+}
+
+/* Gutter / line numbers */
+.lineno {
+    -fx-text-fill: #636d83;
+    -fx-background-color: #282c34;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12.5;
+    -fx-padding: 0 10 0 8;
+}
+
+/* ===========================================================
+   Token colors (Atom One Dark)
+   Selectors are intentionally high-specificity so they beat
+   the default `.styled-text-area .text` rule above.
+   =========================================================== */
+.styled-text-area .text.mt-comment,
+.code-area .text.mt-comment        { -fx-fill: #5c6370; -fx-font-style: italic; }
+
+.styled-text-area .text.mt-string,
+.code-area .text.mt-string         { -fx-fill: #98c379; }
+.styled-text-area .text.mt-string-escape,
+.code-area .text.mt-string-escape  { -fx-fill: #56b6c2; }
+
+.styled-text-area .text.mt-keyword,
+.code-area .text.mt-keyword        { -fx-fill: #c678dd; }
+.styled-text-area .text.mt-modifier,
+.code-area .text.mt-modifier       { -fx-fill: #c678dd; -fx-font-style: italic; }
+
+.styled-text-area .text.mt-primitive,
+.code-area .text.mt-primitive      { -fx-fill: #e5c07b; }
+.styled-text-area .text.mt-type,
+.code-area .text.mt-type           { -fx-fill: #e5c07b; }
+
+.styled-text-area .text.mt-number,
+.code-area .text.mt-number         { -fx-fill: #d19a66; }
+.styled-text-area .text.mt-constant,
+.code-area .text.mt-constant       { -fx-fill: #d19a66; }
+
+.styled-text-area .text.mt-function,
+.code-area .text.mt-function       { -fx-fill: #61afef; }
+.styled-text-area .text.mt-member,
+.code-area .text.mt-member         { -fx-fill: #e06c75; }
+
+.styled-text-area .text.mt-bracket,
+.code-area .text.mt-bracket        { -fx-fill: #56b6c2; }
+.styled-text-area .text.mt-operator,
+.code-area .text.mt-operator       { -fx-fill: #56b6c2; }
+.styled-text-area .text.mt-punct,
+.code-area .text.mt-punct          { -fx-fill: #abb2bf; }
+
+.styled-text-area .text.mt-annotation,
+.code-area .text.mt-annotation     { -fx-fill: #e5c07b; -fx-font-weight: bold; }
+
+/* ===========================================================
+   Diagnostic underlines (overlaid on token spans)
+   =========================================================== */
+.mt-diag-error {
+    -rtfx-underline-color: #e06c75;
+    -rtfx-underline-width: 1.0;
+    -rtfx-underline-dash-array: 2 2;
+}
+.mt-diag-warning {
+    -rtfx-underline-color: #e5c07b;
+    -rtfx-underline-width: 1.0;
+    -rtfx-underline-dash-array: 2 2;
+}
+.mt-diag-info {
+    -rtfx-underline-color: #61afef;
+    -rtfx-underline-width: 1.0;
+    -rtfx-underline-dash-array: 2 2;
+}
+
+/* ===========================================================
+   Context menus (completion popup)
+   =========================================================== */
+.context-menu {
+    -fx-background-color: #21252b;
+    -fx-border-color: #181a1f;
+    -fx-border-width: 1;
+    -fx-padding: 2;
+}
+.menu-item {
+    -fx-padding: 3 12 3 12;
+}
+.menu-item .label {
+    -fx-text-fill: #abb2bf;
+}
+.menu-item:focused {
+    -fx-background-color: #3e4451;
+}
+.menu-item:focused .label {
+    -fx-text-fill: #ffffff;
+}
+
+/* ===========================================================
+   Tooltips (hover info)
+   =========================================================== */
+.tooltip {
+    -fx-background-color: #21252b;
+    -fx-text-fill: #abb2bf;
+    -fx-border-color: #181a1f;
+    -fx-border-width: 1;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 12;
+}
