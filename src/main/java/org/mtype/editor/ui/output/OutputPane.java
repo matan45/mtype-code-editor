@@ -10,13 +10,17 @@ import javafx.scene.control.TextArea;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import org.eclipse.lsp4j.CallHierarchyItem;
+import org.fxmisc.flowless.VirtualizedScrollPane;
+import org.fxmisc.richtext.InlineCssTextArea;
 import org.mtype.editor.app.AppContext;
 
 public class OutputPane extends TabPane {
     private final TextArea runArea = new TextArea();
     private final TextArea lspArea = new TextArea();
+    private final InlineCssTextArea compileArea = new InlineCssTextArea();
     private final Tab runTab;
     private final Tab lspTab;
+    private final Tab compileTab;
     private final Tab callHierarchyTab;
     private final Tab problemsTab;
     private CallHierarchyPane callHierarchyPane;
@@ -27,6 +31,8 @@ public class OutputPane extends TabPane {
         runArea.getStyleClass().add("mt-output");
         lspArea.setEditable(false);
         lspArea.getStyleClass().add("mt-output");
+        compileArea.setEditable(false);
+        compileArea.getStyleClass().add("mt-output");
 
         runTab = new Tab("Run", runArea);
         runTab.setClosable(false);
@@ -42,12 +48,25 @@ public class OutputPane extends TabPane {
         lspContent.setTop(lspToolbar);
         lspTab = new Tab("LSP Log", lspContent);
         lspTab.setClosable(false);
+
+        Button clearCompileButton = new Button("Clear");
+        clearCompileButton.getStyleClass().add("mt-output-toolbar-button");
+        clearCompileButton.setOnAction(e -> compileArea.clear());
+        HBox compileToolbar = new HBox(clearCompileButton);
+        compileToolbar.setAlignment(Pos.CENTER_RIGHT);
+        compileToolbar.setPadding(new Insets(4, 6, 4, 6));
+        compileToolbar.getStyleClass().add("mt-output-toolbar");
+        BorderPane compileContent = new BorderPane(new VirtualizedScrollPane<>(compileArea));
+        compileContent.setTop(compileToolbar);
+        compileTab = new Tab("Compile", compileContent);
+        compileTab.setClosable(false);
+
         callHierarchyTab = new Tab("Call Hierarchy");
         callHierarchyTab.setClosable(false);
         problemsTab = new Tab("Problems");
         problemsTab.setClosable(false);
 
-        getTabs().addAll(problemsTab, runTab, lspTab, callHierarchyTab);
+        getTabs().addAll(problemsTab, runTab, compileTab, lspTab, callHierarchyTab);
         getStyleClass().add("mt-output-pane");
         setTabClosingPolicy(TabClosingPolicy.UNAVAILABLE);
     }
@@ -89,12 +108,33 @@ public class OutputPane extends TabPane {
         Platform.runLater(() -> lspArea.appendText(text));
     }
 
+    public void appendCompile(String line, boolean stderr) {
+        String text = line + System.lineSeparator();
+        String style = stderr ? "-fx-fill: #e06c75;" : "";
+        Platform.runLater(() -> {
+            int start = compileArea.getLength();
+            compileArea.appendText(text);
+            int end = compileArea.getLength();
+            compileArea.setStyle(start, end, style);
+            compileArea.moveTo(end);
+            compileArea.requestFollowCaret();
+        });
+    }
+
     public void clearRun() {
         Platform.runLater(runArea::clear);
     }
 
+    public void clearCompile() {
+        Platform.runLater(compileArea::clear);
+    }
+
     public void focusRun() {
         Platform.runLater(() -> getSelectionModel().select(runTab));
+    }
+
+    public void focusCompile() {
+        Platform.runLater(() -> getSelectionModel().select(compileTab));
     }
 
     public void focusLsp() {

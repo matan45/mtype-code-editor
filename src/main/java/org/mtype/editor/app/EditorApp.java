@@ -29,7 +29,10 @@ import javafx.scene.text.Font;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import org.mtype.editor.lsp.LspBridge;
+import org.mtype.editor.process.BuildController;
 import org.mtype.editor.process.RunController;
+import org.mtype.editor.ui.dialogs.NewProjectDialog;
+import org.mtype.editor.ui.dialogs.NewWorkspaceDialog;
 import org.mtype.editor.ui.editor.EditorTabPane;
 import org.mtype.editor.ui.git.GitChangesView;
 import org.mtype.editor.ui.output.OutputPane;
@@ -78,6 +81,9 @@ public class EditorApp extends Application {
         RunController runController = new RunController(ctx);
         ctx.setRunController(runController);
 
+        BuildController buildController = new BuildController(ctx);
+        ctx.setBuildController(buildController);
+
         Button runBtn = new Button("Run");
         Button stopBtn = new Button("Stop");
         runBtn.disableProperty().bind(runController.runningProperty());
@@ -88,7 +94,15 @@ public class EditorApp extends Application {
         });
         stopBtn.setOnAction(e -> runController.stop());
 
-        ToolBar toolbar = new ToolBar(runBtn, stopBtn);
+        Button buildBtn = new Button("Build");
+        Button stopBuildBtn = new Button("Stop Build");
+        buildBtn.disableProperty().bind(
+                buildController.buildingProperty().or(ctx.hasProjectFileProperty().not()));
+        stopBuildBtn.disableProperty().bind(buildController.buildingProperty().not());
+        buildBtn.setOnAction(_ -> buildController.build());
+        stopBuildBtn.setOnAction(_ -> buildController.stop());
+
+        ToolBar toolbar = new ToolBar(runBtn, stopBtn, buildBtn, stopBuildBtn);
 
         MenuBar menuBar = buildMenuBar();
         BorderPane topBar = new BorderPane();
@@ -132,6 +146,12 @@ public class EditorApp extends Application {
                 KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN));
         openFolder.setOnAction(e -> openFolder());
 
+        MenuItem newProject = new MenuItem("New Project...");
+        newProject.setOnAction(e -> openNewProjectDialog());
+
+        MenuItem newWorkspace = new MenuItem("New Workspace...");
+        newWorkspace.setOnAction(e -> openNewWorkspaceDialog());
+
         MenuItem save = new MenuItem("Save");
         save.setAccelerator(new KeyCodeCombination(KeyCode.S, KeyCombination.SHORTCUT_DOWN));
         save.setOnAction(e -> ctx.getTabPane().saveActive());
@@ -143,7 +163,9 @@ public class EditorApp extends Application {
         MenuItem exit = new MenuItem("Exit");
         exit.setOnAction(e -> { shutdown(); Platform.exit(); });
 
-        file.getItems().addAll(openFolder, save, new SeparatorMenuItem(), settings, new SeparatorMenuItem(), exit);
+        file.getItems().addAll(openFolder, new SeparatorMenuItem(), newProject, newWorkspace,
+                new SeparatorMenuItem(), save, new SeparatorMenuItem(), settings,
+                new SeparatorMenuItem(), exit);
 
         Menu code = new Menu("Code");
         MenuItem format = new MenuItem("Format Document");
@@ -166,7 +188,47 @@ public class EditorApp extends Application {
 
         code.getItems().addAll(format, goToDef, rename, callHierarchy);
 
-        mb.getMenus().addAll(file, code);
+        Menu build = new Menu("Build");
+        BuildController bc = ctx.getBuildController();
+        javafx.beans.binding.BooleanBinding noBuild =
+                bc.buildingProperty().or(ctx.hasProjectFileProperty().not());
+
+        MenuItem buildItem = new MenuItem("Build");
+        buildItem.setAccelerator(new KeyCodeCombination(KeyCode.B, KeyCombination.SHORTCUT_DOWN));
+        buildItem.setOnAction(e -> bc.build());
+        buildItem.disableProperty().bind(noBuild);
+
+        MenuItem buildLib = new MenuItem("Build Library");
+        buildLib.setOnAction(e -> bc.buildLibrary());
+        buildLib.disableProperty().bind(noBuild);
+
+        MenuItem buildExe = new MenuItem("Build Executable");
+        buildExe.setOnAction(e -> bc.buildExecutable());
+        buildExe.disableProperty().bind(noBuild);
+
+        MenuItem buildGui = new MenuItem("Build GUI Executable");
+        buildGui.setOnAction(e -> bc.buildGuiExecutable());
+        buildGui.disableProperty().bind(noBuild);
+
+        MenuItem depsTree = new MenuItem("Show Dependency Tree");
+        depsTree.setOnAction(e -> bc.showDepsTree());
+        depsTree.disableProperty().bind(noBuild);
+
+        MenuItem depsForFile = new MenuItem("Show Dependencies for Current File");
+        depsForFile.setAccelerator(new KeyCodeCombination(KeyCode.D,
+                KeyCombination.CONTROL_DOWN, KeyCombination.ALT_DOWN));
+        depsForFile.setOnAction(e -> bc.showDepsForFile(ctx.getTabPane().activePath()));
+        depsForFile.disableProperty().bind(noBuild);
+
+        MenuItem stopBuild = new MenuItem("Stop Build");
+        stopBuild.setOnAction(e -> bc.stop());
+        stopBuild.disableProperty().bind(bc.buildingProperty().not());
+
+        build.getItems().addAll(buildItem, buildLib, buildExe, buildGui,
+                new SeparatorMenuItem(), depsTree, depsForFile,
+                new SeparatorMenuItem(), stopBuild);
+
+        mb.getMenus().addAll(file, code, build);
         return mb;
     }
 
@@ -184,6 +246,44 @@ public class EditorApp extends Application {
         });
     }
 
+    private void openNewProjectDialog() {
+        Path root = resolveTargetRoot("Choose location for new project");
+        if (root == null) return;
+        boolean wasOpen = ctx.getWorkspace() != null
+                && ctx.getWorkspace().getRoot().equals(root);
+        NewProjectDialog dlg = new NewProjectDialog(stage, root);
+        dlg.showAndWait().ifPresent(p -> afterScaffoldWritten(p, root, wasOpen));
+    }
+
+    private void openNewWorkspaceDialog() {
+        Path root = resolveTargetRoot("Choose location for new workspace");
+        if (root == null) return;
+        boolean wasOpen = ctx.getWorkspace() != null
+                && ctx.getWorkspace().getRoot().equals(root);
+        NewWorkspaceDialog dlg = new NewWorkspaceDialog(stage, root);
+        dlg.showAndWait().ifPresent(p -> afterScaffoldWritten(p, root, wasOpen));
+    }
+
+    private Path resolveTargetRoot(String chooserTitle) {
+        if (ctx.getWorkspace() != null) return ctx.getWorkspace().getRoot();
+        DirectoryChooser dc = new DirectoryChooser();
+        dc.setTitle(chooserTitle);
+        File chosen = dc.showDialog(stage);
+        return chosen == null ? null : chosen.toPath();
+    }
+
+    private void afterScaffoldWritten(Path writtenFile, Path root, boolean wasAlreadyOpen) {
+        if (!wasAlreadyOpen) {
+            ctx.openWorkspace(new Workspace(root));
+            stage.setTitle("mType Editor - " + root.getFileName());
+        } else {
+            ctx.getTreeView().refresh();
+            ctx.refreshHasProjectFile();
+        }
+        ctx.getTabPane().openFile(writtenFile);
+        ctx.getStatusBar().setMessage("Created " + writtenFile.getFileName());
+    }
+
     private void openFolder() {
         DirectoryChooser dc = new DirectoryChooser();
         dc.setTitle("Open Folder");
@@ -196,7 +296,19 @@ public class EditorApp extends Application {
     }
 
     private Node buildSidePanel(WorkspaceTreeView tree, GitChangesView gitChanges) {
-        StackPane content = new StackPane(tree, gitChanges);
+        Button newProjectBtn = new Button("+ Project");
+        Button newWorkspaceBtn = new Button("+ Workspace");
+        newProjectBtn.setTooltip(new Tooltip("Create a new .mtproj — picks a folder if none is open"));
+        newWorkspaceBtn.setTooltip(new Tooltip("Create a new .mtworkspace — picks a folder if none is open"));
+        newProjectBtn.setOnAction(e -> openNewProjectDialog());
+        newWorkspaceBtn.setOnAction(e -> openNewWorkspaceDialog());
+        ToolBar treeToolbar = new ToolBar(newProjectBtn, newWorkspaceBtn);
+        treeToolbar.getStyleClass().add("mt-tree-toolbar");
+
+        BorderPane treeWithToolbar = new BorderPane(tree);
+        treeWithToolbar.setBottom(treeToolbar);
+
+        StackPane content = new StackPane(treeWithToolbar, gitChanges);
         gitChanges.setVisible(false);
         gitChanges.setManaged(false);
 
@@ -209,7 +321,7 @@ public class EditorApp extends Application {
 
         explorerButton.setOnAction(e -> {
             explorerButton.setSelected(true);
-            showPanel(content, tree);
+            showPanel(content, treeWithToolbar);
         });
         gitButton.setOnAction(e -> {
             gitButton.setSelected(true);
@@ -290,6 +402,7 @@ public class EditorApp extends Application {
         if (shutdownStarted) return;
         shutdownStarted = true;
         try { if (ctx.getRunController() != null) ctx.getRunController().stop(); } catch (Exception ignored) {}
+        try { if (ctx.getBuildController() != null) ctx.getBuildController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getLspBridge() != null) ctx.getLspBridge().stop(); } catch (Exception ignored) {}
     }
 

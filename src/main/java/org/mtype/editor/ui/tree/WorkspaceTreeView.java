@@ -43,6 +43,11 @@ public class WorkspaceTreeView extends TreeView<Path> {
         });
     }
 
+    public void refresh() {
+        Workspace ws = ctx.getWorkspace();
+        if (ws != null) setWorkspace(ws);
+    }
+
 
     private static class LazyTreeItem extends TreeItem<Path> {
         private boolean loaded;
