@@ -39,7 +39,7 @@ public class EditorTabPane extends TabPane {
             getTabs().remove(existing);
             diffs.remove(file);
         }
-        DiffTab tab = new DiffTab(file, title, leftText, rightText, binary);
+        DiffTab tab = new DiffTab(ctx, file, title, leftText, rightText, binary);
         diffs.put(file, tab);
         getTabs().add(tab);
         getSelectionModel().select(tab);

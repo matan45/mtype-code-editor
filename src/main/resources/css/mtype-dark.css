@@ -1140,6 +1140,27 @@
     -fx-font-size: 11.5;
     -fx-font-weight: bold;
 }
+.mt-diff-gutter-row {
+    -fx-background-color: #282c34;
+    -fx-border-color: transparent #3b414d transparent transparent;
+    -fx-border-width: 0 1 0 0;
+}
+.mt-diff-gutter-row .lineno {
+    -fx-border-width: 0;
+}
+.mt-diff-revert {
+    -fx-text-fill: #5c6370;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 11;
+    -fx-min-width: 16;
+    -fx-padding: 0 2 0 2;
+    -fx-cursor: hand;
+}
+.mt-diff-revert:hover {
+    -fx-text-fill: #e5c07b;
+    -fx-background-color: #3e4451;
+    -fx-background-radius: 3;
+}
 
 /* ===========================================================
    QuickPick dialog
