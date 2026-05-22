@@ -12,6 +12,7 @@ import java.util.Map;
 public class EditorTabPane extends TabPane {
     private final AppContext ctx;
     private final Map<Path, EditorTab> open = new HashMap<>();
+    private final Map<Path, DiffTab> diffs = new HashMap<>();
 
     public EditorTabPane(AppContext ctx) {
         this.ctx = ctx;
@@ -23,11 +24,25 @@ public class EditorTabPane extends TabPane {
                         if (t instanceof EditorTab et) {
                             open.remove(et.getPath());
                             et.onClosed();
+                        } else if (t instanceof DiffTab dt) {
+                            diffs.remove(dt.getPath());
                         }
                     }
                 }
             }
         });
+    }
+
+    public void openDiff(Path file, String leftText, String rightText, String title, boolean binary) {
+        DiffTab existing = diffs.get(file);
+        if (existing != null) {
+            getTabs().remove(existing);
+            diffs.remove(file);
+        }
+        DiffTab tab = new DiffTab(file, title, leftText, rightText, binary);
+        diffs.put(file, tab);
+        getTabs().add(tab);
+        getSelectionModel().select(tab);
     }
 
     public void openFile(Path path) {
@@ -91,6 +106,7 @@ public class EditorTabPane extends TabPane {
             t.onClosed();
         }
         open.clear();
+        diffs.clear();
         getTabs().clear();
     }
 

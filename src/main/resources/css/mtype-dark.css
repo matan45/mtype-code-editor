@@ -1019,3 +1019,136 @@
     -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
     -fx-font-size: 12;
 }
+
+/* ===========================================================
+   Git panel — commit row + hover actions + branch chip
+   =========================================================== */
+.mt-git-commit-box {
+    -fx-background-color: #21252b;
+    -fx-border-color: transparent transparent #181a1f transparent;
+    -fx-border-width: 0 0 1 0;
+}
+.mt-git-commit-msg {
+    -fx-control-inner-background: #1c1f25;
+    -fx-background-color: #1c1f25;
+    -fx-text-fill: #d7dae0;
+    -fx-font-family: "Segoe UI", "Inter", "Arial", sans-serif;
+    -fx-font-size: 12.5;
+    -fx-border-color: #3e4451;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+}
+.mt-git-commit-msg .content {
+    -fx-background-color: #1c1f25;
+}
+.mt-git-commit-btn {
+    -fx-background-color: #2d4263;
+    -fx-text-fill: #e4ebf5;
+    -fx-font-size: 12;
+    -fx-padding: 5 12 5 12;
+    -fx-background-radius: 3;
+}
+.mt-git-commit-btn:hover {
+    -fx-background-color: #3a5689;
+}
+.mt-git-commit-btn:disabled {
+    -fx-opacity: 0.4;
+}
+.mt-git-branch-chip {
+    -fx-text-fill: #98c379;
+    -fx-font-size: 11.5;
+    -fx-padding: 2 6 2 6;
+    -fx-background-color: #2c313a;
+    -fx-background-radius: 3;
+    -fx-border-color: #3e4451;
+    -fx-border-radius: 3;
+}
+.mt-git-tree .tree-cell {
+    -fx-padding: 0;
+}
+.mt-git-tree .tree-cell.mt-git-file {
+    -fx-padding: 0 8 0 14;
+}
+.mt-git-badge {
+    -fx-text-fill: #61afef;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 11;
+    -fx-min-width: 12;
+}
+.mt-git-name {
+    -fx-text-fill: #abb2bf;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 12;
+}
+.mt-git-actions {
+    -fx-padding: 0 4 0 4;
+}
+.mt-git-action-icon {
+    -fx-text-fill: #98a0ad;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 13;
+    -fx-padding: 0 5 0 5;
+    -fx-cursor: hand;
+}
+.mt-git-action-icon:hover {
+    -fx-text-fill: #d7dae0;
+    -fx-background-color: #3e4451;
+    -fx-background-radius: 3;
+}
+
+/* ===========================================================
+   Status bar — clickable branch indicator
+   =========================================================== */
+.mt-status-branch {
+    -fx-text-fill: #98c379;
+    -fx-font-size: 11.5;
+    -fx-padding: 0 8 0 0;
+    -fx-cursor: hand;
+}
+.mt-status-branch:hover {
+    -fx-underline: true;
+}
+
+/* ===========================================================
+   Diff view
+   =========================================================== */
+.mt-diff-area {
+    -fx-background-color: #282c34;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 13;
+}
+.mt-diff-area .paragraph-text.mt-diff-del,
+.mt-diff-area .paragraph-box.mt-diff-del {
+    -fx-background-color: rgba(224,108,117,0.18);
+}
+.mt-diff-area .paragraph-text.mt-diff-add,
+.mt-diff-area .paragraph-box.mt-diff-add {
+    -fx-background-color: rgba(152,195,121,0.20);
+}
+.mt-diff-area .paragraph-text.mt-diff-pad,
+.mt-diff-area .paragraph-box.mt-diff-pad {
+    -fx-background-color: rgba(60,64,72,0.35);
+}
+.mt-diff-header-bar {
+    -fx-background-color: #21252b;
+    -fx-border-color: transparent transparent #181a1f transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 4 10 4 10;
+}
+.mt-diff-header {
+    -fx-text-fill: #98a0ad;
+    -fx-font-size: 11.5;
+    -fx-font-weight: bold;
+}
+
+/* ===========================================================
+   QuickPick dialog
+   =========================================================== */
+.mt-quickpick-label {
+    -fx-text-fill: #d7dae0;
+    -fx-font-size: 12.5;
+}
+.mt-quickpick-desc {
+    -fx-text-fill: #636d83;
+    -fx-font-size: 11;
+}

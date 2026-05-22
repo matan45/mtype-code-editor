@@ -28,6 +28,7 @@ import javafx.scene.shape.SVGPath;
 import javafx.scene.text.Font;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
+import org.mtype.editor.git.GitService;
 import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.process.BuildController;
 import org.mtype.editor.process.RunController;
@@ -69,6 +70,9 @@ public class EditorApp extends Application {
 
         WorkspaceTreeView tree = new WorkspaceTreeView(ctx);
         ctx.setTreeView(tree);
+
+        GitService gitService = new GitService(ctx);
+        ctx.setGitService(gitService);
 
         GitChangesView gitChanges = new GitChangesView(ctx);
         ctx.setGitChangesView(gitChanges);

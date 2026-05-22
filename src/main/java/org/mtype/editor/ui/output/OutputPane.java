@@ -18,9 +18,11 @@ public class OutputPane extends TabPane {
     private final TextArea runArea = new TextArea();
     private final TextArea lspArea = new TextArea();
     private final InlineCssTextArea compileArea = new InlineCssTextArea();
+    private final InlineCssTextArea gitArea = new InlineCssTextArea();
     private final Tab runTab;
     private final Tab lspTab;
     private final Tab compileTab;
+    private final Tab gitTab;
     private final Tab callHierarchyTab;
     private final Tab problemsTab;
     private CallHierarchyPane callHierarchyPane;
@@ -33,6 +35,8 @@ public class OutputPane extends TabPane {
         lspArea.getStyleClass().add("mt-output");
         compileArea.setEditable(false);
         compileArea.getStyleClass().add("mt-output");
+        gitArea.setEditable(false);
+        gitArea.getStyleClass().add("mt-output");
 
         runTab = new Tab("Run", runArea);
         runTab.setClosable(false);
@@ -61,12 +65,24 @@ public class OutputPane extends TabPane {
         compileTab = new Tab("Compile", compileContent);
         compileTab.setClosable(false);
 
+        Button clearGitButton = new Button("Clear");
+        clearGitButton.getStyleClass().add("mt-output-toolbar-button");
+        clearGitButton.setOnAction(e -> gitArea.clear());
+        HBox gitToolbar = new HBox(clearGitButton);
+        gitToolbar.setAlignment(Pos.CENTER_RIGHT);
+        gitToolbar.setPadding(new Insets(4, 6, 4, 6));
+        gitToolbar.getStyleClass().add("mt-output-toolbar");
+        BorderPane gitContent = new BorderPane(new VirtualizedScrollPane<>(gitArea));
+        gitContent.setTop(gitToolbar);
+        gitTab = new Tab("Git", gitContent);
+        gitTab.setClosable(false);
+
         callHierarchyTab = new Tab("Call Hierarchy");
         callHierarchyTab.setClosable(false);
         problemsTab = new Tab("Problems");
         problemsTab.setClosable(false);
 
-        getTabs().addAll(problemsTab, runTab, compileTab, lspTab, callHierarchyTab);
+        getTabs().addAll(problemsTab, runTab, compileTab, lspTab, gitTab, callHierarchyTab);
         getStyleClass().add("mt-output-pane");
         setTabClosingPolicy(TabClosingPolicy.UNAVAILABLE);
     }
@@ -121,12 +137,29 @@ public class OutputPane extends TabPane {
         });
     }
 
+    public void appendGit(String line, boolean stderr) {
+        String text = line + System.lineSeparator();
+        String style = stderr ? "-fx-fill: #e06c75;" : "";
+        Platform.runLater(() -> {
+            int start = gitArea.getLength();
+            gitArea.appendText(text);
+            int end = gitArea.getLength();
+            gitArea.setStyle(start, end, style);
+            gitArea.moveTo(end);
+            gitArea.requestFollowCaret();
+        });
+    }
+
     public void clearRun() {
         Platform.runLater(runArea::clear);
     }
 
     public void clearCompile() {
         Platform.runLater(compileArea::clear);
+    }
+
+    public void clearGit() {
+        Platform.runLater(gitArea::clear);
     }
 
     public void focusRun() {
@@ -139,5 +172,9 @@ public class OutputPane extends TabPane {
 
     public void focusLsp() {
         Platform.runLater(() -> getSelectionModel().select(lspTab));
+    }
+
+    public void focusGit() {
+        Platform.runLater(() -> getSelectionModel().select(gitTab));
     }
 }

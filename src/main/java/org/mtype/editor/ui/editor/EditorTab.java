@@ -210,6 +210,7 @@ public class EditorTab extends Tab {
             dirty.set(false);
             setText(path.getFileName().toString());
             ctx.getStatusBar().setMessage("Saved " + path.getFileName());
+            if (ctx.getGitChangesView() != null) ctx.getGitChangesView().refresh();
         } catch (Exception ex) {
             ctx.getStatusBar().setMessage("Save failed: " + ex.getMessage());
         }

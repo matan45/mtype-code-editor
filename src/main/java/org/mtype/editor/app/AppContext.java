@@ -2,6 +2,7 @@ package org.mtype.editor.app;
 
 import javafx.beans.property.ReadOnlyBooleanProperty;
 import javafx.beans.property.ReadOnlyBooleanWrapper;
+import org.mtype.editor.git.GitService;
 import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.process.BuildController;
 import org.mtype.editor.process.RunController;
@@ -27,6 +28,7 @@ public class AppContext {
     private StatusBar statusBar;
     private WorkspaceTreeView treeView;
     private GitChangesView gitChangesView;
+    private GitService gitService;
     private FindInFilesWindow findInFilesWindow;
     private final ReadOnlyBooleanWrapper hasProjectFile = new ReadOnlyBooleanWrapper(false);
     private final ReadOnlyBooleanWrapper workspaceOpen = new ReadOnlyBooleanWrapper(false);
@@ -42,6 +44,7 @@ public class AppContext {
     public StatusBar getStatusBar() { return statusBar; }
     public WorkspaceTreeView getTreeView() { return treeView; }
     public GitChangesView getGitChangesView() { return gitChangesView; }
+    public GitService getGitService() { return gitService; }
     public FindInFilesWindow getFindInFilesWindow() { return findInFilesWindow; }
     public ReadOnlyBooleanProperty hasProjectFileProperty() { return hasProjectFile.getReadOnlyProperty(); }
     public ReadOnlyBooleanProperty workspaceOpenProperty() { return workspaceOpen.getReadOnlyProperty(); }
@@ -56,6 +59,7 @@ public class AppContext {
     public void setStatusBar(StatusBar s) { this.statusBar = s; }
     public void setTreeView(WorkspaceTreeView t) { this.treeView = t; }
     public void setGitChangesView(GitChangesView g) { this.gitChangesView = g; }
+    public void setGitService(GitService s) { this.gitService = s; }
     public void setFindInFilesWindow(FindInFilesWindow w) { this.findInFilesWindow = w; }
 
     public void refreshHasProjectFile() {

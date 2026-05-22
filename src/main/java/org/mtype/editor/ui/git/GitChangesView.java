@@ -1,10 +1,20 @@
 package org.mtype.editor.ui.git;
 
 import javafx.application.Platform;
+import javafx.beans.binding.Bindings;
+import javafx.beans.property.SimpleIntegerProperty;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
+import javafx.scene.control.Menu;
+import javafx.scene.control.MenuButton;
+import javafx.scene.control.MenuItem;
+import javafx.scene.control.SelectionMode;
+import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.TextArea;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
@@ -13,31 +23,33 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.VBox;
+import javafx.stage.Window;
 import org.mtype.editor.app.AppContext;
+import org.mtype.editor.git.GitService;
+import org.mtype.editor.git.GitService.StatusEntry;
+import org.mtype.editor.ui.dialogs.Dialogs;
+import org.mtype.editor.ui.dialogs.QuickPickDialog;
 import org.mtype.editor.workspace.Workspace;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 public class GitChangesView extends BorderPane {
-    private static final ExecutorService EXEC = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "mtype-git-status");
-        t.setDaemon(true);
-        return t;
-    });
-
     private final AppContext ctx;
     private final Label stateLabel = new Label("Open a folder to view Git changes");
     private final TreeView<GitNode> tree = new TreeView<>();
+    private final TextArea commitMessage = new TextArea();
+    private final Button commitButton = new Button("Commit");
+    private final Label branchChip = new Label("");
+    private final SimpleIntegerProperty stagedCount = new SimpleIntegerProperty(0);
     private Workspace workspace;
+    private String currentBranch = "";
 
     public GitChangesView(AppContext ctx) {
         this.ctx = ctx;
@@ -46,6 +58,15 @@ public class GitChangesView extends BorderPane {
         Label title = new Label("Source Control");
         title.getStyleClass().add("mt-panel-title");
 
+        branchChip.getStyleClass().add("mt-git-branch-chip");
+        branchChip.setVisible(false);
+        branchChip.setManaged(false);
+
+        MenuButton overflow = new MenuButton("⋯");
+        overflow.getStyleClass().add("mt-panel-button");
+        overflow.setTooltip(new Tooltip("More actions"));
+        buildOverflowMenu(overflow);
+
         Button refresh = new Button("Refresh");
         refresh.getStyleClass().add("mt-panel-button");
         refresh.setOnAction(e -> refresh());
@@ -53,12 +74,41 @@ public class GitChangesView extends BorderPane {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox header = new HBox(title, spacer, refresh);
+        HBox header = new HBox(title, branchChip, spacer, overflow, refresh);
         header.setAlignment(Pos.CENTER_LEFT);
+        header.setSpacing(6);
         header.setPadding(new Insets(8, 10, 6, 10));
         header.getStyleClass().add("mt-panel-header");
 
+        commitMessage.setPromptText("Commit message (Ctrl+Enter to commit)");
+        commitMessage.setPrefRowCount(2);
+        commitMessage.setWrapText(true);
+        commitMessage.getStyleClass().add("mt-git-commit-msg");
+        commitMessage.setOnKeyPressed(e -> {
+            if (e.isControlDown() && e.getCode() == javafx.scene.input.KeyCode.ENTER) {
+                doCommit();
+                e.consume();
+            }
+        });
+
+        commitButton.getStyleClass().add("mt-git-commit-btn");
+        commitButton.setMaxWidth(Double.MAX_VALUE);
+        commitButton.disableProperty().bind(
+                Bindings.createBooleanBinding(
+                        () -> commitMessage.getText() == null || commitMessage.getText().isBlank() || stagedCount.get() == 0,
+                        commitMessage.textProperty(), stagedCount));
+        commitButton.setOnAction(e -> doCommit());
+
+        VBox commitBox = new VBox(commitMessage, commitButton);
+        commitBox.setSpacing(4);
+        commitBox.setPadding(new Insets(4, 10, 6, 10));
+        commitBox.getStyleClass().add("mt-git-commit-box");
+
+        VBox top = new VBox(header, commitBox);
+        top.getStyleClass().add("mt-git-top");
+
         tree.setShowRoot(false);
+        tree.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         tree.setCellFactory(tv -> new GitTreeCell());
         tree.getStyleClass().add("mt-git-tree");
         tree.setOnMouseClicked(event -> {
@@ -66,17 +116,12 @@ public class GitChangesView extends BorderPane {
                 TreeItem<GitNode> selected = tree.getSelectionModel().getSelectedItem();
                 if (selected == null || selected.getValue() == null) return;
                 Path file = selected.getValue().path();
-                if (file == null) return;
-                if (Files.isRegularFile(file)) {
-                    ctx.getTabPane().openFile(file);
-                } else {
-                    ctx.getStatusBar().setMessage("File is not available: " + file.getFileName());
-                }
+                if (file != null) openDiff(file);
             }
         });
 
         stateLabel.getStyleClass().add("mt-empty-state");
-        setTop(header);
+        setTop(top);
         setCenter(stateLabel);
     }
 
@@ -88,62 +133,53 @@ public class GitChangesView extends BorderPane {
     public void refresh() {
         Workspace ws = workspace;
         if (ws == null) {
+            stagedCount.set(0);
+            currentBranch = "";
+            branchChip.setText("");
+            branchChip.setVisible(false);
+            branchChip.setManaged(false);
+            ctx.getStatusBar().setBranch("", 0, 0, false);
             showMessage("Open a folder to view Git changes");
             return;
         }
-        showMessage("Checking Git status...");
-        EXEC.submit(() -> loadStatus(ws));
-    }
 
-    private void loadStatus(Workspace ws) {
-        try {
-            ProcessBuilder pb = new ProcessBuilder(
-                    "git", "-c", "core.quotePath=false", "status", "--porcelain=v1");
-            pb.directory(ws.getRoot().toFile());
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
+        GitService git = ctx.getGitService();
+        if (git == null) return;
 
-            List<GitEntry> entries = new ArrayList<>();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                    process.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    GitEntry entry = parseLine(ws.getRoot(), line);
-                    if (entry != null) entries.add(entry);
-                }
+        git.status().handleAsync((entries, err) -> {
+            if (err != null || workspace != ws) {
+                if (err != null) showMessage("This folder is not a Git repository");
+                return null;
             }
-            int exit = process.waitFor();
-            if (exit != 0) {
-                Platform.runLater(() -> {
-                    if (workspace == ws) showMessage("This folder is not a Git repository");
-                });
-                return;
+            renderEntries(entries);
+            return null;
+        }, Platform::runLater);
+
+        git.currentBranch().thenCombineAsync(git.aheadBehind(), (branch, ab) -> {
+            if (workspace != ws) return null;
+            currentBranch = branch == null ? "" : branch;
+            if (!currentBranch.isEmpty()) {
+                branchChip.setText("⎇ " + currentBranch);
+                branchChip.setVisible(true);
+                branchChip.setManaged(true);
+            } else {
+                branchChip.setVisible(false);
+                branchChip.setManaged(false);
             }
-            entries.sort(Comparator
-                    .comparing(GitEntry::group)
-                    .thenComparing(e -> e.path().toString().toLowerCase()));
-            Platform.runLater(() -> {
-                if (workspace == ws) showEntries(entries);
-            });
-        } catch (Exception ex) {
-            Platform.runLater(() -> {
-                if (workspace == ws) showMessage("Git status is unavailable");
-            });
-        }
+            ctx.getStatusBar().setBranch(currentBranch, ab.ahead(), ab.behind(), ab.hasUpstream());
+            ctx.getStatusBar().setOnBranchClick(this::openBranchQuickPick);
+            return null;
+        }, Platform::runLater);
     }
 
-    private GitEntry parseLine(Path root, String line) {
-        if (line == null || line.length() < 4) return null;
-        String code = line.substring(0, 2);
-        String rawPath = line.substring(3);
-        int renameArrow = rawPath.indexOf(" -> ");
-        if (renameArrow >= 0) rawPath = rawPath.substring(renameArrow + 4);
+    private void renderEntries(List<StatusEntry> entries) {
+        entries.sort(Comparator
+                .comparing(StatusEntry::group)
+                .thenComparing(e -> e.path().toString().toLowerCase()));
 
-        Path path = root.resolve(rawPath).normalize();
-        return new GitEntry(code, path, groupFor(code), labelFor(code));
-    }
+        int staged = (int) entries.stream().filter(e -> "Staged Changes".equals(e.group())).count();
+        stagedCount.set(staged);
 
-    private void showEntries(List<GitEntry> entries) {
         if (entries.isEmpty()) {
             showMessage("No Git changes");
             return;
@@ -158,11 +194,11 @@ public class GitChangesView extends BorderPane {
         setCenter(tree);
     }
 
-    private void addGroup(TreeItem<GitNode> root, String group, List<GitEntry> entries) {
+    private void addGroup(TreeItem<GitNode> root, String group, List<StatusEntry> entries) {
         TreeItem<GitNode> groupItem = new TreeItem<>(GitNode.group(group));
-        for (GitEntry entry : entries) {
-            if (entry.group().equals(group)) {
-                groupItem.getChildren().add(new TreeItem<>(GitNode.file(entry)));
+        for (StatusEntry e : entries) {
+            if (e.group().equals(group)) {
+                groupItem.getChildren().add(new TreeItem<>(GitNode.file(e)));
             }
         }
         if (!groupItem.getChildren().isEmpty()) {
@@ -176,38 +212,255 @@ public class GitChangesView extends BorderPane {
         setCenter(stateLabel);
     }
 
-    private static String groupFor(String code) {
-        if ("??".equals(code)) return "Untracked";
-        if (code.charAt(0) != ' ') return "Staged Changes";
-        return "Changes";
+    private Window window() {
+        return getScene() == null ? null : getScene().getWindow();
     }
 
-    private static String labelFor(String code) {
-        if ("??".equals(code)) return "U";
-        if ("A ".equals(code) || " A".equals(code)) return "A";
-        if (code.indexOf('D') >= 0) return "D";
-        if (code.indexOf('R') >= 0) return "R";
-        if (code.indexOf('C') >= 0) return "C";
-        return "M";
+    // ---------- Actions ----------
+
+    private void openDiff(Path file) {
+        GitService git = ctx.getGitService();
+        if (git == null) return;
+        git.diffAgainstHead(file).whenCompleteAsync((pair, err) -> {
+            if (err != null) {
+                ctx.getStatusBar().setMessage("Diff failed: " + err.getMessage());
+                return;
+            }
+            String title = file.getFileName() + " (Working Tree)";
+            ctx.getTabPane().openDiff(file, pair.oldContent(), pair.newContent(), title, pair.binary());
+        }, Platform::runLater);
     }
 
-    private record GitEntry(String code, Path path, String group, String label) {}
+    private void doStage(List<Path> files) {
+        runOp(ctx.getGitService().add(files), "Staged " + files.size() + " file(s)", "Stage failed");
+    }
 
-    private record GitNode(String title, Path path, String badge) {
-        static GitNode group(String title) {
-            return new GitNode(title, null, null);
+    private void doUnstage(List<Path> files) {
+        runOp(ctx.getGitService().unstage(files), "Unstaged " + files.size() + " file(s)", "Unstage failed");
+    }
+
+    private void doDiscard(List<Path> files) {
+        Optional<javafx.scene.control.ButtonType> res = Dialogs.confirm(window(),
+                "Discard changes?",
+                files.size() + " file(s) will be reverted to HEAD. This cannot be undone.")
+                .showAndWait();
+        if (res.isEmpty() || res.get() != javafx.scene.control.ButtonType.OK) return;
+        runOp(ctx.getGitService().discard(files), "Discarded " + files.size() + " file(s)", "Discard failed");
+    }
+
+    private void doCommit() {
+        String msg = commitMessage.getText();
+        if (msg == null || msg.isBlank()) return;
+        runOp(ctx.getGitService().commit(msg), "Committed", "Commit failed", () -> commitMessage.clear());
+    }
+
+    public void openBranchQuickPick() {
+        GitService git = ctx.getGitService();
+        if (git == null || workspace == null) return;
+        git.localBranches().thenCombineAsync(git.currentBranch(),
+                (branches, current) -> branches.stream()
+                        .filter(b -> !b.equals(current))
+                        .collect(Collectors.toList()),
+                Platform::runLater
+        ).thenAcceptAsync(branches -> {
+            if (branches.isEmpty()) {
+                ctx.getStatusBar().setMessage("No other local branches");
+                return;
+            }
+            QuickPickDialog<String> q = new QuickPickDialog<>(window(),
+                    "Switch Branch", branches, b -> b, null);
+            q.showAndWait().ifPresent(this::doCheckout);
+        }, Platform::runLater);
+    }
+
+    private void doCheckout(String branch) {
+        runOp(ctx.getGitService().checkoutBranch(branch),
+                "Switched to " + branch, "Checkout failed");
+    }
+
+    private void doMerge() {
+        GitService git = ctx.getGitService();
+        if (git == null) return;
+        git.localBranches().thenCombineAsync(git.currentBranch(),
+                (branches, current) -> branches.stream()
+                        .filter(b -> !b.equals(current))
+                        .collect(Collectors.toList()),
+                Platform::runLater
+        ).thenAcceptAsync(branches -> {
+            if (branches.isEmpty()) {
+                ctx.getStatusBar().setMessage("No branches to merge");
+                return;
+            }
+            QuickPickDialog<String> q = new QuickPickDialog<>(window(),
+                    "Merge Branch", branches, b -> b, null);
+            q.showAndWait().ifPresent(branch ->
+                    runOp(ctx.getGitService().merge(branch), "Merged " + branch, "Merge failed"));
+        }, Platform::runLater);
+    }
+
+    private void doCreateBranch() {
+        GitService git = ctx.getGitService();
+        if (git == null) return;
+        git.localBranches().thenAcceptAsync(branches -> {
+            QuickPickDialog<String> q = new QuickPickDialog<>(window(),
+                    "Create Branch From…", branches, b -> b, null);
+            q.showAndWait().ifPresent(from -> {
+                var prompt = Dialogs.prompt(window(), "New Branch",
+                        "Create branch from " + from, "Name:", "");
+                prompt.showAndWait().ifPresent(name -> {
+                    if (name == null || name.isBlank()) return;
+                    runOp(ctx.getGitService().createBranch(name.trim(), from),
+                            "Created and switched to " + name, "Create branch failed");
+                });
+            });
+        }, Platform::runLater);
+    }
+
+    private void doDeleteBranch() {
+        GitService git = ctx.getGitService();
+        if (git == null) return;
+        var localsF = git.localBranches();
+        var currentF = git.currentBranch();
+        var defaultF = git.defaultBranch();
+        localsF.thenCombineAsync(currentF, (list, cur) -> list.stream()
+                        .filter(b -> !b.equals(cur))
+                        .collect(Collectors.toList()),
+                Platform::runLater)
+                .thenCombineAsync(defaultF, (list, def) -> list.stream()
+                        .filter(b -> def == null || def.isBlank() || !b.equals(def))
+                        .collect(Collectors.toList()),
+                        Platform::runLater)
+                .thenAcceptAsync(branches -> {
+                    if (branches.isEmpty()) {
+                        ctx.getStatusBar().setMessage("No deletable branches");
+                        return;
+                    }
+                    QuickPickDialog<String> q = new QuickPickDialog<>(window(),
+                            "Delete Branch", branches, b -> b, null);
+                    q.showAndWait().ifPresent(branch -> {
+                        Optional<javafx.scene.control.ButtonType> res = Dialogs.confirm(window(),
+                                "Delete branch?", "Branch '" + branch + "' will be deleted.")
+                                .showAndWait();
+                        if (res.isEmpty() || res.get() != javafx.scene.control.ButtonType.OK) return;
+                        ctx.getGitService().deleteBranch(branch, false).whenCompleteAsync((v, err) -> {
+                            if (err == null) {
+                                ctx.getStatusBar().setMessage("Deleted " + branch);
+                                refresh();
+                                return;
+                            }
+                            String msg = err.getCause() == null ? err.getMessage() : err.getCause().getMessage();
+                            if (msg != null && msg.toLowerCase().contains("not fully merged")) {
+                                Optional<javafx.scene.control.ButtonType> force = Dialogs.confirm(window(),
+                                        "Force delete?",
+                                        "Branch '" + branch + "' is not fully merged. Force delete with -D?")
+                                        .showAndWait();
+                                if (force.isPresent() && force.get() == javafx.scene.control.ButtonType.OK) {
+                                    runOp(ctx.getGitService().deleteBranch(branch, true),
+                                            "Force-deleted " + branch, "Delete failed");
+                                }
+                            } else {
+                                Dialogs.error(window(), "Delete failed", msg == null ? "Unknown error" : msg).showAndWait();
+                            }
+                        }, Platform::runLater);
+                    });
+                }, Platform::runLater);
+    }
+
+    private void doStash() {
+        var prompt = Dialogs.prompt(window(), "Stash",
+                "Stash changes", "Optional message:", "");
+        prompt.showAndWait().ifPresent(msg -> runOp(
+                ctx.getGitService().stash(msg), "Stashed", "Stash failed"));
+    }
+
+    private void doStashPop() {
+        runOp(ctx.getGitService().stashPop(), "Popped stash", "Pop failed");
+    }
+
+    private void runOp(java.util.concurrent.CompletableFuture<Void> fut, String okMsg, String failMsg) {
+        runOp(fut, okMsg, failMsg, null);
+    }
+
+    private void runOp(java.util.concurrent.CompletableFuture<Void> fut, String okMsg, String failMsg, Runnable onSuccess) {
+        ctx.getStatusBar().setMessage(okMsg + "…");
+        fut.whenCompleteAsync((v, err) -> {
+            if (err == null) {
+                ctx.getStatusBar().setMessage(okMsg);
+                if (onSuccess != null) onSuccess.run();
+                refresh();
+            } else {
+                String msg = err.getCause() == null ? err.getMessage() : err.getCause().getMessage();
+                ctx.getStatusBar().setMessage(failMsg + ": " + msg);
+                ctx.getOutputPane().focusGit();
+            }
+        }, Platform::runLater);
+    }
+
+    private void buildOverflowMenu(MenuButton overflow) {
+        MenuItem push = new MenuItem("Push");
+        push.setOnAction(e -> runOp(ctx.getGitService().push(), "Pushed", "Push failed"));
+        MenuItem pull = new MenuItem("Pull");
+        pull.setOnAction(e -> runOp(ctx.getGitService().pull(), "Pulled", "Pull failed"));
+        MenuItem fetch = new MenuItem("Fetch");
+        fetch.setOnAction(e -> runOp(ctx.getGitService().fetch(), "Fetched", "Fetch failed"));
+
+        MenuItem checkout = new MenuItem("Checkout Branch…");
+        checkout.setOnAction(e -> openBranchQuickPick());
+        MenuItem merge = new MenuItem("Merge Branch…");
+        merge.setOnAction(e -> doMerge());
+        MenuItem newBranch = new MenuItem("Create Branch…");
+        newBranch.setOnAction(e -> doCreateBranch());
+        MenuItem delBranch = new MenuItem("Delete Branch…");
+        delBranch.setOnAction(e -> doDeleteBranch());
+
+        MenuItem stash = new MenuItem("Stash…");
+        stash.setOnAction(e -> doStash());
+        MenuItem pop = new MenuItem("Pop Stash");
+        pop.setOnAction(e -> doStashPop());
+
+        overflow.getItems().addAll(push, pull, fetch,
+                new SeparatorMenuItem(),
+                checkout, merge, newBranch, delBranch,
+                new SeparatorMenuItem(),
+                stash, pop);
+    }
+
+    // ---------- Cell rendering ----------
+
+    private record GitNode(String title, Path path, String badge, String group) {
+        static GitNode group(String title) { return new GitNode(title, null, null, null); }
+        static GitNode file(StatusEntry e) {
+            return new GitNode(e.path().getFileName().toString(), e.path(), e.label(), e.group());
+        }
+    }
+
+    private class GitTreeCell extends TreeCell<GitNode> {
+        private final HBox actions = new HBox();
+        private final Label badgeLabel = new Label();
+        private final Label nameLabel = new Label();
+        private final HBox graphic = new HBox();
+
+        GitTreeCell() {
+            badgeLabel.getStyleClass().add("mt-git-badge");
+            nameLabel.getStyleClass().add("mt-git-name");
+            actions.setSpacing(4);
+            actions.setAlignment(Pos.CENTER_RIGHT);
+            actions.getStyleClass().add("mt-git-actions");
+            actions.visibleProperty().bind(hoverProperty().or(selectedProperty()));
+            actions.managedProperty().bind(actions.visibleProperty());
+
+            Region spacer = new Region();
+            HBox.setHgrow(spacer, Priority.ALWAYS);
+            graphic.setSpacing(6);
+            graphic.setAlignment(Pos.CENTER_LEFT);
+            graphic.getChildren().addAll(badgeLabel, nameLabel, spacer, actions);
         }
 
-        static GitNode file(GitEntry entry) {
-            return new GitNode(entry.path().getFileName().toString(), entry.path(), entry.label());
-        }
-    }
-
-    private static class GitTreeCell extends TreeCell<GitNode> {
         @Override
         protected void updateItem(GitNode item, boolean empty) {
             super.updateItem(item, empty);
             getStyleClass().removeAll("mt-git-group", "mt-git-file");
+            setContextMenu(null);
             if (empty || item == null) {
                 setText(null);
                 setGraphic(null);
@@ -215,11 +468,93 @@ public class GitChangesView extends BorderPane {
             }
             if (item.path() == null) {
                 setText(item.title());
+                setGraphic(null);
                 getStyleClass().add("mt-git-group");
-            } else {
-                setText(item.badge() + "  " + item.title());
-                getStyleClass().add("mt-git-file");
+                return;
             }
+            badgeLabel.setText(item.badge());
+            nameLabel.setText(item.title());
+            actions.getChildren().clear();
+            Path file = item.path();
+            String group = item.group();
+
+            Label diffIcon = makeIcon("↔", "Open changes", evt -> {
+                openDiff(file);
+                evt.consume();
+            });
+            actions.getChildren().add(diffIcon);
+
+            if ("Staged Changes".equals(group)) {
+                Label unstage = makeIcon("−", "Unstage", evt -> {
+                    doUnstage(List.of(file));
+                    evt.consume();
+                });
+                actions.getChildren().add(unstage);
+            } else {
+                Label discard = makeIcon("↶", "Discard changes", evt -> {
+                    doDiscard(List.of(file));
+                    evt.consume();
+                });
+                Label stage = makeIcon("+", "Stage changes", evt -> {
+                    doStage(List.of(file));
+                    evt.consume();
+                });
+                actions.getChildren().addAll(discard, stage);
+            }
+
+            setText(null);
+            setGraphic(graphic);
+            getStyleClass().add("mt-git-file");
+            setContextMenu(buildContextMenu(file, group));
+        }
+
+        private Label makeIcon(String text, String tooltip, javafx.event.EventHandler<javafx.scene.input.MouseEvent> onClick) {
+            Label l = new Label(text);
+            l.getStyleClass().add("mt-git-action-icon");
+            l.setTooltip(new Tooltip(tooltip));
+            l.setOnMouseClicked(onClick);
+            return l;
+        }
+
+        private ContextMenu buildContextMenu(Path file, String group) {
+            ContextMenu menu = new ContextMenu();
+            MenuItem openFile = new MenuItem("Open File");
+            openFile.setOnAction(e -> {
+                if (Files.isRegularFile(file)) ctx.getTabPane().openFile(file);
+            });
+            MenuItem openDiff = new MenuItem("Open Changes");
+            openDiff.setOnAction(e -> openDiff(file));
+
+            menu.getItems().addAll(openFile, openDiff, new SeparatorMenuItem());
+
+            List<Path> sel = selectedFilesInGroup(group);
+            if (sel.isEmpty()) sel = List.of(file);
+            final List<Path> targets = sel;
+
+            if ("Staged Changes".equals(group)) {
+                MenuItem unstage = new MenuItem("Unstage Changes");
+                unstage.setOnAction(e -> doUnstage(targets));
+                menu.getItems().add(unstage);
+            } else {
+                MenuItem stage = new MenuItem("Stage Changes");
+                stage.setOnAction(e -> doStage(targets));
+                MenuItem discard = new MenuItem("Discard Changes");
+                discard.setOnAction(e -> doDiscard(targets));
+                menu.getItems().addAll(stage, discard);
+            }
+            return menu;
+        }
+
+        private List<Path> selectedFilesInGroup(String group) {
+            List<Path> out = new ArrayList<>();
+            for (TreeItem<GitNode> item : tree.getSelectionModel().getSelectedItems()) {
+                if (item == null) continue;
+                GitNode v = item.getValue();
+                if (v != null && v.path() != null && group.equals(v.group())) {
+                    out.add(v.path());
+                }
+            }
+            return out;
         }
     }
 }
