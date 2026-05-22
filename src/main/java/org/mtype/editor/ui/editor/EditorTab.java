@@ -1,8 +1,13 @@
 package org.mtype.editor.ui.editor;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.geometry.Point2D;
+import javafx.geometry.Side;
+import javafx.scene.Cursor;
+import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ContextMenu;
@@ -18,6 +23,10 @@ import javafx.scene.input.KeyCombination;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.Pane;
+import javafx.scene.layout.VBox;
+import org.eclipse.lsp4j.CodeLens;
+import org.eclipse.lsp4j.Command;
 import org.fxmisc.richtext.CharacterHit;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionItemKind;
@@ -28,7 +37,6 @@ import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.WorkspaceEdit;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.CodeArea;
-import org.fxmisc.richtext.LineNumberFactory;
 import org.fxmisc.richtext.event.MouseOverTextEvent;
 import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.TwoDimensional;
@@ -44,8 +52,12 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -66,12 +78,18 @@ public class EditorTab extends Tab {
     private final SimpleBooleanProperty dirty = new SimpleBooleanProperty(false);
     private final AtomicInteger version = new AtomicInteger(1);
     private final ContextMenu completionMenu = new ContextMenu();
+    private final ContextMenu referencesMenu = new ContextMenu();
     private final Tooltip hoverTooltip = new Tooltip();
+    private final Map<Integer, CodeLensLine> codeLensByParagraph = new HashMap<>();
+    private final Set<Integer> codeLensParagraphStyles = new HashSet<>();
     private StyleSpans<Collection<String>> lastTokenSpans;
     private StyleSpans<Collection<String>> lastDiagnosticSpans;
     private ScheduledFuture<?> pendingHighlight;
     private ScheduledFuture<?> pendingDidChange;
     private ScheduledFuture<?> pendingCompletion;
+    private ScheduledFuture<?> pendingCodeLens;
+    private int codeLensRequestSerial;
+    private long openedLspSession = -1;
     private boolean suppressDirty = true;
     private List<CompletionItem> currentCompletionItems = Collections.emptyList();
 
@@ -80,9 +98,11 @@ public class EditorTab extends Tab {
         this.path = path;
         setText(path.getFileName().toString());
 
-        codeArea.setParagraphGraphicFactory(LineNumberFactory.get(codeArea));
+        codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
         codeArea.getStyleClass().add("code-area");
+        applyFontFromSettings();
         completionMenu.getStyleClass().add("mt-completion");
+        referencesMenu.getStyleClass().add("mt-references");
 
         VirtualizedScrollPane<CodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
         setContent(scroll);
@@ -94,6 +114,7 @@ public class EditorTab extends Tab {
             if (!suppressDirty) markDirty();
             scheduleHighlight();
             scheduleDidChange();
+            scheduleCodeLensRefresh();
             maybeAutoCompletion(oldText, newText);
         });
 
@@ -136,9 +157,7 @@ public class EditorTab extends Tab {
         });
 
         Platform.runLater(this::applyHighlightingNow);
-        if (ctx.getLspBridge() != null) {
-            ctx.getLspBridge().didOpen(path, codeArea.getText(), version.get());
-        }
+        onLspReady();
     }
 
     public Path getPath() { return path; }
@@ -165,6 +184,20 @@ public class EditorTab extends Tab {
         writeToDisk();
     }
 
+    private void applyFontFromSettings() {
+        if (ctx.getSettings() == null || ctx.getSettings().editor == null) return;
+        var prefs = ctx.getSettings().editor;
+        StringBuilder sb = new StringBuilder();
+        if (prefs.fontFamily != null && !prefs.fontFamily.isBlank()) {
+            String family = prefs.fontFamily.replace("\"", "");
+            sb.append("-fx-font-family: \"").append(family).append("\"; ");
+        }
+        if (prefs.fontSize > 0) {
+            sb.append("-fx-font-size: ").append(prefs.fontSize).append("; ");
+        }
+        if (sb.length() > 0) codeArea.setStyle(sb.toString());
+    }
+
     private void writeToDisk() {
         try {
             Files.writeString(path, codeArea.getText(), StandardCharsets.UTF_8);
@@ -185,10 +218,190 @@ public class EditorTab extends Tab {
         if (pendingHighlight != null) pendingHighlight.cancel(false);
         if (pendingDidChange != null) pendingDidChange.cancel(false);
         if (pendingCompletion != null) pendingCompletion.cancel(false);
+        if (pendingCodeLens != null) pendingCodeLens.cancel(false);
         if (ctx.getLspBridge() != null) {
             try { ctx.getLspBridge().didClose(path); } catch (Exception ignored) {}
         }
     }
+
+    void onLspReady() {
+        LspBridge lsp = ctx.getLspBridge();
+        if (lsp == null || !lsp.isReady()) return;
+        long lspSession = lsp.getSession();
+        if (openedLspSession == lspSession) return;
+        lsp.didOpen(path, codeArea.getText(), version.get());
+        openedLspSession = lspSession;
+        scheduleCodeLensRefresh();
+    }
+
+    /* ----- code lens ----- */
+
+    private Node paragraphGraphic(int paragraphIndex) {
+        Node lineNumber = lineNumber(paragraphIndex);
+        CodeLensLine lens = codeLensByParagraph.get(paragraphIndex);
+        if (lens == null) return lineNumber;
+
+        Label title = new Label(lens.title);
+        title.getStyleClass().add("mt-code-lens");
+        title.setCursor(Cursor.HAND);
+        title.setTranslateX(50);
+        title.setOnMouseClicked(e -> {
+            showCodeLensReferences(lens, title);
+            e.consume();
+        });
+
+        Pane lensRow = new Pane(title);
+        lensRow.getStyleClass().add("mt-code-lens-row");
+        lensRow.setPickOnBounds(false);
+
+        VBox block = new VBox(lensRow, lineNumber);
+        block.getStyleClass().add("mt-code-lens-block");
+        return block;
+    }
+
+    private Node lineNumber(int paragraphIndex) {
+        Label lineNumber = new Label(Integer.toString(paragraphIndex + 1));
+        lineNumber.getStyleClass().add("lineno");
+        return lineNumber;
+    }
+
+    private void scheduleCodeLensRefresh() {
+        if (pendingCodeLens != null) pendingCodeLens.cancel(false);
+        pendingCodeLens = BG_EXEC.schedule(
+                () -> Platform.runLater(this::requestCodeLensNow),
+                450,
+                TimeUnit.MILLISECONDS);
+    }
+
+    private void requestCodeLensNow() {
+        LspBridge lsp = ctx.getLspBridge();
+        if (lsp == null || !lsp.isReady()) return;
+        int request = ++codeLensRequestSerial;
+        lsp.codeLens(path).thenAcceptAsync(lenses -> {
+            if (request != codeLensRequestSerial) return;
+            applyCodeLenses(lenses);
+        }, Platform::runLater);
+    }
+
+    private void applyCodeLenses(List<? extends CodeLens> lenses) {
+        Map<Integer, CodeLensLine> next = new HashMap<>();
+        if (lenses != null) {
+            for (CodeLens lens : lenses) {
+                if (lens == null || lens.getRange() == null || lens.getRange().getStart() == null) continue;
+                Command command = lens.getCommand();
+                String title = command == null ? null : command.getTitle();
+                if (title == null || title.isBlank()) continue;
+                int line = lens.getRange().getStart().getLine();
+                if (line < 0 || line >= codeArea.getParagraphs().size()) continue;
+                next.putIfAbsent(line, codeLensLine(lens, title));
+            }
+        }
+        if (next.equals(codeLensByParagraph)) return;
+        updateCodeLensParagraphStyles(next.keySet());
+        codeLensByParagraph.clear();
+        codeLensByParagraph.putAll(next);
+        codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
+    }
+
+    private void updateCodeLensParagraphStyles(Set<Integer> nextLines) {
+        for (Integer line : new HashSet<>(codeLensParagraphStyles)) {
+            if (!nextLines.contains(line) && line >= 0 && line < codeArea.getParagraphs().size()) {
+                codeArea.setParagraphStyle(line, Collections.emptyList());
+                codeLensParagraphStyles.remove(line);
+            }
+        }
+        for (Integer line : nextLines) {
+            if (line >= 0 && line < codeArea.getParagraphs().size() && codeLensParagraphStyles.add(line)) {
+                codeArea.setParagraphStyle(line, Collections.singletonList("mt-code-lens-paragraph"));
+            }
+        }
+    }
+
+    private CodeLensLine codeLensLine(CodeLens lens, String title) {
+        Position start = lens.getRange().getStart();
+        int symbolLine = start.getLine();
+        int symbolCharacter = start.getCharacter();
+        Command command = lens.getCommand();
+        if (command != null && command.getArguments() != null && command.getArguments().size() > 1) {
+            Position commandPosition = positionArgument(command.getArguments().get(1));
+            if (commandPosition != null) {
+                symbolLine = commandPosition.getLine();
+                symbolCharacter = commandPosition.getCharacter();
+            }
+        }
+        return new CodeLensLine(title, symbolLine, symbolCharacter);
+    }
+
+    private Position positionArgument(Object value) {
+        if (value instanceof JsonObject json) {
+            JsonElement line = json.get("line");
+            JsonElement character = json.get("character");
+            if (line != null && character != null) {
+                return new Position(line.getAsInt(), character.getAsInt());
+            }
+        }
+        if (value instanceof Map<?, ?> map) {
+            Integer line = intValue(map.get("line"));
+            Integer character = intValue(map.get("character"));
+            if (line != null && character != null) return new Position(line, character);
+        }
+        return null;
+    }
+
+    private Integer intValue(Object value) {
+        if (value instanceof Number number) return number.intValue();
+        if (value instanceof JsonElement json && json.isJsonPrimitive() && json.getAsJsonPrimitive().isNumber()) {
+            return json.getAsInt();
+        }
+        return null;
+    }
+
+    private void showCodeLensReferences(CodeLensLine lens, Node anchor) {
+        LspBridge lsp = ctx.getLspBridge();
+        if (lsp == null || !lsp.isReady()) {
+            ctx.getStatusBar().setMessage("LSP not ready");
+            return;
+        }
+        lsp.references(path, lens.line, lens.character, false).thenAcceptAsync(locations -> {
+            if (locations == null || locations.isEmpty()) {
+                ctx.getStatusBar().setMessage("No references");
+                return;
+            }
+            ctx.getStatusBar().setMessage(lens.title);
+            showReferencesMenu(anchor, locations);
+        }, Platform::runLater);
+    }
+
+    private void showReferencesMenu(Node anchor, List<? extends Location> locations) {
+        referencesMenu.hide();
+        referencesMenu.getItems().clear();
+        int index = 1;
+        for (Location location : locations) {
+            MenuItem item = new MenuItem(index + ". " + referenceLabel(location));
+            item.setOnAction(e -> openLocation(location, "reference"));
+            referencesMenu.getItems().add(item);
+            index++;
+        }
+        referencesMenu.show(anchor, Side.BOTTOM, 0, 2);
+    }
+
+    private String referenceLabel(Location location) {
+        if (location == null || location.getUri() == null || location.getRange() == null
+                || location.getRange().getStart() == null) {
+            return "Unknown reference";
+        }
+        Position start = location.getRange().getStart();
+        try {
+            Path refPath = java.nio.file.Paths.get(java.net.URI.create(location.getUri()));
+            Path name = refPath.getFileName();
+            String display = name == null ? refPath.toString() : name.toString();
+            return display + ":" + (start.getLine() + 1) + ":" + (start.getCharacter() + 1);
+        } catch (Exception ignored) {
+            return location.getUri() + ":" + (start.getLine() + 1) + ":" + (start.getCharacter() + 1);
+        }
+    }
+
+    private record CodeLensLine(String title, int line, int character) {}
 
     /** Move the caret to a 0-based LSP position and ensure visible. */
     public void revealPosition(int line, int character) {
@@ -273,13 +486,21 @@ public class EditorTab extends Tab {
                 ctx.getStatusBar().setMessage("No definition");
                 return;
             }
-            try {
-                Path targetPath = java.nio.file.Paths.get(java.net.URI.create(loc.getUri()));
-                ctx.getTabPane().openAt(targetPath, loc.getRange().getStart().getLine(), loc.getRange().getStart().getCharacter());
-            } catch (Exception ex) {
-                ctx.getStatusBar().setMessage("Bad def URI: " + loc.getUri());
-            }
+            openLocation(loc, "definition");
         }, Platform::runLater);
+    }
+
+    private void openLocation(Location loc, String label) {
+        if (loc == null || loc.getUri() == null || loc.getRange() == null || loc.getRange().getStart() == null) {
+            ctx.getStatusBar().setMessage("Bad " + label + " location");
+            return;
+        }
+        try {
+            Path targetPath = java.nio.file.Paths.get(java.net.URI.create(loc.getUri()));
+            ctx.getTabPane().openAt(targetPath, loc.getRange().getStart().getLine(), loc.getRange().getStart().getCharacter());
+        } catch (Exception ex) {
+            ctx.getStatusBar().setMessage("Bad " + label + " URI: " + loc.getUri());
+        }
     }
 
     public void showCallHierarchyAtCaret() {

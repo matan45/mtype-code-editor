@@ -98,6 +98,12 @@ public class EditorTabPane extends TabPane {
         return open.get(p);
     }
 
+    public void syncOpenDocumentsWithLsp() {
+        for (EditorTab tab : new java.util.ArrayList<>(open.values())) {
+            tab.onLspReady();
+        }
+    }
+
     public void onWorkspaceChanged(Workspace ws) {
         closeAll();
     }

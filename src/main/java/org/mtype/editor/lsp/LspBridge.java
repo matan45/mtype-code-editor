@@ -9,6 +9,9 @@ import org.eclipse.lsp4j.CallHierarchyOutgoingCall;
 import org.eclipse.lsp4j.CallHierarchyOutgoingCallsParams;
 import org.eclipse.lsp4j.CallHierarchyPrepareParams;
 import org.eclipse.lsp4j.ClientCapabilities;
+import org.eclipse.lsp4j.CodeLens;
+import org.eclipse.lsp4j.CodeLensCapabilities;
+import org.eclipse.lsp4j.CodeLensParams;
 import org.eclipse.lsp4j.CompletionCapabilities;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionItemCapabilities;
@@ -33,6 +36,9 @@ import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.PrepareRenameParams;
 import org.eclipse.lsp4j.PrepareRenameResult;
 import org.eclipse.lsp4j.Range;
+import org.eclipse.lsp4j.ReferenceContext;
+import org.eclipse.lsp4j.ReferenceParams;
+import org.eclipse.lsp4j.ReferencesCapabilities;
 import org.eclipse.lsp4j.RenameCapabilities;
 import org.eclipse.lsp4j.RenameParams;
 import org.eclipse.lsp4j.TextDocumentClientCapabilities;
@@ -80,6 +86,7 @@ public class LspBridge {
     }
 
     public boolean isReady() { return ready; }
+    public synchronized long getSession() { return session; }
 
     public synchronized void start(Workspace ws) throws IOException {
         stop();
@@ -132,6 +139,8 @@ public class LspBridge {
         td.setPublishDiagnostics(new org.eclipse.lsp4j.PublishDiagnosticsCapabilities());
         td.setDefinition(new org.eclipse.lsp4j.DefinitionCapabilities());
         td.setFormatting(new org.eclipse.lsp4j.FormattingCapabilities());
+        td.setCodeLens(new CodeLensCapabilities());
+        td.setReferences(new ReferencesCapabilities());
 
         RenameCapabilities rename = new RenameCapabilities();
         rename.setPrepareSupport(true);
@@ -163,7 +172,10 @@ public class LspBridge {
                 if (startSession != session || server != startedServer) return;
                 ready = true;
             }
-            Platform.runLater(() -> ctx.getStatusBar().setLspState("LSP: ready"));
+            Platform.runLater(() -> {
+                ctx.getStatusBar().setLspState("LSP: ready");
+                if (ctx.getTabPane() != null) ctx.getTabPane().syncOpenDocumentsWithLsp();
+            });
         });
     }
 
@@ -301,6 +313,27 @@ public class LspBridge {
             }
             return null;
         }).exceptionally(t -> null);
+    }
+
+    /* ============================== code lens ============================== */
+
+    public CompletableFuture<List<? extends CodeLens>> codeLens(Path path) {
+        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
+        CodeLensParams params = new CodeLensParams(new TextDocumentIdentifier(path.toUri().toString()));
+        return server.getTextDocumentService().codeLens(params)
+                .thenApply(list -> list == null ? Collections.<CodeLens>emptyList() : list)
+                .exceptionally(t -> Collections.emptyList());
+    }
+
+    public CompletableFuture<List<? extends Location>> references(Path path, int line, int col, boolean includeDeclaration) {
+        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
+        ReferenceParams params = new ReferenceParams();
+        params.setTextDocument(new TextDocumentIdentifier(path.toUri().toString()));
+        params.setPosition(new Position(line, col));
+        params.setContext(new ReferenceContext(includeDeclaration));
+        return server.getTextDocumentService().references(params)
+                .thenApply(list -> list == null ? Collections.<Location>emptyList() : list)
+                .exceptionally(t -> Collections.emptyList());
     }
 
     /* ============================== rename ============================== */

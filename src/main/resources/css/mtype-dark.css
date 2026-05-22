@@ -285,16 +285,57 @@
 .lineno {
     -fx-text-fill: #636d83;
     -fx-background-color: #282c34;
+    -fx-border-color: transparent #3b414d transparent transparent;
+    -fx-border-width: 0 1 0 0;
     -fx-font-family: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
     -fx-font-size: 12;
     -fx-alignment: center-right;
     -fx-min-width: 44;
     -fx-pref-width: 44;
-    -fx-padding: 0 11 0 6;
+    -fx-padding: 0 13 0 6;
 }
 .paragraph-box:has-caret .lineno {
     -fx-text-fill: #abb2bf;
     -fx-background-color: #2c313c;
+}
+
+.mt-code-lens-block {
+    -fx-background-color: transparent;
+}
+
+.code-area .paragraph-box .paragraph-text.mt-code-lens-paragraph {
+    -fx-padding: 19 0 0 0;
+    -fx-translate-x: -136;
+}
+
+.mt-code-lens-row {
+    -fx-min-width: 44;
+    -fx-pref-width: 180;
+    -fx-min-height: 19;
+    -fx-pref-height: 19;
+    -fx-max-height: 19;
+}
+
+.mt-code-lens-spacer {
+    -fx-min-height: 19;
+    -fx-pref-height: 19;
+    -fx-max-height: 19;
+    -fx-min-width: 44;
+    -fx-pref-width: 180;
+}
+
+.mt-code-lens {
+    -fx-text-fill: #8b93a7;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12;
+    -fx-min-width: 160;
+    -fx-pref-width: 160;
+    -fx-padding: 1 0 2 0;
+}
+
+.mt-code-lens:hover {
+    -fx-text-fill: #abb2bf;
+    -fx-underline: true;
 }
 
 /* ===========================================================
