@@ -772,6 +772,162 @@
 }
 
 /* ===========================================================
+   Find in Files window
+   =========================================================== */
+.mt-find-in-files {
+    -fx-background-color: #21252b;
+}
+.mt-find-in-files .mt-search-header {
+    -fx-background-color: #21252b;
+    -fx-border-color: transparent transparent #181a1f transparent;
+    -fx-border-width: 0 0 1 0;
+}
+.mt-find-in-files .text-field {
+    -fx-background-color: #1c1f25;
+    -fx-text-fill: #ffffff;
+    -fx-prompt-text-fill: #636d83;
+    -fx-border-color: #3e4451;
+    -fx-border-width: 1;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+    -fx-padding: 5 8 5 8;
+    -fx-font-family: "JetBrains Mono", "Consolas", monospace;
+    -fx-font-size: 13;
+    -fx-caret-color: #528bff;
+    -fx-highlight-fill: #3e4451;
+}
+.mt-find-in-files .text-field:focused {
+    -fx-border-color: #528bff;
+}
+.mt-find-in-files .text-field.mt-search-error,
+.mt-find-in-files .text-field.mt-search-error:focused {
+    -fx-border-color: #e06c75;
+}
+.mt-find-in-files .mt-search-toggle {
+    -fx-background-color: #2c313c;
+    -fx-text-fill: #abb2bf;
+    -fx-background-radius: 3;
+    -fx-padding: 3 9 3 9;
+    -fx-font-family: "JetBrains Mono", "Consolas", monospace;
+    -fx-font-size: 12;
+    -fx-min-width: 30;
+}
+.mt-find-in-files .mt-search-toggle:hover {
+    -fx-background-color: #3e4451;
+    -fx-text-fill: #ffffff;
+}
+.mt-find-in-files .mt-search-toggle:selected {
+    -fx-background-color: #528bff;
+    -fx-text-fill: #ffffff;
+}
+.mt-find-in-files .mt-search-files-label {
+    -fx-text-fill: #636d83;
+    -fx-font-size: 12;
+    -fx-min-width: 36;
+}
+.mt-find-in-files .mt-search-tree {
+    -fx-background-color: #282c34;
+    -fx-control-inner-background: #282c34;
+    -fx-border-color: transparent;
+}
+.mt-find-in-files .mt-search-tree .tree-cell {
+    -fx-background-color: #282c34;
+    -fx-text-fill: #abb2bf;
+    -fx-padding: 3 8 3 8;
+    -fx-graphic-text-gap: 7;
+    -fx-font-family: "JetBrains Mono", "Consolas", monospace;
+    -fx-font-size: 12.5;
+}
+.mt-find-in-files .mt-search-tree .tree-cell:filled:hover {
+    -fx-background-color: #2c313c;
+}
+.mt-find-in-files .mt-search-tree .tree-cell:filled:selected {
+    -fx-background-color: #3e4451;
+    -fx-text-fill: #ffffff;
+}
+.mt-find-in-files .mt-search-tree .tree-cell.mt-search-file-row {
+    -fx-text-fill: #ffffff;
+    -fx-font-weight: bold;
+}
+.mt-find-in-files .mt-search-tree .tree-cell.mt-search-match-row {
+    -fx-padding: 2 8 2 14;
+}
+.mt-find-in-files .mt-search-match-flow .mt-search-text {
+    -fx-fill: #abb2bf;
+}
+.mt-find-in-files .mt-search-match-flow .mt-search-line-no {
+    -fx-fill: #636d83;
+}
+.mt-find-in-files .mt-search-match-flow .mt-search-hit {
+    -fx-fill: #d19a66;
+    -fx-font-weight: bold;
+}
+.mt-find-in-files .mt-search-tree .tree-cell:filled:selected .mt-search-match-flow .mt-search-text {
+    -fx-fill: #ffffff;
+}
+.mt-find-in-files .mt-search-tree .tree-cell:filled:selected .mt-search-match-flow .mt-search-line-no {
+    -fx-fill: #c8ccd4;
+}
+.mt-find-in-files .mt-search-tree .tree-cell:filled:selected .mt-search-match-flow .mt-search-hit {
+    -fx-fill: #ffcf6e;
+    -fx-font-weight: bold;
+}
+.mt-find-in-files .scroll-bar:vertical,
+.mt-find-in-files .scroll-bar:horizontal {
+    -fx-background-color: #21252b;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+.mt-find-in-files .scroll-bar:vertical {
+    -fx-pref-width: 12;
+}
+.mt-find-in-files .scroll-bar:horizontal {
+    -fx-pref-height: 12;
+}
+.mt-find-in-files .scroll-bar .track,
+.mt-find-in-files .scroll-bar .track-background {
+    -fx-background-color: #21252b;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+}
+.mt-find-in-files .scroll-bar .thumb {
+    -fx-background-color: #4b5263;
+    -fx-background-insets: 2;
+    -fx-background-radius: 6;
+}
+.mt-find-in-files .scroll-bar .thumb:hover {
+    -fx-background-color: #5c6370;
+}
+.mt-find-in-files .scroll-bar .thumb:pressed {
+    -fx-background-color: #6b7280;
+}
+.mt-find-in-files .scroll-bar .increment-button,
+.mt-find-in-files .scroll-bar .decrement-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+    -fx-pref-width: 0;
+    -fx-pref-height: 0;
+}
+.mt-find-in-files .scroll-bar .increment-arrow,
+.mt-find-in-files .scroll-bar .decrement-arrow {
+    -fx-shape: " ";
+    -fx-padding: 0;
+}
+.mt-find-in-files .corner {
+    -fx-background-color: #21252b;
+}
+
+.mt-find-in-files .mt-search-statusbar {
+    -fx-background-color: #21252b;
+    -fx-border-color: #181a1f transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+.mt-find-in-files .mt-search-status {
+    -fx-text-fill: #636d83;
+    -fx-font-size: 11.5;
+}
+
+/* ===========================================================
    Gutter diagnostic markers
    =========================================================== */
 .mt-gutter-row {

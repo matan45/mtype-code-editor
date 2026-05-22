@@ -10,6 +10,7 @@ import org.mtype.editor.ui.git.GitChangesView;
 import org.mtype.editor.ui.output.OutputPane;
 import org.mtype.editor.ui.status.StatusBar;
 import org.mtype.editor.lsp.DiagnosticsBus;
+import org.mtype.editor.ui.search.FindInFilesWindow;
 import org.mtype.editor.ui.tree.WorkspaceTreeView;
 import org.mtype.editor.workspace.Workspace;
 import org.mtype.editor.workspace.WorkspaceSettings;
@@ -26,6 +27,7 @@ public class AppContext {
     private StatusBar statusBar;
     private WorkspaceTreeView treeView;
     private GitChangesView gitChangesView;
+    private FindInFilesWindow findInFilesWindow;
     private final ReadOnlyBooleanWrapper hasProjectFile = new ReadOnlyBooleanWrapper(false);
     private final ReadOnlyBooleanWrapper workspaceOpen = new ReadOnlyBooleanWrapper(false);
 
@@ -40,6 +42,7 @@ public class AppContext {
     public StatusBar getStatusBar() { return statusBar; }
     public WorkspaceTreeView getTreeView() { return treeView; }
     public GitChangesView getGitChangesView() { return gitChangesView; }
+    public FindInFilesWindow getFindInFilesWindow() { return findInFilesWindow; }
     public ReadOnlyBooleanProperty hasProjectFileProperty() { return hasProjectFile.getReadOnlyProperty(); }
     public ReadOnlyBooleanProperty workspaceOpenProperty() { return workspaceOpen.getReadOnlyProperty(); }
 
@@ -53,6 +56,7 @@ public class AppContext {
     public void setStatusBar(StatusBar s) { this.statusBar = s; }
     public void setTreeView(WorkspaceTreeView t) { this.treeView = t; }
     public void setGitChangesView(GitChangesView g) { this.gitChangesView = g; }
+    public void setFindInFilesWindow(FindInFilesWindow w) { this.findInFilesWindow = w; }
 
     public void refreshHasProjectFile() {
         hasProjectFile.set(workspace != null && workspace.hasProjectFile());

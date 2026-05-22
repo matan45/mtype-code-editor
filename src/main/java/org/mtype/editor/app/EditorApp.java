@@ -36,6 +36,7 @@ import org.mtype.editor.ui.dialogs.NewWorkspaceDialog;
 import org.mtype.editor.ui.editor.EditorTabPane;
 import org.mtype.editor.ui.git.GitChangesView;
 import org.mtype.editor.ui.output.OutputPane;
+import org.mtype.editor.ui.search.FindInFilesWindow;
 import org.mtype.editor.ui.status.StatusBar;
 import org.mtype.editor.ui.tree.WorkspaceTreeView;
 import org.mtype.editor.workspace.SettingsStore;
@@ -186,7 +187,13 @@ public class EditorApp extends Application {
                 KeyCombination.CONTROL_DOWN, KeyCombination.ALT_DOWN));
         callHierarchy.setOnAction(e -> ctx.getTabPane().callHierarchyActive());
 
-        code.getItems().addAll(format, goToDef, rename, callHierarchy);
+        MenuItem findInFiles = new MenuItem("Find in Files...");
+        findInFiles.setAccelerator(new KeyCodeCombination(KeyCode.F,
+                KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN));
+        findInFiles.setOnAction(e -> openFindInFiles());
+
+        code.getItems().addAll(format, goToDef, rename, callHierarchy,
+                new SeparatorMenuItem(), findInFiles);
 
         Menu build = new Menu("Build");
         BuildController bc = ctx.getBuildController();
@@ -230,6 +237,15 @@ public class EditorApp extends Application {
 
         mb.getMenus().addAll(file, code, build);
         return mb;
+    }
+
+    private void openFindInFiles() {
+        FindInFilesWindow w = ctx.getFindInFilesWindow();
+        if (w == null) {
+            w = new FindInFilesWindow(ctx, stage);
+            ctx.setFindInFilesWindow(w);
+        }
+        w.showOrFocus();
     }
 
     private void openSettings() {
@@ -395,6 +411,7 @@ public class EditorApp extends Application {
         try { if (ctx.getRunController() != null) ctx.getRunController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getBuildController() != null) ctx.getBuildController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getLspBridge() != null) ctx.getLspBridge().stop(); } catch (Exception ignored) {}
+        try { if (ctx.getFindInFilesWindow() != null) ctx.getFindInFilesWindow().cancelSearch(); } catch (Exception ignored) {}
     }
 
     private void loadBundledFonts() {
