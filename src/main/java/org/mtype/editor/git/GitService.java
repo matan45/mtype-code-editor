@@ -319,6 +319,19 @@ public class GitService {
                 r.ok() && "true".equals(r.firstStdoutLine().trim()));
     }
 
+    public CompletableFuture<List<Path>> conflictedFiles() {
+        return exec(false, "diff", "--name-only", "--diff-filter=U").thenApply(r -> {
+            if (!r.ok()) return Collections.emptyList();
+            Path root = workspaceRootOrThrow();
+            List<Path> out = new ArrayList<>();
+            for (String line : r.stdout) {
+                if (line == null || line.isBlank()) continue;
+                out.add(root.resolve(line.trim()).normalize());
+            }
+            return out;
+        });
+    }
+
     // ---- internals ----
 
     private void addPaths(List<String> args, List<Path> files) {
@@ -339,18 +352,30 @@ public class GitService {
     }
 
     private static String groupFor(String code) {
+        if (isConflictCode(code)) return "Merge Conflicts";
         if ("??".equals(code)) return "Untracked";
         if (code.charAt(0) != ' ' && code.charAt(0) != '?') return "Staged Changes";
         return "Changes";
     }
 
     private static String labelFor(String code) {
+        if (isConflictCode(code)) return "!";
         if ("??".equals(code)) return "U";
         if ("A ".equals(code) || " A".equals(code)) return "A";
         if (code.indexOf('D') >= 0) return "D";
         if (code.indexOf('R') >= 0) return "R";
         if (code.indexOf('C') >= 0) return "C";
         return "M";
+    }
+
+    private static boolean isConflictCode(String code) {
+        return "DD".equals(code)
+                || "AU".equals(code)
+                || "UD".equals(code)
+                || "UA".equals(code)
+                || "DU".equals(code)
+                || "AA".equals(code)
+                || "UU".equals(code);
     }
 
     private static CommitEntry parseCommitLine(String line) {

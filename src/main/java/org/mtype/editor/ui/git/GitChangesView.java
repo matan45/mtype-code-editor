@@ -228,6 +228,7 @@ public class GitChangesView extends BorderPane {
         }
 
         TreeItem<GitNode> root = new TreeItem<>(GitNode.group("Git"));
+        addGroup(root, "Merge Conflicts", entries);
         addGroup(root, "Staged Changes", entries);
         addGroup(root, "Changes", entries);
         addGroup(root, "Untracked", entries);
@@ -365,7 +366,7 @@ public class GitChangesView extends BorderPane {
             QuickPickDialog<String> q = new QuickPickDialog<>(window(),
                     "Merge Branch", branches, b -> b, null);
             q.showAndWait().ifPresent(branch ->
-                    runOp(ctx.getGitService().merge(branch), "Merged " + branch, "Merge failed"));
+                    runOp(ctx.getGitService().merge(branch), "Merged " + branch, "Merge failed", null, true));
         }, Platform::runLater);
     }
 
@@ -453,6 +454,14 @@ public class GitChangesView extends BorderPane {
     }
 
     private void runOp(java.util.concurrent.CompletableFuture<Void> fut, String okMsg, String failMsg, Runnable onSuccess) {
+        runOp(fut, okMsg, failMsg, onSuccess, false);
+    }
+
+    private void runOp(java.util.concurrent.CompletableFuture<Void> fut,
+                       String okMsg,
+                       String failMsg,
+                       Runnable onSuccess,
+                       boolean refreshOnFailure) {
         ctx.getStatusBar().setMessage(okMsg + "…");
         fut.whenCompleteAsync((v, err) -> {
             if (err == null) {
@@ -462,8 +471,37 @@ public class GitChangesView extends BorderPane {
             } else {
                 String msg = err.getCause() == null ? err.getMessage() : err.getCause().getMessage();
                 ctx.getStatusBar().setMessage(failMsg + ": " + msg);
+                if (refreshOnFailure) refresh();
+                if (isConflictMessage(msg)) showConflictDialog();
                 ctx.getOutputPane().focusGit();
             }
+        }, Platform::runLater);
+    }
+
+    private boolean isConflictMessage(String msg) {
+        if (msg == null) return false;
+        String lower = msg.toLowerCase();
+        return lower.contains("conflict")
+                || lower.contains("automatic merge failed")
+                || lower.contains("fix conflicts")
+                || lower.contains("unmerged");
+    }
+
+    private void showConflictDialog() {
+        GitService git = ctx.getGitService();
+        if (git == null || workspace == null) return;
+        git.conflictedFiles().whenCompleteAsync((files, err) -> {
+            StringBuilder body = new StringBuilder();
+            body.append("Resolve conflict markers in the editor, stage the resolved files, then commit.");
+            if (err == null && files != null && !files.isEmpty()) {
+                body.append("\n\nConflicted files:");
+                Path root = workspace.getRoot();
+                for (Path file : files) {
+                    Path display = root.relativize(file.toAbsolutePath().normalize());
+                    body.append("\n- ").append(display);
+                }
+            }
+            Dialogs.error(window(), "Merge conflicts detected", body.toString()).showAndWait();
         }, Platform::runLater);
     }
 
@@ -471,7 +509,7 @@ public class GitChangesView extends BorderPane {
         MenuItem push = new MenuItem("Push");
         push.setOnAction(e -> runOp(ctx.getGitService().push(), "Pushed", "Push failed"));
         MenuItem pull = new MenuItem("Pull");
-        pull.setOnAction(e -> runOp(ctx.getGitService().pull(), "Pulled", "Pull failed"));
+        pull.setOnAction(e -> runOp(ctx.getGitService().pull(), "Pulled", "Pull failed", null, true));
         MenuItem fetch = new MenuItem("Fetch");
         fetch.setOnAction(e -> runOp(ctx.getGitService().fetch(), "Fetched", "Fetch failed"));
 
