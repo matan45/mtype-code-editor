@@ -31,7 +31,9 @@ public final class IconFactory {
             return expanded ? folderOpen() : folderClosed();
         }
         String name = p.getFileName() == null ? "" : p.getFileName().toString().toLowerCase();
-        if (name.endsWith(".mtproj.lock")) return lockedM("#42A5F5", "#1565C0");
+        if (name.equals("mtproj.lock") || name.endsWith(".mtproj.lock")) {
+            return lockedM("#42A5F5", "#1565C0");
+        }
         if (name.endsWith(".mt"))          return letterM("#FFD93D", "#F39C12", null);
         if (name.endsWith(".mtc"))         return letterM("#4A90E2", "#2E5C8A", null);
         if (name.endsWith(".mtproj"))      return letterM("#66BB6A", "#2E7D32", "PROJ");

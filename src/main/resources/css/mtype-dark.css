@@ -229,6 +229,27 @@
     -fx-background-color: #282c34;
     -fx-text-fill: #abb2bf;
 }
+.mt-output-toolbar {
+    -fx-background-color: #21252b;
+    -fx-border-color: transparent transparent #181a1f transparent;
+    -fx-border-width: 0 0 1 0;
+}
+.mt-output-toolbar-button {
+    -fx-background-color: #2c313a;
+    -fx-text-fill: #abb2bf;
+    -fx-font-size: 11;
+    -fx-padding: 2 10 2 10;
+    -fx-background-radius: 3;
+    -fx-border-color: #181a1f;
+    -fx-border-radius: 3;
+    -fx-cursor: hand;
+}
+.mt-output-toolbar-button:hover {
+    -fx-background-color: #353b45;
+}
+.mt-output-toolbar-button:pressed {
+    -fx-background-color: #3e4451;
+}
 
 /* ----- Status bar ----- */
 .mt-status-bar {
@@ -305,12 +326,12 @@
 
 .code-area .paragraph-box .paragraph-text.mt-code-lens-paragraph {
     -fx-padding: 19 0 0 0;
-    -fx-translate-x: -136;
 }
 
 .mt-code-lens-row {
     -fx-min-width: 44;
-    -fx-pref-width: 180;
+    -fx-pref-width: 44;
+    -fx-max-width: 44;
     -fx-min-height: 19;
     -fx-pref-height: 19;
     -fx-max-height: 19;
@@ -321,15 +342,19 @@
     -fx-pref-height: 19;
     -fx-max-height: 19;
     -fx-min-width: 44;
-    -fx-pref-width: 180;
+    -fx-pref-width: 44;
+    -fx-max-width: 44;
 }
 
+/* The lens label visually extends beyond the gutter to the right — Pane
+   doesn't clip its children so the text just renders over the empty
+   padding-top region of the code line below. */
 .mt-code-lens {
     -fx-text-fill: #8b93a7;
     -fx-font-family: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
     -fx-font-size: 12;
-    -fx-min-width: 160;
-    -fx-pref-width: 160;
+    -fx-min-width: 240;
+    -fx-pref-width: 240;
     -fx-padding: 1 0 2 0;
 }
 
@@ -672,6 +697,87 @@
 .mt-dialog .check-box:selected > .box > .mark {
     -fx-background-color: #ffffff;
 }
+
+/* ===========================================================
+   Gutter diagnostic markers
+   =========================================================== */
+.mt-gutter-row {
+    -fx-spacing: 0;
+}
+.mt-gutter-marker {
+    -fx-pref-width: 6;
+    -fx-min-width: 6;
+    -fx-max-width: 6;
+    -fx-pref-height: 12;
+    -fx-min-height: 12;
+    -fx-max-height: 12;
+    -fx-background-radius: 2;
+}
+.mt-gutter-error   { -fx-background-color: #e06c75; }
+.mt-gutter-warning { -fx-background-color: #e5c07b; }
+.mt-gutter-info    { -fx-background-color: #61afef; }
+.mt-gutter-hint    { -fx-background-color: #5c6370; }
+
+/* ===========================================================
+   Problems panel
+   =========================================================== */
+.mt-problems {
+    -fx-background-color: #282c34;
+}
+.mt-problems-table {
+    -fx-background-color: #282c34;
+    -fx-control-inner-background: #282c34;
+    -fx-table-cell-border-color: transparent;
+    -fx-table-header-border-color: transparent;
+    -fx-border-color: transparent;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 12;
+}
+.mt-problems-table .column-header-background {
+    -fx-background-color: #21252b;
+}
+.mt-problems-table .column-header,
+.mt-problems-table .filler {
+    -fx-background-color: #21252b;
+    -fx-border-color: transparent transparent #181a1f transparent;
+    -fx-border-width: 0 0 1 0;
+}
+.mt-problems-table .column-header .label {
+    -fx-text-fill: #636d83;
+    -fx-font-weight: bold;
+    -fx-font-size: 11;
+}
+.mt-problems-table .table-row-cell {
+    -fx-background-color: #282c34;
+    -fx-text-fill: #abb2bf;
+    -fx-border-color: transparent;
+    -fx-table-cell-border-color: transparent;
+}
+.mt-problems-table .table-row-cell:odd {
+    -fx-background-color: #2c313c;
+}
+.mt-problems-table .table-row-cell:filled:selected,
+.mt-problems-table .table-row-cell:filled:hover {
+    -fx-background-color: #3e4451;
+}
+.mt-problems-table .table-cell {
+    -fx-text-fill: #abb2bf;
+    -fx-padding: 4 8 4 8;
+    -fx-border-color: transparent;
+}
+.mt-severity-dot {
+    -fx-min-width: 10;
+    -fx-min-height: 10;
+    -fx-pref-width: 10;
+    -fx-pref-height: 10;
+    -fx-max-width: 10;
+    -fx-max-height: 10;
+    -fx-background-radius: 6;
+}
+.mt-severity-error   { -fx-background-color: #e06c75; }
+.mt-severity-warning { -fx-background-color: #e5c07b; }
+.mt-severity-info    { -fx-background-color: #61afef; }
+.mt-severity-hint    { -fx-background-color: #5c6370; }
 
 /* ===========================================================
    Tooltips (hover info)

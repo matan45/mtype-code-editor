@@ -24,7 +24,21 @@ public class MTypeLanguageClient implements LanguageClient {
 
     @Override
     public void publishDiagnostics(PublishDiagnosticsParams diagnostics) {
-        Platform.runLater(() -> renderer.apply(diagnostics));
+        int n = diagnostics.getDiagnostics() == null ? 0 : diagnostics.getDiagnostics().size();
+        ctx.getOutputPane().appendLspLog("[diag] " + shortName(diagnostics.getUri()) + " (" + n + ")");
+        ctx.getDiagnosticsBus().publish(diagnostics);
+        Platform.runLater(() -> {
+            try { renderer.apply(diagnostics); }
+            catch (Exception ex) {
+                ctx.getOutputPane().appendLspLog("[diag render error] " + ex.getMessage());
+            }
+        });
+    }
+
+    private static String shortName(String uri) {
+        if (uri == null) return "<no uri>";
+        int slash = uri.lastIndexOf('/');
+        return slash >= 0 ? uri.substring(slash + 1) : uri;
     }
 
     @Override

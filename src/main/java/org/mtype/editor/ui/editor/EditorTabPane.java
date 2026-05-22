@@ -98,6 +98,11 @@ public class EditorTabPane extends TabPane {
         return open.get(p);
     }
 
+    /** Snapshot of all open tabs — used by services that need to scan tabs (e.g. diagnostics router). */
+    public java.util.Collection<EditorTab> openTabs() {
+        return new java.util.ArrayList<>(open.values());
+    }
+
     public void syncOpenDocumentsWithLsp() {
         for (EditorTab tab : new java.util.ArrayList<>(open.values())) {
             tab.onLspReady();

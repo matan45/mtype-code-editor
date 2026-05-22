@@ -73,6 +73,7 @@ public class EditorApp extends Application {
         ctx.setLspBridge(lsp);
 
         output.attachCallHierarchy(ctx);
+        output.attachProblems(ctx);
 
         RunController runController = new RunController(ctx);
         ctx.setRunController(runController);

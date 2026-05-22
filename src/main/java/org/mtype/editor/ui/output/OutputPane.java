@@ -1,9 +1,14 @@
 package org.mtype.editor.ui.output;
 
 import javafx.application.Platform;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.TextArea;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
 import org.eclipse.lsp4j.CallHierarchyItem;
 import org.mtype.editor.app.AppContext;
 
@@ -13,7 +18,9 @@ public class OutputPane extends TabPane {
     private final Tab runTab;
     private final Tab lspTab;
     private final Tab callHierarchyTab;
+    private final Tab problemsTab;
     private CallHierarchyPane callHierarchyPane;
+    private ProblemsPane problemsPane;
 
     public OutputPane() {
         runArea.setEditable(false);
@@ -23,12 +30,24 @@ public class OutputPane extends TabPane {
 
         runTab = new Tab("Run", runArea);
         runTab.setClosable(false);
-        lspTab = new Tab("LSP Log", lspArea);
+
+        Button clearLspButton = new Button("Clear");
+        clearLspButton.getStyleClass().add("mt-output-toolbar-button");
+        clearLspButton.setOnAction(e -> lspArea.clear());
+        HBox lspToolbar = new HBox(clearLspButton);
+        lspToolbar.setAlignment(Pos.CENTER_RIGHT);
+        lspToolbar.setPadding(new Insets(4, 6, 4, 6));
+        lspToolbar.getStyleClass().add("mt-output-toolbar");
+        BorderPane lspContent = new BorderPane(lspArea);
+        lspContent.setTop(lspToolbar);
+        lspTab = new Tab("LSP Log", lspContent);
         lspTab.setClosable(false);
         callHierarchyTab = new Tab("Call Hierarchy");
         callHierarchyTab.setClosable(false);
+        problemsTab = new Tab("Problems");
+        problemsTab.setClosable(false);
 
-        getTabs().addAll(runTab, lspTab, callHierarchyTab);
+        getTabs().addAll(problemsTab, runTab, lspTab, callHierarchyTab);
         getStyleClass().add("mt-output-pane");
         setTabClosingPolicy(TabClosingPolicy.UNAVAILABLE);
     }
@@ -36,6 +55,16 @@ public class OutputPane extends TabPane {
     public void attachCallHierarchy(AppContext ctx) {
         callHierarchyPane = new CallHierarchyPane(ctx);
         callHierarchyTab.setContent(callHierarchyPane);
+    }
+
+    public void attachProblems(AppContext ctx) {
+        problemsPane = new ProblemsPane(ctx);
+        problemsTab.setContent(problemsPane);
+        ctx.getDiagnosticsBus().addListener((uri, diags) -> {
+            int total = ctx.getDiagnosticsBus().totalCount();
+            javafx.application.Platform.runLater(() ->
+                    problemsTab.setText(total > 0 ? "Problems (" + total + ")" : "Problems"));
+        });
     }
 
     public void showCallHierarchy(CallHierarchyItem item) {

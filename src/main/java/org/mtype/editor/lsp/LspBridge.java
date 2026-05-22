@@ -401,4 +401,29 @@ public class LspBridge {
                 .thenApply(list -> list == null ? Collections.<CallHierarchyOutgoingCall>emptyList() : list)
                 .exceptionally(t -> Collections.emptyList());
     }
+
+    /* ============================== code actions ============================== */
+
+    public CompletableFuture<List<Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction>>>
+    codeAction(Path path, Range range, List<org.eclipse.lsp4j.Diagnostic> contextDiagnostics) {
+        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
+        org.eclipse.lsp4j.CodeActionParams params = new org.eclipse.lsp4j.CodeActionParams();
+        params.setTextDocument(new TextDocumentIdentifier(path.toUri().toString()));
+        params.setRange(range);
+        org.eclipse.lsp4j.CodeActionContext cctx = new org.eclipse.lsp4j.CodeActionContext();
+        cctx.setDiagnostics(contextDiagnostics == null ? Collections.emptyList() : contextDiagnostics);
+        params.setContext(cctx);
+        return server.getTextDocumentService().codeAction(params)
+                .thenApply(list -> list == null ? Collections.<Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction>>emptyList() : list)
+                .exceptionally(t -> Collections.emptyList());
+    }
+
+    public CompletableFuture<Object> executeCommand(String command, List<Object> args) {
+        if (!ready || server == null) return CompletableFuture.completedFuture(null);
+        org.eclipse.lsp4j.ExecuteCommandParams params = new org.eclipse.lsp4j.ExecuteCommandParams();
+        params.setCommand(command);
+        params.setArguments(args == null ? Collections.emptyList() : args);
+        return server.getWorkspaceService().executeCommand(params)
+                .exceptionally(t -> null);
+    }
 }

@@ -82,6 +82,7 @@ public class EditorTab extends Tab {
     private final Tooltip hoverTooltip = new Tooltip();
     private final Map<Integer, CodeLensLine> codeLensByParagraph = new HashMap<>();
     private final Set<Integer> codeLensParagraphStyles = new HashSet<>();
+    private final Map<Integer, org.eclipse.lsp4j.DiagnosticSeverity> diagnosticsByLine = new HashMap<>();
     private StyleSpans<Collection<String>> lastTokenSpans;
     private StyleSpans<Collection<String>> lastDiagnosticSpans;
     private ScheduledFuture<?> pendingHighlight;
@@ -214,6 +215,14 @@ public class EditorTab extends Tab {
         applyCombinedStyles();
     }
 
+    public void applyDiagnosticLines(Map<Integer, org.eclipse.lsp4j.DiagnosticSeverity> nextLines) {
+        if (nextLines == null) nextLines = Collections.emptyMap();
+        if (nextLines.equals(diagnosticsByLine)) return;
+        diagnosticsByLine.clear();
+        diagnosticsByLine.putAll(nextLines);
+        codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
+    }
+
     void onClosed() {
         if (pendingHighlight != null) pendingHighlight.cancel(false);
         if (pendingDidChange != null) pendingDidChange.cancel(false);
@@ -260,9 +269,29 @@ public class EditorTab extends Tab {
     }
 
     private Node lineNumber(int paragraphIndex) {
-        Label lineNumber = new Label(Integer.toString(paragraphIndex + 1));
-        lineNumber.getStyleClass().add("lineno");
-        return lineNumber;
+        Label label = new Label(Integer.toString(paragraphIndex + 1));
+        label.getStyleClass().add("lineno");
+
+        javafx.scene.layout.Region marker = new javafx.scene.layout.Region();
+        marker.getStyleClass().add("mt-gutter-marker");
+        org.eclipse.lsp4j.DiagnosticSeverity sev = diagnosticsByLine.get(paragraphIndex);
+        if (sev != null) {
+            marker.getStyleClass().add("mt-gutter-" + gutterSeverityClass(sev));
+        }
+
+        javafx.scene.layout.HBox row = new javafx.scene.layout.HBox(marker, label);
+        row.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        row.getStyleClass().add("mt-gutter-row");
+        return row;
+    }
+
+    private static String gutterSeverityClass(org.eclipse.lsp4j.DiagnosticSeverity s) {
+        return switch (s) {
+            case Error -> "error";
+            case Warning -> "warning";
+            case Information -> "info";
+            case Hint -> "hint";
+        };
     }
 
     private void scheduleCodeLensRefresh() {
@@ -415,6 +444,10 @@ public class EditorTab extends Tab {
         ContextMenu menu = new ContextMenu();
         menu.getStyleClass().add("mt-code-context");
 
+        javafx.scene.control.Menu quickFix = new javafx.scene.control.Menu("Quick Fix...");
+        quickFix.setOnShowing(e -> populateQuickFix(quickFix));
+        quickFix.getItems().add(new MenuItem("(no actions)"));
+
         MenuItem goToDef = new MenuItem("Go to Definition");
         goToDef.setAccelerator(new KeyCodeCombination(KeyCode.F12));
         goToDef.setOnAction(e -> goToDefinitionAtCaret());
@@ -446,12 +479,90 @@ public class EditorTab extends Tab {
         paste.setOnAction(e -> codeArea.paste());
 
         menu.getItems().addAll(
+                quickFix,
+                new SeparatorMenuItem(),
                 goToDef, rename, callHier,
                 new SeparatorMenuItem(),
                 format,
                 new SeparatorMenuItem(),
                 cut, copy, paste);
         return menu;
+    }
+
+    private void populateQuickFix(javafx.scene.control.Menu quickFix) {
+        LspBridge lsp = ctx.getLspBridge();
+        if (lsp == null || !lsp.isReady()) {
+            quickFix.getItems().setAll(disabledItem("LSP not ready"));
+            return;
+        }
+        TwoDimensional.Position caret = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
+        Position pos = new Position(caret.getMajor(), caret.getMinor());
+        Range range = new Range(pos, pos);
+        List<org.eclipse.lsp4j.Diagnostic> here = diagnosticsContainingLine(caret.getMajor());
+
+        MenuItem loading = disabledItem("Loading...");
+        quickFix.getItems().setAll(loading);
+
+        lsp.codeAction(path, range, here).thenAcceptAsync(actions -> {
+            if (actions == null || actions.isEmpty()) {
+                quickFix.getItems().setAll(disabledItem("(no actions)"));
+                return;
+            }
+            quickFix.getItems().clear();
+            for (var either : actions) {
+                MenuItem mi = quickFixMenuItem(either);
+                if (mi != null) quickFix.getItems().add(mi);
+            }
+            if (quickFix.getItems().isEmpty()) quickFix.getItems().add(disabledItem("(no actions)"));
+        }, Platform::runLater);
+    }
+
+    private MenuItem quickFixMenuItem(org.eclipse.lsp4j.jsonrpc.messages.Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction> either) {
+        if (either == null) return null;
+        String title;
+        Runnable action;
+        if (either.isLeft()) {
+            org.eclipse.lsp4j.Command cmd = either.getLeft();
+            if (cmd == null) return null;
+            title = cmd.getTitle();
+            action = () -> ctx.getLspBridge().executeCommand(cmd.getCommand(), cmd.getArguments());
+        } else {
+            org.eclipse.lsp4j.CodeAction ca = either.getRight();
+            if (ca == null) return null;
+            title = ca.getTitle();
+            action = () -> {
+                if (ca.getEdit() != null) {
+                    int files = LspEdits.applyWorkspaceEdit(ctx, ca.getEdit());
+                    lastDiagnosticSpans = null;
+                    applyHighlightingNow();
+                    ctx.getStatusBar().setMessage("Quick fix applied to " + files + " file(s)");
+                }
+                if (ca.getCommand() != null) {
+                    ctx.getLspBridge().executeCommand(ca.getCommand().getCommand(), ca.getCommand().getArguments());
+                }
+            };
+        }
+        if (title == null || title.isBlank()) return null;
+        MenuItem mi = new MenuItem(title);
+        mi.setOnAction(e -> action.run());
+        return mi;
+    }
+
+    private List<org.eclipse.lsp4j.Diagnostic> diagnosticsContainingLine(int line) {
+        List<org.eclipse.lsp4j.Diagnostic> all = ctx.getDiagnosticsBus().forUri(path.toUri().toString());
+        List<org.eclipse.lsp4j.Diagnostic> here = new java.util.ArrayList<>();
+        for (org.eclipse.lsp4j.Diagnostic d : all) {
+            int s = d.getRange().getStart().getLine();
+            int e = d.getRange().getEnd().getLine();
+            if (line >= s && line <= e) here.add(d);
+        }
+        return here;
+    }
+
+    private static MenuItem disabledItem(String text) {
+        MenuItem mi = new MenuItem(text);
+        mi.setDisable(true);
+        return mi;
     }
 
     /* ================================ commands ================================ */

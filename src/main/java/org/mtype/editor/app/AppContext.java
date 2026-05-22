@@ -6,6 +6,7 @@ import org.mtype.editor.ui.editor.EditorTabPane;
 import org.mtype.editor.ui.git.GitChangesView;
 import org.mtype.editor.ui.output.OutputPane;
 import org.mtype.editor.ui.status.StatusBar;
+import org.mtype.editor.lsp.DiagnosticsBus;
 import org.mtype.editor.ui.tree.WorkspaceTreeView;
 import org.mtype.editor.workspace.Workspace;
 import org.mtype.editor.workspace.WorkspaceSettings;
@@ -13,6 +14,7 @@ import org.mtype.editor.workspace.WorkspaceSettings;
 public class AppContext {
     private Workspace workspace;
     private WorkspaceSettings settings = WorkspaceSettings.defaults();
+    private final DiagnosticsBus diagnosticsBus = new DiagnosticsBus();
     private LspBridge lspBridge;
     private RunController runController;
     private EditorTabPane tabPane;
@@ -23,6 +25,7 @@ public class AppContext {
 
     public Workspace getWorkspace() { return workspace; }
     public WorkspaceSettings getSettings() { return settings; }
+    public DiagnosticsBus getDiagnosticsBus() { return diagnosticsBus; }
     public LspBridge getLspBridge() { return lspBridge; }
     public RunController getRunController() { return runController; }
     public EditorTabPane getTabPane() { return tabPane; }
