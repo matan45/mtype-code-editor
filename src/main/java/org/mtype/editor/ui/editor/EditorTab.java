@@ -83,6 +83,8 @@ public class EditorTab extends Tab {
     private final Map<Integer, CodeLensLine> codeLensByParagraph = new HashMap<>();
     private final Set<Integer> codeLensParagraphStyles = new HashSet<>();
     private final Map<Integer, org.eclipse.lsp4j.DiagnosticSeverity> diagnosticsByLine = new HashMap<>();
+    private javafx.scene.control.Menu quickFixMenu;
+    private int quickFixRequestSerial;
     private StyleSpans<Collection<String>> lastTokenSpans;
     private StyleSpans<Collection<String>> lastDiagnosticSpans;
     private ScheduledFuture<?> pendingHighlight;
@@ -144,12 +146,15 @@ public class EditorTab extends Tab {
             }
         });
 
-        // Right-click → position caret then show context menu
+        // Right-click → position caret, kick off the code-action request so the
+        // submenu is already populated by the time the user hovers it.
         codeArea.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
             if (e.getButton() == MouseButton.SECONDARY) {
                 CharacterHit hit = codeArea.hit(e.getX(), e.getY());
                 codeArea.moveTo(hit.getInsertionIndex());
+                if (quickFixMenu != null) populateQuickFix(quickFixMenu);
             }
+            if (completionMenu.isShowing()) completionMenu.hide();
         });
         codeArea.setContextMenu(buildCodeContextMenu());
 
@@ -445,8 +450,9 @@ public class EditorTab extends Tab {
         menu.getStyleClass().add("mt-code-context");
 
         javafx.scene.control.Menu quickFix = new javafx.scene.control.Menu("Quick Fix...");
+        this.quickFixMenu = quickFix;
         quickFix.setOnShowing(e -> populateQuickFix(quickFix));
-        quickFix.getItems().add(new MenuItem("(no actions)"));
+        quickFix.getItems().add(disabledItem("(no actions)"));
 
         MenuItem goToDef = new MenuItem("Go to Definition");
         goToDef.setAccelerator(new KeyCodeCombination(KeyCode.F12));
@@ -500,21 +506,36 @@ public class EditorTab extends Tab {
         Range range = new Range(pos, pos);
         List<org.eclipse.lsp4j.Diagnostic> here = diagnosticsContainingLine(caret.getMajor());
 
-        MenuItem loading = disabledItem("Loading...");
-        quickFix.getItems().setAll(loading);
+        final int serial = ++quickFixRequestSerial;
+        quickFix.getItems().setAll(disabledItem("Loading..."));
+        ctx.getOutputPane().appendLspLog("[codeAction] " + (caret.getMajor() + 1) + ":" + (caret.getMinor() + 1)
+                + " diagnostics=" + here.size());
 
         lsp.codeAction(path, range, here).thenAcceptAsync(actions -> {
-            if (actions == null || actions.isEmpty()) {
+            if (serial != quickFixRequestSerial) return; // a newer request has superseded
+            int count = actions == null ? 0 : actions.size();
+            ctx.getOutputPane().appendLspLog("[codeAction] returned " + count + " action(s)");
+            if (count == 0) {
                 quickFix.getItems().setAll(disabledItem("(no actions)"));
                 return;
             }
-            quickFix.getItems().clear();
+            java.util.List<MenuItem> next = new java.util.ArrayList<>();
             for (var either : actions) {
                 MenuItem mi = quickFixMenuItem(either);
-                if (mi != null) quickFix.getItems().add(mi);
+                if (mi != null) next.add(mi);
             }
-            if (quickFix.getItems().isEmpty()) quickFix.getItems().add(disabledItem("(no actions)"));
-        }, Platform::runLater);
+            if (next.isEmpty()) {
+                quickFix.getItems().setAll(disabledItem("(no actions)"));
+            } else {
+                quickFix.getItems().setAll(next);
+            }
+        }, Platform::runLater).exceptionally(t -> {
+            Platform.runLater(() -> {
+                ctx.getOutputPane().appendLspLog("[codeAction error] " + t.getMessage());
+                quickFix.getItems().setAll(disabledItem("(error: " + t.getMessage() + ")"));
+            });
+            return null;
+        });
     }
 
     private MenuItem quickFixMenuItem(org.eclipse.lsp4j.jsonrpc.messages.Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction> either) {
@@ -845,8 +866,17 @@ public class EditorTab extends Tab {
     private void requestCompletionNow() {
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
-        TwoDimensional.Position pos = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
-        lsp.completion(path, pos.getMajor(), pos.getMinor()).thenAcceptAsync(items -> {
+        int caret = codeArea.getCaretPosition();
+        TwoDimensional.Position pos = codeArea.offsetToPosition(caret, TwoDimensional.Bias.Forward);
+        String trigger = null;
+        String text = codeArea.getText();
+        int scan = caret - 1;
+        while (scan >= 0 && isWordChar(text.charAt(scan))) scan--;
+        if (scan >= 0) {
+            char prior = text.charAt(scan);
+            if (prior == '.' || prior == ':') trigger = String.valueOf(prior);
+        }
+        lsp.completion(path, pos.getMajor(), pos.getMinor(), trigger).thenAcceptAsync(items -> {
             populateCompletionMenu(items);
         }, Platform::runLater);
     }

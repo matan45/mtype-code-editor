@@ -13,10 +13,12 @@ import org.eclipse.lsp4j.CodeLens;
 import org.eclipse.lsp4j.CodeLensCapabilities;
 import org.eclipse.lsp4j.CodeLensParams;
 import org.eclipse.lsp4j.CompletionCapabilities;
+import org.eclipse.lsp4j.CompletionContext;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionItemCapabilities;
 import org.eclipse.lsp4j.CompletionList;
 import org.eclipse.lsp4j.CompletionParams;
+import org.eclipse.lsp4j.CompletionTriggerKind;
 import org.eclipse.lsp4j.DefinitionParams;
 import org.eclipse.lsp4j.DidChangeTextDocumentParams;
 import org.eclipse.lsp4j.DidCloseTextDocumentParams;
@@ -240,10 +242,22 @@ public class LspBridge {
     /* ============================== completion ============================== */
 
     public CompletableFuture<List<CompletionItem>> completion(Path path, int line, int col) {
+        return completion(path, line, col, null);
+    }
+
+    public CompletableFuture<List<CompletionItem>> completion(Path path, int line, int col, String triggerChar) {
         if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         CompletionParams params = new CompletionParams(
                 new TextDocumentIdentifier(path.toUri().toString()),
                 new Position(line, col));
+        CompletionContext context = new CompletionContext();
+        if (triggerChar != null && !triggerChar.isEmpty()) {
+            context.setTriggerKind(CompletionTriggerKind.TriggerCharacter);
+            context.setTriggerCharacter(triggerChar);
+        } else {
+            context.setTriggerKind(CompletionTriggerKind.Invoked);
+        }
+        params.setContext(context);
         return server.getTextDocumentService().completion(params).thenApply(either -> {
             if (either == null) return Collections.<CompletionItem>emptyList();
             if (either.isLeft()) return either.getLeft();

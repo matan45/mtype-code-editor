@@ -451,11 +451,11 @@
 
 /* completion kind badge */
 .mt-completion-kind {
-    -fx-text-fill: #abb2bf;
-    -fx-background-color: #2c313c;
-    -fx-padding: 0 6 0 6;
+    -fx-text-fill: #ffffff;
+    -fx-background-color: #4b5263;
+    -fx-padding: 1 6 1 6;
     -fx-background-radius: 3;
-    -fx-min-width: 18;
+    -fx-min-width: 20;
     -fx-alignment: center;
     -fx-font-family: "JetBrains Mono", "Consolas", monospace;
     -fx-font-size: 11;
@@ -465,17 +465,18 @@
 .mt-completion-kind-Interface,
 .mt-completion-kind-Struct,
 .mt-completion-kind-Enum,
-.mt-completion-kind-TypeParameter { -fx-text-fill: #e5c07b; }
+.mt-completion-kind-TypeParameter { -fx-background-color: #b8924a; -fx-text-fill: #ffffff; }
 .mt-completion-kind-Method,
 .mt-completion-kind-Function,
-.mt-completion-kind-Constructor   { -fx-text-fill: #61afef; }
+.mt-completion-kind-Constructor   { -fx-background-color: #3b7fc4; -fx-text-fill: #ffffff; }
 .mt-completion-kind-Field,
-.mt-completion-kind-Property      { -fx-text-fill: #e06c75; }
+.mt-completion-kind-Property      { -fx-background-color: #b34953; -fx-text-fill: #ffffff; }
 .mt-completion-kind-Variable,
 .mt-completion-kind-Constant,
-.mt-completion-kind-EnumMember    { -fx-text-fill: #d19a66; }
-.mt-completion-kind-Keyword       { -fx-text-fill: #c678dd; }
-.mt-completion-kind-Snippet       { -fx-text-fill: #98c379; }
+.mt-completion-kind-EnumMember    { -fx-background-color: #a36e36; -fx-text-fill: #ffffff; }
+.mt-completion-kind-Keyword       { -fx-background-color: #8a4ea3; -fx-text-fill: #ffffff; }
+.mt-completion-kind-Snippet       { -fx-background-color: #6c9648; -fx-text-fill: #ffffff; }
+.mt-completion-kind-Module        { -fx-background-color: #5b8b8a; -fx-text-fill: #ffffff; }
 
 /* ===========================================================
    Call hierarchy panel
