@@ -55,6 +55,8 @@ public class EditorApp extends Application {
         LspBridge lsp = new LspBridge(ctx);
         ctx.setLspBridge(lsp);
 
+        output.attachCallHierarchy(ctx);
+
         RunController runController = new RunController(ctx);
         ctx.setRunController(runController);
 
@@ -118,7 +120,29 @@ public class EditorApp extends Application {
         exit.setOnAction(e -> { shutdown(); stage.close(); });
 
         file.getItems().addAll(openFolder, save, new SeparatorMenuItem(), exit);
-        mb.getMenus().add(file);
+
+        Menu code = new Menu("Code");
+        MenuItem format = new MenuItem("Format Document");
+        format.setAccelerator(new KeyCodeCombination(KeyCode.F,
+                KeyCombination.SHIFT_DOWN, KeyCombination.ALT_DOWN));
+        format.setOnAction(e -> ctx.getTabPane().formatActive());
+
+        MenuItem goToDef = new MenuItem("Go to Definition");
+        goToDef.setAccelerator(new KeyCodeCombination(KeyCode.F12));
+        goToDef.setOnAction(e -> ctx.getTabPane().goToDefinitionActive());
+
+        MenuItem rename = new MenuItem("Rename Symbol");
+        rename.setAccelerator(new KeyCodeCombination(KeyCode.F2));
+        rename.setOnAction(e -> ctx.getTabPane().renameActive());
+
+        MenuItem callHierarchy = new MenuItem("Show Call Hierarchy");
+        callHierarchy.setAccelerator(new KeyCodeCombination(KeyCode.H,
+                KeyCombination.CONTROL_DOWN, KeyCombination.ALT_DOWN));
+        callHierarchy.setOnAction(e -> ctx.getTabPane().callHierarchyActive());
+
+        code.getItems().addAll(format, goToDef, rename, callHierarchy);
+
+        mb.getMenus().addAll(file, code);
         return mb;
     }
 

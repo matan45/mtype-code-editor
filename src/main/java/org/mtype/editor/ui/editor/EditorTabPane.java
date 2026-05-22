@@ -42,6 +42,35 @@ public class EditorTabPane extends TabPane {
         getSelectionModel().select(tab);
     }
 
+    /** Open file (if needed) and reveal an LSP 0-based (line, column) position. */
+    public void openAt(Path path, int line, int column) {
+        openFile(path);
+        EditorTab tab = open.get(path);
+        if (tab != null) {
+            javafx.application.Platform.runLater(() -> tab.revealPosition(line, column));
+        }
+    }
+
+    public void formatActive() {
+        EditorTab t = activeTab();
+        if (t != null) t.formatDocument();
+    }
+
+    public void renameActive() {
+        EditorTab t = activeTab();
+        if (t != null) t.renameAtCaret();
+    }
+
+    public void goToDefinitionActive() {
+        EditorTab t = activeTab();
+        if (t != null) t.goToDefinitionAtCaret();
+    }
+
+    public void callHierarchyActive() {
+        EditorTab t = activeTab();
+        if (t != null) t.showCallHierarchyAtCaret();
+    }
+
     public EditorTab activeTab() {
         Tab t = getSelectionModel().getSelectedItem();
         return (t instanceof EditorTab et) ? et : null;
