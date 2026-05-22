@@ -118,7 +118,7 @@ public class EditorApp extends Application {
 
         SplitPane mainSplit = new SplitPane(sidePanel, verticalSplit);
         mainSplit.setOrientation(Orientation.HORIZONTAL);
-        mainSplit.setDividerPositions(0.22);
+        mainSplit.setDividerPositions(0.10);
 
         BorderPane root = new BorderPane();
         root.setTop(topBar);
@@ -136,6 +136,7 @@ public class EditorApp extends Application {
         stage.setTitle("mType Editor");
         stage.setScene(scene);
         stage.setOnCloseRequest(e -> shutdown());
+        stage.setMaximized(true);
         stage.show();
     }
 
