@@ -11,11 +11,14 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.Tooltip;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
+import org.fxmisc.richtext.CharacterHit;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionItemKind;
 import org.eclipse.lsp4j.Location;
@@ -119,6 +122,15 @@ public class EditorTab extends Tab {
             }
         });
 
+        // Right-click → position caret then show context menu
+        codeArea.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
+            if (e.getButton() == MouseButton.SECONDARY) {
+                CharacterHit hit = codeArea.hit(e.getX(), e.getY());
+                codeArea.moveTo(hit.getInsertionIndex());
+            }
+        });
+        codeArea.setContextMenu(buildCodeContextMenu());
+
         setOnCloseRequest(ev -> {
             if (!confirmDiscardIfDirty()) ev.consume();
         });
@@ -165,6 +177,49 @@ public class EditorTab extends Tab {
         codeArea.moveTo(offset);
         codeArea.requestFollowCaret();
         codeArea.requestFocus();
+    }
+
+    private ContextMenu buildCodeContextMenu() {
+        ContextMenu menu = new ContextMenu();
+        menu.getStyleClass().add("mt-code-context");
+
+        MenuItem goToDef = new MenuItem("Go to Definition");
+        goToDef.setAccelerator(new KeyCodeCombination(KeyCode.F12));
+        goToDef.setOnAction(e -> goToDefinitionAtCaret());
+
+        MenuItem rename = new MenuItem("Rename Symbol");
+        rename.setAccelerator(new KeyCodeCombination(KeyCode.F2));
+        rename.setOnAction(e -> renameAtCaret());
+
+        MenuItem callHier = new MenuItem("Show Call Hierarchy");
+        callHier.setAccelerator(new KeyCodeCombination(KeyCode.H,
+                KeyCombination.CONTROL_DOWN, KeyCombination.ALT_DOWN));
+        callHier.setOnAction(e -> showCallHierarchyAtCaret());
+
+        MenuItem format = new MenuItem("Format Document");
+        format.setAccelerator(new KeyCodeCombination(KeyCode.F,
+                KeyCombination.SHIFT_DOWN, KeyCombination.ALT_DOWN));
+        format.setOnAction(e -> formatDocument());
+
+        MenuItem cut = new MenuItem("Cut");
+        cut.setAccelerator(new KeyCodeCombination(KeyCode.X, KeyCombination.SHORTCUT_DOWN));
+        cut.setOnAction(e -> codeArea.cut());
+
+        MenuItem copy = new MenuItem("Copy");
+        copy.setAccelerator(new KeyCodeCombination(KeyCode.C, KeyCombination.SHORTCUT_DOWN));
+        copy.setOnAction(e -> codeArea.copy());
+
+        MenuItem paste = new MenuItem("Paste");
+        paste.setAccelerator(new KeyCodeCombination(KeyCode.V, KeyCombination.SHORTCUT_DOWN));
+        paste.setOnAction(e -> codeArea.paste());
+
+        menu.getItems().addAll(
+                goToDef, rename, callHier,
+                new SeparatorMenuItem(),
+                format,
+                new SeparatorMenuItem(),
+                cut, copy, paste);
+        return menu;
     }
 
     /* ================================ commands ================================ */
