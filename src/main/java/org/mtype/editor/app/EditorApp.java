@@ -7,6 +7,7 @@ import javafx.scene.Scene;
 import javafx.scene.Group;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
@@ -53,6 +54,11 @@ public class EditorApp extends Application {
     private AppContext ctx;
     private Stage stage;
     private boolean shutdownStarted;
+    private TextField explorerFilterField;
+    private ToggleButton explorerActivityButton;
+    private SplitPane verticalSplit;
+    private OutputPane outputPane;
+    private double lastBottomDivider = 0.72;
 
     @Override
     public void start(Stage stage) {
@@ -118,7 +124,9 @@ public class EditorApp extends Application {
 
         SplitPane verticalSplit = new SplitPane(tabPane, output);
         verticalSplit.setOrientation(Orientation.VERTICAL);
-        verticalSplit.setDividerPositions(0.72);
+        verticalSplit.setDividerPositions(lastBottomDivider);
+        this.verticalSplit = verticalSplit;
+        this.outputPane = output;
 
         Node sidePanel = buildSidePanel(tree, gitChanges);
 
@@ -242,7 +250,28 @@ public class EditorApp extends Application {
                 new SeparatorMenuItem(), depsTree, depsForFile,
                 new SeparatorMenuItem(), stopBuild);
 
-        mb.getMenus().addAll(file, code, build);
+        Menu view = new Menu("View");
+        MenuItem filterFiles = new MenuItem("Filter Files in Explorer");
+        filterFiles.setAccelerator(new KeyCodeCombination(KeyCode.E,
+                KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN));
+        filterFiles.setOnAction(e -> toggleExplorerFilter());
+
+        MenuItem toggleBottom = new MenuItem("Toggle Bottom Panel");
+        toggleBottom.setAccelerator(new KeyCodeCombination(KeyCode.J, KeyCombination.SHORTCUT_DOWN));
+        toggleBottom.setOnAction(e -> toggleBottomPanel());
+
+        Menu bottomTabs = new Menu("Bottom Tabs");
+        OutputPane outputForMenu = ctx.getOutputPane();
+        for (String name : outputForMenu.tabNames()) {
+            CheckMenuItem item = new CheckMenuItem(name);
+            item.setSelected(outputForMenu.isTabVisible(name));
+            item.setOnAction(e -> outputForMenu.setTabVisible(name, item.isSelected()));
+            bottomTabs.getItems().add(item);
+        }
+
+        view.getItems().addAll(filterFiles, toggleBottom, new SeparatorMenuItem(), bottomTabs);
+
+        mb.getMenus().addAll(file, code, build, view);
         return mb;
     }
 
@@ -325,15 +354,17 @@ public class EditorApp extends Application {
         TextField filterField = new TextField();
         filterField.setPromptText("Filter files...");
         filterField.getStyleClass().add("mt-tree-filter");
+        filterField.setVisible(false);
+        filterField.setManaged(false);
         filterField.textProperty().addListener((obs, oldV, newV) -> tree.setFilter(newV));
         filterField.setOnKeyPressed(ev -> {
             if (ev.getCode() == KeyCode.ESCAPE) {
-                filterField.clear();
-                tree.requestFocus();
+                hideExplorerFilter(filterField, tree);
                 ev.consume();
             }
         });
         tree.setOnFilterReset(filterField::clear);
+        this.explorerFilterField = filterField;
 
         VBox explorerPane = new VBox(filterField, tree);
         VBox.setVgrow(tree, Priority.ALWAYS);
@@ -348,15 +379,15 @@ public class EditorApp extends Application {
         explorerButton.setToggleGroup(group);
         gitButton.setToggleGroup(group);
         explorerButton.setSelected(true);
+        this.explorerActivityButton = explorerButton;
 
         explorerButton.setOnAction(e -> {
             explorerButton.setSelected(true);
-            filterField.clear();
             showPanel(content, explorerPane);
         });
         gitButton.setOnAction(e -> {
             gitButton.setSelected(true);
-            filterField.clear();
+            hideExplorerFilter(filterField, tree);
             showPanel(content, gitChanges);
         });
 
@@ -384,6 +415,43 @@ public class EditorApp extends Application {
             boolean show = child == active;
             child.setVisible(show);
             child.setManaged(show);
+        }
+    }
+
+    private void hideExplorerFilter(TextField filterField, WorkspaceTreeView tree) {
+        filterField.clear();
+        filterField.setVisible(false);
+        filterField.setManaged(false);
+        tree.requestFocus();
+    }
+
+    private void toggleBottomPanel() {
+        if (verticalSplit == null || outputPane == null) return;
+        if (verticalSplit.getItems().contains(outputPane)) {
+            double[] positions = verticalSplit.getDividerPositions();
+            if (positions.length > 0 && positions[0] > 0.05 && positions[0] < 0.95) {
+                lastBottomDivider = positions[0];
+            }
+            verticalSplit.getItems().remove(outputPane);
+        } else {
+            verticalSplit.getItems().add(outputPane);
+            verticalSplit.setDividerPositions(lastBottomDivider);
+        }
+    }
+
+    private void toggleExplorerFilter() {
+        if (explorerFilterField == null) return;
+        // Make sure the Explorer panel is showing.
+        if (explorerActivityButton != null && !explorerActivityButton.isSelected()) {
+            explorerActivityButton.fire();
+        }
+        WorkspaceTreeView tree = ctx.getTreeView();
+        if (explorerFilterField.isVisible()) {
+            hideExplorerFilter(explorerFilterField, tree);
+        } else {
+            explorerFilterField.setVisible(true);
+            explorerFilterField.setManaged(true);
+            explorerFilterField.requestFocus();
         }
     }
 

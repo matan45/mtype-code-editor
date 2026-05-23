@@ -14,6 +14,8 @@ import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.InlineCssTextArea;
 import org.mtype.editor.app.AppContext;
 
+import java.util.List;
+
 public class OutputPane extends TabPane {
     private final TextArea runArea = new TextArea();
     private final TextArea lspArea = new TextArea();
@@ -85,6 +87,44 @@ public class OutputPane extends TabPane {
         getTabs().addAll(problemsTab, runTab, compileTab, lspTab, gitTab, callHierarchyTab);
         getStyleClass().add("mt-output-pane");
         setTabClosingPolicy(TabClosingPolicy.UNAVAILABLE);
+    }
+
+    private List<Tab> canonicalOrder() {
+        return List.of(problemsTab, runTab, compileTab, lspTab, gitTab, callHierarchyTab);
+    }
+
+    private Tab tabByName(String name) {
+        for (Tab t : canonicalOrder()) {
+            if (t.getText() != null && t.getText().startsWith(name)) return t;
+        }
+        return null;
+    }
+
+    public List<String> tabNames() {
+        return List.of("Problems", "Run", "Compile", "LSP Log", "Git", "Call Hierarchy");
+    }
+
+    public boolean isTabVisible(String name) {
+        Tab t = tabByName(name);
+        return t != null && getTabs().contains(t);
+    }
+
+    public void setTabVisible(String name, boolean visible) {
+        Tab target = tabByName(name);
+        if (target == null) return;
+        boolean present = getTabs().contains(target);
+        if (visible == present) return;
+        if (!visible) {
+            getTabs().remove(target);
+            return;
+        }
+        int insertAt = 0;
+        for (Tab t : canonicalOrder()) {
+            if (t == target) break;
+            if (getTabs().contains(t)) insertAt++;
+        }
+        if (insertAt > getTabs().size()) insertAt = getTabs().size();
+        getTabs().add(insertAt, target);
     }
 
     public void attachCallHierarchy(AppContext ctx) {
