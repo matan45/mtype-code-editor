@@ -65,7 +65,9 @@ import org.mtype.editor.process.StreamPump;
 import org.mtype.editor.workspace.Workspace;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -97,7 +99,8 @@ public class LspBridge {
         stop();
         long startSession = ++session;
 
-        String lspExe = ctx.getSettings().toolchain.languageServer;
+        String lspExe = resolveLanguageServerExecutable();
+        ctx.getOutputPane().appendLspLog("[lsp] starting " + lspExe);
         ProcessBuilder pb = new ProcessBuilder(lspExe, "--stdio")
                 .directory(ws.getRoot().toFile())
                 .redirectErrorStream(false);
@@ -183,6 +186,64 @@ public class LspBridge {
                 if (ctx.getTabPane() != null) ctx.getTabPane().syncOpenDocumentsWithLsp();
             });
         });
+    }
+
+    private String resolveLanguageServerExecutable() {
+        String configured = ctx.getSettings() != null
+                && ctx.getSettings().toolchain != null
+                ? ctx.getSettings().toolchain.languageServer
+                : null;
+        configured = configured == null ? "" : configured.trim();
+
+        if (!configured.isEmpty()) {
+            Path configuredPath = Path.of(configured);
+            if (Files.isRegularFile(configuredPath)) {
+                return configuredPath.toString();
+            }
+            if (!looksLikePath(configured)) {
+                return configured;
+            }
+            ctx.getOutputPane().appendLspLog("[lsp] configured server not found: " + configured);
+        }
+
+        for (Path candidate : defaultLanguageServerCandidates()) {
+            if (Files.isRegularFile(candidate)) {
+                ctx.getOutputPane().appendLspLog("[lsp] using default server: " + candidate);
+                return candidate.toString();
+            }
+        }
+
+        String executable = languageServerExecutableName();
+        ctx.getOutputPane().appendLspLog("[lsp] falling back to PATH lookup: " + executable);
+        return executable;
+    }
+
+    private static List<Path> defaultLanguageServerCandidates() {
+        List<Path> candidates = new ArrayList<>();
+        String home = System.getenv("MTYPE_HOME");
+        if (home != null && !home.isBlank()) {
+            candidates.add(languageServerPathUnder(Path.of(home)));
+        }
+        candidates.add(languageServerPathUnder(Path.of("C:\\matan\\mType")));
+        return candidates;
+    }
+
+    private static Path languageServerPathUnder(Path root) {
+        return root.resolve(Path.of(
+                "bin",
+                "mtype-language-server",
+                "Release",
+                "x64",
+                languageServerExecutableName()));
+    }
+
+    private static String languageServerExecutableName() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        return os.contains("win") ? "mtype-language-server.exe" : "mtype-language-server";
+    }
+
+    private static boolean looksLikePath(String value) {
+        return value.contains("\\") || value.contains("/") || Path.of(value).isAbsolute();
     }
 
     public synchronized void stop() {

@@ -93,8 +93,9 @@ final class InlayHintsController {
             Optional<Bounds> maybeBounds;
             try {
                 int offset = Positions.offset(area.getText(), p.getLine(), p.getCharacter());
-                int end = Math.min(area.getLength(), offset + 1);
-                maybeBounds = area.getCharacterBoundsOnScreen(offset, end);
+                int start = Math.max(0, Math.min(offset - 1, area.getLength()));
+                int end = Math.max(start + 1, Math.min(offset, area.getLength()));
+                maybeBounds = area.getCharacterBoundsOnScreen(start, end);
             } catch (Exception ignored) {
                 maybeBounds = Optional.empty();
             }
@@ -110,10 +111,10 @@ final class InlayHintsController {
             }
 
             Bounds charBounds = maybeBounds.get();
-            Point2D local = layer.screenToLocal(charBounds.getMinX(), charBounds.getMinY());
+            Point2D local = layer.screenToLocal(charBounds.getMaxX(), charBounds.getMinY());
             label.applyCss();
             label.autosize();
-            double width = label.prefWidth(-1);
+            double width = Math.ceil(label.prefWidth(-1)) + 1.0;
             double y = local.getY() + Math.max(0.0,
                     (charBounds.getHeight() - label.prefHeight(-1)) * 0.5);
             label.relocate(Math.max(0, local.getX() + currentLineShift), Math.max(0, y));
@@ -161,6 +162,7 @@ final class InlayHintsController {
             for (Node child : pane.getChildren()) {
                 if (!(child instanceof Text text)) continue;
                 int length = text.getText() == null ? 0 : text.getText().length();
+                if (length == 0) continue;
                 int end = start + length;
                 double shift = shiftForSegment(start, end, lineGaps);
                 child.setTranslateX(shift);

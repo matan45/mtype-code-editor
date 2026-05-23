@@ -369,9 +369,8 @@
 
 .mt-inlay-hint {
     -fx-text-fill: #7f8490;
-    -fx-background-color: rgba(92,99,112,0.16);
-    -fx-background-radius: 3;
-    -fx-padding: 0 3 0 3;
+    -fx-background-color: transparent;
+    -fx-padding: 0;
     -fx-font-family: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
     -fx-font-size: 11;
 }
@@ -381,7 +380,7 @@
 }
 
 .mt-inlay-hint-type {
-    -fx-text-fill: #7f8490;
+    -fx-text-fill: #8b93a7;
 }
 
 /* ===========================================================
