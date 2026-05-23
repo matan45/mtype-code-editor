@@ -24,6 +24,7 @@ import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.Pane;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import org.eclipse.lsp4j.CodeLens;
 import org.eclipse.lsp4j.Command;
@@ -80,6 +81,8 @@ public class EditorTab extends Tab {
     private final ContextMenu completionMenu = new ContextMenu();
     private final ContextMenu referencesMenu = new ContextMenu();
     private final Tooltip hoverTooltip = new Tooltip();
+    private final Pane inlayHintsLayer = new Pane();
+    private final InlayHintsController inlayHintsController;
     private final Map<Integer, CodeLensLine> codeLensByParagraph = new HashMap<>();
     private final Set<Integer> codeLensParagraphStyles = new HashSet<>();
     private final Map<Integer, org.eclipse.lsp4j.DiagnosticSeverity> diagnosticsByLine = new HashMap<>();
@@ -91,7 +94,9 @@ public class EditorTab extends Tab {
     private ScheduledFuture<?> pendingDidChange;
     private ScheduledFuture<?> pendingCompletion;
     private ScheduledFuture<?> pendingCodeLens;
+    private ScheduledFuture<?> pendingInlayHints;
     private int codeLensRequestSerial;
+    private int inlayHintRequestSerial;
     private long openedLspSession = -1;
     private boolean suppressDirty = true;
     private List<CompletionItem> currentCompletionItems = Collections.emptyList();
@@ -108,7 +113,9 @@ public class EditorTab extends Tab {
         referencesMenu.getStyleClass().add("mt-references");
 
         VirtualizedScrollPane<CodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
-        setContent(scroll);
+        StackPane editorStack = new StackPane(scroll, inlayHintsLayer);
+        setContent(editorStack);
+        inlayHintsController = new InlayHintsController(codeArea, inlayHintsLayer);
 
         loadFile();
         suppressDirty = false;
@@ -118,6 +125,7 @@ public class EditorTab extends Tab {
             scheduleHighlight();
             scheduleDidChange();
             scheduleCodeLensRefresh();
+            scheduleInlayHintsRefresh();
             maybeAutoCompletion(oldText, newText);
         });
 
@@ -234,6 +242,8 @@ public class EditorTab extends Tab {
         if (pendingDidChange != null) pendingDidChange.cancel(false);
         if (pendingCompletion != null) pendingCompletion.cancel(false);
         if (pendingCodeLens != null) pendingCodeLens.cancel(false);
+        if (pendingInlayHints != null) pendingInlayHints.cancel(false);
+        inlayHintsController.dispose();
         if (ctx.getLspBridge() != null) {
             try { ctx.getLspBridge().didClose(path); } catch (Exception ignored) {}
         }
@@ -247,6 +257,7 @@ public class EditorTab extends Tab {
         lsp.didOpen(path, codeArea.getText(), version.get());
         openedLspSession = lspSession;
         scheduleCodeLensRefresh();
+        scheduleInlayHintsRefresh();
     }
 
     /* ----- code lens ----- */
@@ -316,6 +327,37 @@ public class EditorTab extends Tab {
             if (request != codeLensRequestSerial) return;
             applyCodeLenses(lenses);
         }, Platform::runLater);
+    }
+
+    private void scheduleInlayHintsRefresh() {
+        if (pendingInlayHints != null) pendingInlayHints.cancel(false);
+        pendingInlayHints = BG_EXEC.schedule(
+                () -> Platform.runLater(this::requestInlayHintsNow),
+                350,
+                TimeUnit.MILLISECONDS);
+    }
+
+    private void requestInlayHintsNow() {
+        LspBridge lsp = ctx.getLspBridge();
+        if (lsp == null || !lsp.isReady()) {
+            inlayHintsController.clear();
+            return;
+        }
+        int request = ++inlayHintRequestSerial;
+        Range range = wholeDocumentRange();
+        lsp.inlayHints(path, range).thenAcceptAsync(hints -> {
+            if (request != inlayHintRequestSerial) return;
+            inlayHintsController.setHints(hints);
+        }, Platform::runLater);
+    }
+
+    private Range wholeDocumentRange() {
+        int lastLine = Math.max(0, codeArea.getParagraphs().size() - 1);
+        int lastCharacter = 0;
+        try {
+            lastCharacter = codeArea.getText(lastLine).length();
+        } catch (Exception ignored) {}
+        return new Range(new Position(0, 0), new Position(lastLine, lastCharacter));
     }
 
     private void applyCodeLenses(List<? extends CodeLens> lenses) {

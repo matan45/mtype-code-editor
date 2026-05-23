@@ -27,6 +27,9 @@ import org.eclipse.lsp4j.DocumentFormattingParams;
 import org.eclipse.lsp4j.FormattingOptions;
 import org.eclipse.lsp4j.Hover;
 import org.eclipse.lsp4j.HoverParams;
+import org.eclipse.lsp4j.InlayHint;
+import org.eclipse.lsp4j.InlayHintCapabilities;
+import org.eclipse.lsp4j.InlayHintParams;
 import org.eclipse.lsp4j.InitializeParams;
 import org.eclipse.lsp4j.InitializeResult;
 import org.eclipse.lsp4j.InitializedParams;
@@ -143,6 +146,7 @@ public class LspBridge {
         td.setFormatting(new org.eclipse.lsp4j.FormattingCapabilities());
         td.setCodeLens(new CodeLensCapabilities());
         td.setReferences(new ReferencesCapabilities());
+        td.setInlayHint(new InlayHintCapabilities());
 
         RenameCapabilities rename = new RenameCapabilities();
         rename.setPrepareSupport(true);
@@ -336,6 +340,18 @@ public class LspBridge {
         CodeLensParams params = new CodeLensParams(new TextDocumentIdentifier(path.toUri().toString()));
         return server.getTextDocumentService().codeLens(params)
                 .thenApply(list -> list == null ? Collections.<CodeLens>emptyList() : list)
+                .exceptionally(t -> Collections.emptyList());
+    }
+
+    public CompletableFuture<List<InlayHint>> inlayHints(Path path, Range range) {
+        if (!ready || server == null || range == null) {
+            return CompletableFuture.completedFuture(Collections.emptyList());
+        }
+        InlayHintParams params = new InlayHintParams();
+        params.setTextDocument(new TextDocumentIdentifier(path.toUri().toString()));
+        params.setRange(range);
+        return server.getTextDocumentService().inlayHint(params)
+                .thenApply(list -> list == null ? Collections.<InlayHint>emptyList() : list)
                 .exceptionally(t -> Collections.emptyList());
     }
 
