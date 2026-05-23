@@ -1,5 +1,6 @@
 package org.mtype.editor.ui.tree;
 
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
@@ -15,30 +16,56 @@ import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.input.MouseButton;
 import javafx.stage.Window;
+import javafx.util.Duration;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.ui.dialogs.Dialogs;
 import org.mtype.editor.workspace.Workspace;
 
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class WorkspaceTreeView extends TreeView<Path> {
     private enum ClipboardOp { COPY, CUT }
     private static Path clipboardPath;
     private static ClipboardOp clipboardOp;
 
+    private static final ExecutorService FILTER_EXEC = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "workspace-filter");
+        t.setDaemon(true);
+        return t;
+    });
+
     private final AppContext ctx;
+    private final PauseTransition filterDebounce = new PauseTransition(Duration.millis(200));
+    private final AtomicLong walkGeneration = new AtomicLong();
+    private TreeItem<Path> originalRoot;
+    private String currentQuery = "";
+    private Future<?> activeWalk;
+    private Runnable onFilterReset;
 
     public WorkspaceTreeView(AppContext ctx) {
         this.ctx = ctx;
         setShowRoot(true);
         setCellFactory(tv -> new FileTreeCell());
         getStyleClass().add("mt-tree");
+        filterDebounce.setOnFinished(e -> applyFilter(currentQuery));
 
         setOnMouseClicked(event -> {
             if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2) {
@@ -64,23 +91,179 @@ public class WorkspaceTreeView extends TreeView<Path> {
 
     public void setWorkspace(Workspace ws) {
         Platform.runLater(() -> {
+            cancelActiveWalk();
+            currentQuery = "";
+            filterDebounce.stop();
             LazyTreeItem root = new LazyTreeItem(ws.getRoot());
             root.setExpanded(true);
+            originalRoot = root;
             setRoot(root);
+            if (onFilterReset != null) onFilterReset.run();
         });
     }
 
     public void refresh() {
         Workspace ws = ctx.getWorkspace();
-        if (ws != null) setWorkspace(ws);
+        if (ws == null) return;
+        if (currentQuery.isEmpty()) {
+            setWorkspace(ws);
+        } else {
+            // Rebuild the lazy root in the background reference so a future filter-clear shows fresh state,
+            // then re-run the walk.
+            LazyTreeItem root = new LazyTreeItem(ws.getRoot());
+            root.setExpanded(true);
+            originalRoot = root;
+            applyFilter(currentQuery);
+        }
     }
 
     /** Reload only the given directory's subtree, preserving expansion state of unaffected branches. */
     public void refreshDirectory(Path dir) {
         if (dir == null) { refresh(); return; }
+        if (!currentQuery.isEmpty()) {
+            // While filtering, do a targeted reload of the original lazy tree (so it's fresh when the
+            // filter clears), then re-run the walk to pick up the changes.
+            if (originalRoot instanceof LazyTreeItem lazyRoot) {
+                LazyTreeItem item = findItem(lazyRoot, dir);
+                if (item != null) item.reload();
+            }
+            applyFilter(currentQuery);
+            return;
+        }
         LazyTreeItem item = findItem(dir);
         if (item == null) { refresh(); return; }
         item.reload();
+    }
+
+    public void setFilter(String query) {
+        String normalized = query == null ? "" : query.trim();
+        if (normalized.equals(currentQuery)) return;
+        currentQuery = normalized;
+        filterDebounce.playFromStart();
+    }
+
+    public void setOnFilterReset(Runnable callback) {
+        this.onFilterReset = callback;
+    }
+
+    private void applyFilter(String query) {
+        cancelActiveWalk();
+        if (query.isEmpty()) {
+            if (originalRoot != null) Platform.runLater(() -> setRoot(originalRoot));
+            return;
+        }
+        if (originalRoot == null) return;
+        Path root = originalRoot.getValue();
+        if (root == null) return;
+        long generation = walkGeneration.incrementAndGet();
+        activeWalk = FILTER_EXEC.submit(() -> runWalk(query, root, generation));
+    }
+
+    private void cancelActiveWalk() {
+        if (activeWalk != null) {
+            activeWalk.cancel(true);
+            activeWalk = null;
+        }
+    }
+
+    private void runWalk(String query, Path root, long generation) {
+        String qLower = query.toLowerCase();
+        List<Path> matches = new ArrayList<>();
+        try {
+            Files.walkFileTree(root, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                    if (Thread.currentThread().isInterrupted()) throw new IOException("cancelled");
+                    if (!dir.equals(root)) {
+                        String name = dir.getFileName() == null ? "" : dir.getFileName().toString();
+                        if (name.startsWith(".")) return FileVisitResult.SKIP_SUBTREE;
+                        if (name.toLowerCase().contains(qLower)) matches.add(dir);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                    if (Thread.currentThread().isInterrupted()) throw new IOException("cancelled");
+                    String name = file.getFileName() == null ? "" : file.getFileName().toString();
+                    if (name.startsWith(".")) return FileVisitResult.CONTINUE;
+                    if (name.toLowerCase().contains(qLower)) matches.add(file);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException ignored) {
+            // Cancellation or permission errors at the top level; fall through with whatever we collected.
+        }
+        if (Thread.currentThread().isInterrupted()) return;
+        Platform.runLater(() -> {
+            if (generation != walkGeneration.get()) return;
+            if (!query.equals(currentQuery)) return;
+            TreeItem<Path> filteredRoot = buildFilteredTree(matches, root);
+            setRoot(filteredRoot);
+        });
+    }
+
+    private TreeItem<Path> buildFilteredTree(List<Path> matches, Path root) {
+        TreeItem<Path> rootItem = new TreeItem<>(root);
+        rootItem.setExpanded(true);
+        Map<Path, TreeItem<Path>> byPath = new HashMap<>();
+        byPath.put(root, rootItem);
+        for (Path match : matches) {
+            ensureNode(match, root, byPath);
+        }
+        sortRecursive(rootItem);
+        return rootItem;
+    }
+
+    private TreeItem<Path> ensureNode(Path path, Path root, Map<Path, TreeItem<Path>> byPath) {
+        TreeItem<Path> existing = byPath.get(path);
+        if (existing != null) return existing;
+        Path parent = path.getParent();
+        if (parent == null || !path.startsWith(root) || path.equals(root)) {
+            return byPath.get(root);
+        }
+        TreeItem<Path> parentItem = ensureNode(parent, root, byPath);
+        TreeItem<Path> node = new TreeItem<>(path);
+        node.setExpanded(true);
+        parentItem.getChildren().add(node);
+        byPath.put(path, node);
+        return node;
+    }
+
+    private static final Comparator<TreeItem<Path>> FILTER_CHILD_ORDER = Comparator
+            .comparing((TreeItem<Path> ti) -> !Files.isDirectory(ti.getValue()))
+            .thenComparing(ti -> ti.getValue().getFileName().toString().toLowerCase());
+
+    private void sortRecursive(TreeItem<Path> node) {
+        if (node.getChildren().isEmpty()) return;
+        node.getChildren().sort(FILTER_CHILD_ORDER);
+        for (TreeItem<Path> child : node.getChildren()) sortRecursive(child);
+    }
+
+    private LazyTreeItem findItem(LazyTreeItem root, Path target) {
+        Path rootPath = root.getValue();
+        if (rootPath == null || !target.startsWith(rootPath)) return null;
+        if (target.equals(rootPath)) return root;
+        Path rel = rootPath.relativize(target);
+        LazyTreeItem current = root;
+        for (Path segment : rel) {
+            LazyTreeItem next = null;
+            for (TreeItem<Path> child : current.getChildren()) {
+                if (child instanceof LazyTreeItem lti
+                        && Objects.equals(segment.toString(), lti.getValue().getFileName().toString())) {
+                    next = lti;
+                    break;
+                }
+            }
+            if (next == null) return null;
+            current = next;
+        }
+        return current;
     }
 
     private LazyTreeItem findItem(Path target) {

@@ -12,6 +12,7 @@ import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.Tooltip;
@@ -20,6 +21,7 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.shape.Circle;
@@ -320,7 +322,23 @@ public class EditorApp extends Application {
     }
 
     private Node buildSidePanel(WorkspaceTreeView tree, GitChangesView gitChanges) {
-        StackPane content = new StackPane(tree, gitChanges);
+        TextField filterField = new TextField();
+        filterField.setPromptText("Filter files...");
+        filterField.getStyleClass().add("mt-tree-filter");
+        filterField.textProperty().addListener((obs, oldV, newV) -> tree.setFilter(newV));
+        filterField.setOnKeyPressed(ev -> {
+            if (ev.getCode() == KeyCode.ESCAPE) {
+                filterField.clear();
+                tree.requestFocus();
+                ev.consume();
+            }
+        });
+        tree.setOnFilterReset(filterField::clear);
+
+        VBox explorerPane = new VBox(filterField, tree);
+        VBox.setVgrow(tree, Priority.ALWAYS);
+
+        StackPane content = new StackPane(explorerPane, gitChanges);
         gitChanges.setVisible(false);
         gitChanges.setManaged(false);
 
@@ -333,10 +351,12 @@ public class EditorApp extends Application {
 
         explorerButton.setOnAction(e -> {
             explorerButton.setSelected(true);
-            showPanel(content, tree);
+            filterField.clear();
+            showPanel(content, explorerPane);
         });
         gitButton.setOnAction(e -> {
             gitButton.setSelected(true);
+            filterField.clear();
             showPanel(content, gitChanges);
         });
 

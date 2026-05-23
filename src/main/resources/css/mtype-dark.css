@@ -823,6 +823,25 @@
 .mt-find-in-files .text-field:focused {
     -fx-border-color: #528bff;
 }
+
+.mt-tree-filter {
+    -fx-background-color: #1c1f25;
+    -fx-text-fill: #ffffff;
+    -fx-prompt-text-fill: #636d83;
+    -fx-border-color: #3e4451;
+    -fx-border-width: 1;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+    -fx-padding: 4 8 4 8;
+    -fx-font-size: 12;
+    -fx-caret-color: #528bff;
+    -fx-highlight-fill: #3e4451;
+    -fx-background-insets: 6 8 4 8;
+    -fx-border-insets: 6 8 4 8;
+}
+.mt-tree-filter:focused {
+    -fx-border-color: #528bff;
+}
 .mt-find-in-files .text-field.mt-search-error,
 .mt-find-in-files .text-field.mt-search-error:focused {
     -fx-border-color: #e06c75;
