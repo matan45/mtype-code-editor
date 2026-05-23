@@ -827,7 +827,7 @@ public class EditorTab extends Tab {
             e.consume();
             return;
         }
-        if (e.getCode() == KeyCode.F12 && !e.isShiftDown()) {
+        if (e.getCode() == KeyCode.F12) {
             goToDefinitionAtCaret();
             e.consume();
             return;
