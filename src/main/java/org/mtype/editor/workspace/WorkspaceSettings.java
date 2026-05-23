@@ -37,6 +37,7 @@ public class WorkspaceSettings {
         public int fontSize = 14;
         public String theme = "dark";
         public boolean formatOnSave = false;
+        public boolean inlayHints = true;
 
         public static EditorPrefs defaults() {
             return new EditorPrefs();

@@ -295,6 +295,11 @@ public class EditorApp extends Application {
             } catch (java.io.IOException ex) {
                 ctx.getStatusBar().setMessage("Save failed: " + ex.getMessage());
             }
+            if (ctx.getTabPane() != null) {
+                for (var tab : ctx.getTabPane().openTabs()) {
+                    tab.refreshInlayHintsFromSettings();
+                }
+            }
         });
     }
 

@@ -42,6 +42,7 @@ public class SettingsDialog extends Dialog<WorkspaceSettings> {
     private final Spinner<Integer> fontSizeSpinner = new Spinner<>(8, 32, 14);
     private final ComboBox<String> themeCombo = new ComboBox<>();
     private final CheckBox formatOnSaveCheck = new CheckBox();
+    private final CheckBox inlayHintsCheck = new CheckBox();
 
     public SettingsDialog(Window owner, WorkspaceSettings current) {
         initOwner(owner);
@@ -108,6 +109,7 @@ public class SettingsDialog extends Dialog<WorkspaceSettings> {
         themeCombo.getItems().setAll("dark");
         themeCombo.setValue(s.editor.theme == null ? "dark" : s.editor.theme);
         formatOnSaveCheck.setSelected(s.editor.formatOnSave);
+        inlayHintsCheck.setSelected(s.editor.inlayHints);
     }
 
     private VBox buildForm() {
@@ -127,7 +129,8 @@ public class SettingsDialog extends Dialog<WorkspaceSettings> {
                         row("Font family", fontFamilyCombo, null),
                         row("Font size", fontSizeSpinner, null),
                         row("Theme", themeCombo, null),
-                        row("Format on save", formatOnSaveCheck, null)
+                        row("Format on save", formatOnSaveCheck, null),
+                        row("Inlay hints", inlayHintsCheck, null)
                 )
         );
         return root;
@@ -205,6 +208,7 @@ public class SettingsDialog extends Dialog<WorkspaceSettings> {
         s.editor.fontSize = fontSizeSpinner.getValue();
         s.editor.theme = themeCombo.getValue() == null ? "dark" : themeCombo.getValue();
         s.editor.formatOnSave = formatOnSaveCheck.isSelected();
+        s.editor.inlayHints = inlayHintsCheck.isSelected();
         return s;
     }
 

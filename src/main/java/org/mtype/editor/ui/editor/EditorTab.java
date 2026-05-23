@@ -341,7 +341,17 @@ public class EditorTab extends Tab {
                 TimeUnit.MILLISECONDS);
     }
 
+    public void refreshInlayHintsFromSettings() {
+        requestInlayHintsNow();
+    }
+
     private void requestInlayHintsNow() {
+        if (ctx.getSettings() == null
+                || ctx.getSettings().editor == null
+                || !ctx.getSettings().editor.inlayHints) {
+            inlayHintsController.clear();
+            return;
+        }
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) {
             inlayHintsController.clear();
