@@ -7,14 +7,18 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.SelectionMode;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
+import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.Dragboard;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.input.MouseButton;
+import javafx.scene.input.TransferMode;
 import javafx.stage.Window;
 import javafx.util.Duration;
 import org.mtype.editor.app.AppContext;
@@ -32,10 +36,12 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -43,7 +49,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class WorkspaceTreeView extends TreeView<Path> {
     private enum ClipboardOp { COPY, CUT }
-    private static Path clipboardPath;
+    private static List<Path> clipboardPaths = List.of();
     private static ClipboardOp clipboardOp;
 
     private static final ExecutorService FILTER_EXEC = Executors.newSingleThreadExecutor(r -> {
@@ -59,11 +65,13 @@ public class WorkspaceTreeView extends TreeView<Path> {
     private String currentQuery = "";
     private Future<?> activeWalk;
     private Runnable onFilterReset;
+    private List<Path> draggingPaths = List.of();
 
     public WorkspaceTreeView(AppContext ctx) {
         this.ctx = ctx;
         setShowRoot(true);
         setCellFactory(_ -> new FileTreeCell());
+        getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         getStyleClass().add("mt-tree");
         filterDebounce.setOnFinished(_ -> applyFilter(currentQuery));
 
@@ -334,15 +342,17 @@ public class WorkspaceTreeView extends TreeView<Path> {
                 revealInOs, refreshItem);
 
         menu.setOnShowing(_ -> {
+            List<Path> selected = selectedMutablePaths();
             Path sel = selectedPath();
             boolean hasSel = sel != null;
-            boolean isRoot = hasSel && getRoot() != null && sel.equals(getRoot().getValue());
-            rename.setDisable(!hasSel || isRoot);
-            delete.setDisable(!hasSel || isRoot);
+            boolean hasMutableSel = !selected.isEmpty();
+            boolean singleMutableSel = selected.size() == 1;
+            rename.setDisable(!singleMutableSel);
+            delete.setDisable(!hasMutableSel);
             copy.setDisable(!hasSel);
-            cut.setDisable(!hasSel || isRoot);
-            paste.setDisable(clipboardPath == null || targetDirectory() == null);
-            revealInOs.setDisable(!hasSel);
+            cut.setDisable(!hasMutableSel);
+            paste.setDisable(clipboardPaths.isEmpty() || targetDirectory() == null);
+            revealInOs.setDisable(!singleMutableSel);
         });
 
         return menu;
@@ -351,6 +361,42 @@ public class WorkspaceTreeView extends TreeView<Path> {
     private Path selectedPath() {
         TreeItem<Path> sel = getSelectionModel().getSelectedItem();
         return sel == null ? null : sel.getValue();
+    }
+
+    private List<Path> selectedPaths() {
+        List<Path> paths = new ArrayList<>();
+        for (TreeItem<Path> item : getSelectionModel().getSelectedItems()) {
+            if (item != null && item.getValue() != null) {
+                paths.add(item.getValue());
+            }
+        }
+        return paths;
+    }
+
+    private List<Path> selectedMutablePaths() {
+        return topLevelPaths(selectedPaths(), true);
+    }
+
+    private List<Path> topLevelPaths(List<Path> paths, boolean excludeRoot) {
+        Path rootPath = getRoot() == null ? null : getRoot().getValue();
+        List<Path> unique = new ArrayList<>(new LinkedHashSet<>(paths));
+        unique.removeIf(p -> p == null || (excludeRoot && rootPath != null && p.equals(rootPath)));
+        unique.sort(Comparator.comparingInt(Path::getNameCount));
+
+        List<Path> topLevel = new ArrayList<>();
+        for (Path path : unique) {
+            boolean coveredByParent = false;
+            for (Path parent : topLevel) {
+                if (path.startsWith(parent)) {
+                    coveredByParent = true;
+                    break;
+                }
+            }
+            if (!coveredByParent) {
+                topLevel.add(path);
+            }
+        }
+        return topLevel;
     }
 
     /** Where new files/folders or pasted items land. Folder selection → that folder; file → its parent; nothing → root. */
@@ -436,68 +482,153 @@ public class WorkspaceTreeView extends TreeView<Path> {
     }
 
     private void deleteAction() {
-        Path sel = selectedPath();
-        if (sel == null) return;
-        if (getRoot() != null && sel.equals(getRoot().getValue())) return;
+        List<Path> selected = selectedMutablePaths();
+        if (selected.isEmpty()) return;
         Alert confirm = Dialogs.confirm(ownerWindow(), null,
-                "Delete " + sel.getFileName() + "? This cannot be undone.");
+                deleteConfirmationText(selected));
         Optional<ButtonType> r = confirm.showAndWait();
         if (r.isEmpty() || r.get() != ButtonType.OK) return;
         try {
-            if (Files.isDirectory(sel)) {
-                ctx.getTabPane().closeUnder(sel);
-                deleteRecursive(sel);
-            } else {
-                ctx.getTabPane().closeByPath(sel);
-                Files.delete(sel);
+            for (Path path : selected) {
+                if (Files.isDirectory(path)) {
+                    ctx.getTabPane().closeUnder(path);
+                    deleteRecursive(path);
+                } else {
+                    ctx.getTabPane().closeByPath(path);
+                    Files.delete(path);
+                }
             }
         } catch (IOException ex) { errorAlert("Delete failed", ex); return; }
-        if (clipboardPath != null && clipboardPath.startsWith(sel)) {
-            clipboardPath = null;
+        if (clipboardPaths.stream().anyMatch(source ->
+                selected.stream().anyMatch(deleted -> source.startsWith(deleted)))) {
+            clipboardPaths = List.of();
             clipboardOp = null;
         }
-        refreshDirectory(sel.getParent());
+        refreshParents(selected);
         ctx.refreshHasProjectFile();
     }
 
     private void clipAction(ClipboardOp op) {
-        Path sel = selectedPath();
-        if (sel == null) return;
-        if (op == ClipboardOp.CUT && getRoot() != null && sel.equals(getRoot().getValue())) return;
-        clipboardPath = sel;
+        List<Path> selected = op == ClipboardOp.CUT
+                ? selectedMutablePaths()
+                : topLevelPaths(selectedPaths(), false);
+        if (selected.isEmpty()) return;
+        clipboardPaths = List.copyOf(selected);
         clipboardOp = op;
-        ctx.getStatusBar().setMessage((op == ClipboardOp.COPY ? "Copied " : "Cut ") + sel.getFileName());
+        ctx.getStatusBar().setMessage((op == ClipboardOp.COPY ? "Copied " : "Cut ") + describePaths(selected));
     }
 
     private void pasteAction() {
-        if (clipboardPath == null) return;
+        if (clipboardPaths.isEmpty()) return;
         Path dir = targetDirectory();
         if (dir == null) return;
-        if (!Files.exists(clipboardPath)) {
+        if (clipboardPaths.stream().anyMatch(path -> !Files.exists(path))) {
             ctx.getStatusBar().setMessage("Clipboard source no longer exists");
-            clipboardPath = null; clipboardOp = null;
+            clipboardPaths = List.of(); clipboardOp = null;
             return;
         }
-        Path target = dir.resolve(clipboardPath.getFileName().toString());
-        target = uniquify(target);
-        Path sourceParent = clipboardPath.getParent();
+        Optional<Path> invalidNestedPaste = clipboardPaths.stream()
+                .filter(source -> Files.isDirectory(source) && dir.startsWith(source))
+                .findFirst();
+        if (invalidNestedPaste.isPresent()) {
+            String action = clipboardOp == ClipboardOp.CUT ? "move" : "copy";
+            Dialogs.error(ownerWindow(), "Paste failed",
+                    "Cannot " + action + " " + invalidNestedPaste.get().getFileName()
+                            + " into itself.").showAndWait();
+            return;
+        }
+
+        Set<Path> sourceParents = new LinkedHashSet<>();
+        for (Path source : clipboardPaths) {
+            if (source.getParent() != null) sourceParents.add(source.getParent());
+        }
         boolean wasCut = clipboardOp == ClipboardOp.CUT;
         try {
+            for (Path source : clipboardPaths) {
+                Path target = uniquify(dir.resolve(source.getFileName().toString()));
+                if (wasCut) {
+                    if (Files.isDirectory(source)) ctx.getTabPane().closeUnder(source);
+                    else ctx.getTabPane().closeByPath(source);
+                    Files.move(source, target);
+                } else {
+                    if (Files.isDirectory(source)) copyRecursive(source, target);
+                    else Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
             if (wasCut) {
-                if (Files.isDirectory(clipboardPath)) ctx.getTabPane().closeUnder(clipboardPath);
-                else ctx.getTabPane().closeByPath(clipboardPath);
-                Files.move(clipboardPath, target);
-                clipboardPath = null; clipboardOp = null;
-            } else {
-                if (Files.isDirectory(clipboardPath)) copyRecursive(clipboardPath, target);
-                else Files.copy(clipboardPath, target, StandardCopyOption.REPLACE_EXISTING);
+                clipboardPaths = List.of(); clipboardOp = null;
             }
         } catch (IOException ex) { errorAlert("Paste failed", ex); return; }
         refreshDirectory(dir);
-        if (wasCut && sourceParent != null && !sourceParent.equals(dir)) {
-            refreshDirectory(sourceParent);
+        if (wasCut) {
+            for (Path sourceParent : sourceParents) {
+                if (!sourceParent.equals(dir)) refreshDirectory(sourceParent);
+            }
         }
         ctx.refreshHasProjectFile();
+    }
+
+    private List<Path> dragSourcePaths(Path draggedPath) {
+        if (draggedPath == null) return List.of();
+        Path rootPath = getRoot() == null ? null : getRoot().getValue();
+        if (rootPath != null && draggedPath.equals(rootPath)) return List.of();
+
+        List<Path> selected = selectedPaths();
+        if (selected.contains(draggedPath)) {
+            return selectedMutablePaths();
+        }
+        return List.of(draggedPath);
+    }
+
+    private boolean canDropOnDirectory(Path targetDir, List<Path> sources) {
+        if (targetDir == null || !Files.isDirectory(targetDir) || sources == null || sources.isEmpty()) {
+            return false;
+        }
+        boolean hasMove = false;
+        for (Path source : sources) {
+            if (source == null || source.equals(targetDir)) return false;
+            if (Files.isDirectory(source) && targetDir.startsWith(source)) return false;
+            if (!targetDir.equals(source.getParent())) hasMove = true;
+        }
+        return hasMove;
+    }
+
+    private boolean moveDraggedPathsTo(Path targetDir) {
+        List<Path> sources = draggingPaths;
+        if (!canDropOnDirectory(targetDir, sources)) return false;
+
+        List<Path> moved = new ArrayList<>();
+        Set<Path> sourceParents = new LinkedHashSet<>();
+        try {
+            for (Path source : sources) {
+                Path sourceParent = source.getParent();
+                if (sourceParent != null) sourceParents.add(sourceParent);
+                if (targetDir.equals(sourceParent)) continue;
+
+                Path target = uniquify(targetDir.resolve(source.getFileName().toString()));
+                if (Files.isDirectory(source)) ctx.getTabPane().closeUnder(source);
+                else ctx.getTabPane().closeByPath(source);
+                Files.move(source, target);
+                moved.add(source);
+            }
+        } catch (IOException ex) {
+            errorAlert("Move failed", ex);
+            return false;
+        }
+
+        if (moved.isEmpty()) return false;
+        if (clipboardPaths.stream().anyMatch(source ->
+                moved.stream().anyMatch(movedPath -> source.startsWith(movedPath)))) {
+            clipboardPaths = List.of();
+            clipboardOp = null;
+        }
+        refreshDirectory(targetDir);
+        for (Path sourceParent : sourceParents) {
+            if (!sourceParent.equals(targetDir)) refreshDirectory(sourceParent);
+        }
+        ctx.refreshHasProjectFile();
+        ctx.getStatusBar().setMessage("Moved " + describePaths(moved));
+        return true;
     }
 
     private void revealInOsAction() {
@@ -534,6 +665,35 @@ public class WorkspaceTreeView extends TreeView<Path> {
 
     private void errorAlert(String header, Exception ex) {
         Dialogs.error(ownerWindow(), header, ex.getMessage()).showAndWait();
+    }
+
+    private String deleteConfirmationText(List<Path> paths) {
+        if (paths.size() == 1) {
+            return "Delete " + paths.get(0).getFileName() + "? This cannot be undone.";
+        }
+        return "Delete " + paths.size() + " selected items? This cannot be undone.";
+    }
+
+    private String describePaths(List<Path> paths) {
+        if (paths.size() == 1) {
+            return paths.get(0).getFileName().toString();
+        }
+        return paths.size() + " items";
+    }
+
+    private void refreshParents(List<Path> paths) {
+        Set<Path> parents = new LinkedHashSet<>();
+        for (Path path : paths) {
+            Path parent = path.getParent();
+            if (parent != null && Files.exists(parent)) parents.add(parent);
+        }
+        if (parents.isEmpty()) {
+            refresh();
+            return;
+        }
+        for (Path parent : parents) {
+            refreshDirectory(parent);
+        }
     }
 
     private static Path uniquify(Path target) {
@@ -636,10 +796,40 @@ public class WorkspaceTreeView extends TreeView<Path> {
         }
     }
 
-    private static class FileTreeCell extends TreeCell<Path> {
+    private class FileTreeCell extends TreeCell<Path> {
         private final javafx.beans.value.ChangeListener<Boolean> expandListener =
                 (_, _, _) -> refreshIcon();
         private TreeItem<Path> watchedItem;
+
+        FileTreeCell() {
+            setOnDragDetected(event -> {
+                List<Path> sources = dragSourcePaths(getItem());
+                if (sources.isEmpty()) return;
+                draggingPaths = sources;
+
+                Dragboard dragboard = startDragAndDrop(TransferMode.MOVE);
+                ClipboardContent content = new ClipboardContent();
+                content.putString(describePaths(sources));
+                dragboard.setContent(content);
+                event.consume();
+            });
+
+            setOnDragOver(event -> {
+                Dragboard dragboard = event.getDragboard();
+                if (dragboard.hasString() && canDropOnDirectory(getItem(), draggingPaths)) {
+                    event.acceptTransferModes(TransferMode.MOVE);
+                    event.consume();
+                }
+            });
+
+            setOnDragDropped(event -> {
+                boolean moved = moveDraggedPathsTo(getItem());
+                event.setDropCompleted(moved);
+                event.consume();
+            });
+
+            setOnDragDone(_ -> draggingPaths = List.of());
+        }
 
         @Override
         protected void updateItem(Path item, boolean empty) {

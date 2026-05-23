@@ -83,6 +83,8 @@ public class LspBridge {
         CompletionCapabilities completion = new CompletionCapabilities();
         CompletionItemCapabilities itemCaps = new CompletionItemCapabilities();
         itemCaps.setSnippetSupport(true);
+        itemCaps.setResolveSupport(new CompletionItemResolveSupportCapabilities(
+                List.of("additionalTextEdits", "detail", "documentation")));
         completion.setCompletionItem(itemCaps);
         td.setCompletion(completion);
 
@@ -267,6 +269,14 @@ public class LspBridge {
             CompletionList list = either.getRight();
             return list != null ? list.getItems() : Collections.<CompletionItem>emptyList();
         }).exceptionally(_ -> Collections.emptyList());
+    }
+
+    public CompletableFuture<CompletionItem> resolveCompletion(CompletionItem item) {
+        if (!ready || server == null || item == null) {
+            return CompletableFuture.completedFuture(item);
+        }
+        return server.getTextDocumentService().resolveCompletionItem(item)
+                .exceptionally(_ -> item);
     }
 
     /* ============================== hover ============================== */

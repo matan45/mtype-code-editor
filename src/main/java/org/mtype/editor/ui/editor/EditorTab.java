@@ -1088,6 +1088,19 @@ public class EditorTab extends Tab {
     }
 
     private void applyCompletion(CompletionItem ci) {
+        if (ci == null) { completionMenu.hide(); return; }
+        boolean hasExtras = (ci.getAdditionalTextEdits() != null && !ci.getAdditionalTextEdits().isEmpty())
+                || ci.getCommand() != null;
+        if (hasExtras) {
+            applyResolvedCompletion(ci);
+            return;
+        }
+        ctx.getLspBridge().resolveCompletion(ci)
+                .thenAcceptAsync(resolved -> applyResolvedCompletion(resolved == null ? ci : resolved),
+                        Platform::runLater);
+    }
+
+    private void applyResolvedCompletion(CompletionItem ci) {
         // The mType server sometimes returns a textEdit range narrower than the typed
         // prefix (e.g. only the last char), so we widen the replacement to the union of
         // the server's range and the word currently under the caret.
@@ -1111,6 +1124,26 @@ public class EditorTab extends Tab {
         while (wordStart > 0 && isWordChar(text.charAt(wordStart - 1))) wordStart--;
         int start = serverStart >= 0 ? Math.min(serverStart, wordStart) : wordStart;
         int end = serverEnd >= 0 ? Math.max(serverEnd, caret) : caret;
+
+        // Apply additionalTextEdits (typically import statements above the caret) BEFORE
+        // the main edit so snippet placeholder offsets land correctly. Shift start/end by
+        // the net length delta of additional edits that fall above the main edit range.
+        List<TextEdit> additional = ci.getAdditionalTextEdits();
+        int delta = 0;
+        if (additional != null && !additional.isEmpty()) {
+            for (TextEdit aedit : additional) {
+                int aEnd = Positions.offset(text, aedit.getRange().getEnd());
+                if (aEnd <= start) {
+                    int aStart = Positions.offset(text, aedit.getRange().getStart());
+                    String anew = aedit.getNewText() == null ? "" : aedit.getNewText();
+                    delta += anew.length() - (aEnd - aStart);
+                }
+            }
+            LspEdits.applyToCodeArea(codeArea, additional);
+        }
+        start += delta;
+        end += delta;
+
         activeSnippet = null;
         if (ci.getInsertTextFormat() == InsertTextFormat.Snippet) {
             SnippetSession snippet = SnippetSession.parse(newText, start);
@@ -1119,6 +1152,15 @@ public class EditorTab extends Tab {
             applySnippetSelection(snippet.firstSelection());
         } else {
             codeArea.replaceText(start, end, newText);
+        }
+
+        if (ci.getCommand() != null) {
+            ctx.getLspBridge().executeCommand(ci.getCommand().getCommand(), ci.getCommand().getArguments());
+        }
+
+        if (additional != null && !additional.isEmpty()) {
+            lastDiagnosticSpans = null;
+            applyHighlightingNow();
         }
         completionMenu.hide();
     }
