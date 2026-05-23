@@ -44,13 +44,13 @@ public class ProblemsPane extends BorderPane {
 
         Button clearButton = new Button("Clear");
         clearButton.getStyleClass().add("mt-output-toolbar-button");
-        clearButton.setOnAction(e -> rows.clear());
+        clearButton.setOnAction(_ -> rows.clear());
         HBox toolbar = new HBox(clearButton);
         toolbar.setAlignment(Pos.CENTER_RIGHT);
         toolbar.setPadding(new Insets(4, 6, 4, 6));
         toolbar.getStyleClass().add("mt-output-toolbar");
         setTop(toolbar);
-        ctx.getDiagnosticsBus().addListener((uri, diags) -> refreshFor(uri, diags));
+        ctx.getDiagnosticsBus().addListener(this::refreshFor);
         // Seed from any diagnostics that arrived before we wired the listener.
         Map<String, List<Diagnostic>> snap = ctx.getDiagnosticsBus().snapshot();
         for (Map.Entry<String, List<Diagnostic>> e : snap.entrySet()) {
@@ -62,7 +62,7 @@ public class ProblemsPane extends BorderPane {
     private void buildTable() {
         table.setPlaceholder(new Label("No problems detected."));
         table.getStyleClass().add("mt-problems-table");
-        table.setRowFactory(tv -> {
+        table.setRowFactory(_ -> {
             TableRow<Row> r = new TableRow<>();
             r.setOnMouseClicked(e -> {
                 if (e.getButton() == MouseButton.PRIMARY && e.getClickCount() == 2 && !r.isEmpty()) {
@@ -74,7 +74,7 @@ public class ProblemsPane extends BorderPane {
 
         TableColumn<Row, String> severityCol = new TableColumn<>();
         severityCol.setCellValueFactory(c -> c.getValue().severityProp);
-        severityCol.setCellFactory(c -> new SeverityCell());
+        severityCol.setCellFactory(_ -> new SeverityCell());
         severityCol.setPrefWidth(32);
         severityCol.setMinWidth(32);
         severityCol.setMaxWidth(32);

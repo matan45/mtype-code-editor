@@ -29,7 +29,10 @@ public class StreamPump implements Runnable {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                try { lineSink.accept(line); } catch (Exception ignored) {}
+                try {
+                    lineSink.accept(line);
+                } catch (Exception ignored) {
+                }
             }
         } catch (Exception ignored) {
         }

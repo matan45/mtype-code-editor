@@ -119,10 +119,7 @@ public class FindInFilesService {
             flush(pending, listener);
             final boolean wasCancelled = cancelled.get();
             Platform.runLater(() -> listener.onFinished(filesScanned[0], totalMatches[0], wasCancelled, null));
-        } catch (IOException ex) {
-            flush(pending, listener);
-            Platform.runLater(() -> listener.onFinished(filesScanned[0], totalMatches[0], cancelled.get(), ex.getMessage()));
-        } catch (RuntimeException ex) {
+        } catch (IOException | RuntimeException ex) {
             flush(pending, listener);
             Platform.runLater(() -> listener.onFinished(filesScanned[0], totalMatches[0], cancelled.get(), ex.getMessage()));
         }

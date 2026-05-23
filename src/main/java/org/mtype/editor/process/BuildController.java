@@ -67,7 +67,7 @@ public class BuildController {
         }
         if (!ws.hasProjectFile()) {
             ctx.getOutputPane().appendCompile(
-                    "No .mtproj or .mtworkspace found in " + ws.getRoot(), true);
+                    "No .mtproj or .mtworkspace found in " + ws.root(), true);
             ctx.getOutputPane().focusCompile();
             return;
         }
@@ -80,7 +80,7 @@ public class BuildController {
         cmd.addAll(mtypeArgs);
 
         ProcessBuilder pb = new ProcessBuilder(cmd)
-                .directory(ws.getRoot().toFile())
+                .directory(ws.root().toFile())
                 .redirectErrorStream(false);
 
         Process proc;

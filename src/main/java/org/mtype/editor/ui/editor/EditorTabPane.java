@@ -3,7 +3,6 @@ package org.mtype.editor.ui.editor;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import org.mtype.editor.app.AppContext;
-import org.mtype.editor.workspace.Workspace;
 
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -136,7 +135,4 @@ public class EditorTabPane extends TabPane {
         }
     }
 
-    public void onWorkspaceChanged(Workspace ws) {
-        closeAll();
-    }
 }

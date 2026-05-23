@@ -238,7 +238,7 @@ public class FindInFilesWindow {
     }
 
     private Path currentWorkspaceRoot() {
-        return ctx.getWorkspace() == null ? null : ctx.getWorkspace().getRoot();
+        return ctx.getWorkspace() == null ? null : ctx.getWorkspace().root();
     }
 
     private SearchQuery currentQuery() {

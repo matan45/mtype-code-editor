@@ -26,7 +26,7 @@ public class StatusBar extends HBox {
         branchLabel.getStyleClass().add("mt-status-branch");
         branchLabel.setVisible(false);
         branchLabel.setManaged(false);
-        branchLabel.setOnMouseClicked(e -> {
+        branchLabel.setOnMouseClicked(_ -> {
             if (onBranchClick != null) onBranchClick.run();
         });
 

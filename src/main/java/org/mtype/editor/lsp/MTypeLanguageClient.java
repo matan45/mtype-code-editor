@@ -16,7 +16,7 @@ import java.util.concurrent.CompletableFuture;
 
 public class MTypeLanguageClient implements LanguageClient {
     private final AppContext ctx;
-    private DiagnosticsRenderer renderer;
+    private final DiagnosticsRenderer renderer;
 
     public MTypeLanguageClient(AppContext ctx) {
         this.ctx = ctx;

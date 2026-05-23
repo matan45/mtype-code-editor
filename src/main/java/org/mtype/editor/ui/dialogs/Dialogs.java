@@ -39,8 +39,10 @@ public final class Dialogs {
         return a;
     }
 
-    /** Apply the dark theme + remove the default JavaFX ?-graphic header icon. */
-    public static <T> Dialog<T> theme(Dialog<T> dlg) {
+    /**
+     * Apply the dark theme + remove the default JavaFX ?-graphic header icon.
+     */
+    public static <T> void theme(Dialog<T> dlg) {
         try { dlg.initStyle(StageStyle.UTILITY); } catch (IllegalStateException ignored) {}
         dlg.setGraphic(null);
         DialogPane pane = dlg.getDialogPane();
@@ -54,7 +56,6 @@ public final class Dialogs {
                 pane.getStylesheets().add(url);
             }
         }
-        return dlg;
     }
 
     /** Same as theme(), but for callers that hold the DialogPane directly. */
@@ -72,11 +73,12 @@ public final class Dialogs {
         return pane;
     }
 
-    /** Inject a sibling Node (anything created outside the DialogPane) into the .mt-dialog scope so its CSS rules win. */
-    public static Node themeNode(Node node) {
+    /**
+     * Inject a sibling Node (anything created outside the DialogPane) into the .mt-dialog scope so its CSS rules win.
+     */
+    public static void themeNode(Node node) {
         if (!node.getStyleClass().contains("mt-dialog")) {
             node.getStyleClass().add("mt-dialog");
         }
-        return node;
     }
 }

@@ -3,21 +3,10 @@ package org.mtype.editor.app;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Orientation;
-import javafx.scene.Scene;
 import javafx.scene.Group;
 import javafx.scene.Node;
-import javafx.scene.control.Button;
-import javafx.scene.control.CheckMenuItem;
-import javafx.scene.control.Menu;
-import javafx.scene.control.MenuBar;
-import javafx.scene.control.MenuItem;
-import javafx.scene.control.SeparatorMenuItem;
-import javafx.scene.control.SplitPane;
-import javafx.scene.control.TextField;
-import javafx.scene.control.ToggleButton;
-import javafx.scene.control.ToggleGroup;
-import javafx.scene.control.Tooltip;
-import javafx.scene.control.ToolBar;
+import javafx.scene.Scene;
+import javafx.scene.control.*;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
@@ -45,7 +34,6 @@ import org.mtype.editor.ui.status.StatusBar;
 import org.mtype.editor.ui.tree.WorkspaceTreeView;
 import org.mtype.editor.workspace.SettingsStore;
 import org.mtype.editor.workspace.Workspace;
-import org.mtype.editor.workspace.WorkspaceSettings;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -90,6 +78,7 @@ public class EditorApp extends Application {
         ctx.setLspBridge(lsp);
 
         output.attachCallHierarchy(ctx);
+        output.attachReferences(ctx);
         output.attachProblems(ctx);
 
         RunController runController = new RunController(ctx);
@@ -106,7 +95,7 @@ public class EditorApp extends Application {
             Path active = tabPane.activePath();
             if (active != null) runController.run(active);
         });
-        stopBtn.setOnAction(e -> runController.stop());
+        stopBtn.setOnAction(_ -> runController.stop());
 
         Button buildBtn = new Button("Build");
         Button stopBuildBtn = new Button("Stop Build");
@@ -150,7 +139,7 @@ public class EditorApp extends Application {
 
         stage.setTitle("mType Editor");
         stage.setScene(scene);
-        stage.setOnCloseRequest(e -> shutdown());
+        stage.setOnCloseRequest(_ -> shutdown());
         stage.setMaximized(true);
         stage.show();
     }
@@ -161,24 +150,24 @@ public class EditorApp extends Application {
         MenuItem openFolder = new MenuItem("Open Folder...");
         openFolder.setAccelerator(new KeyCodeCombination(KeyCode.O,
                 KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN));
-        openFolder.setOnAction(e -> openFolder());
+        openFolder.setOnAction(_ -> openFolder());
 
         MenuItem newProject = new MenuItem("New Project...");
-        newProject.setOnAction(e -> openNewProjectDialog());
+        newProject.setOnAction(_ -> openNewProjectDialog());
 
         MenuItem newWorkspace = new MenuItem("New Workspace...");
-        newWorkspace.setOnAction(e -> openNewWorkspaceDialog());
+        newWorkspace.setOnAction(_ -> openNewWorkspaceDialog());
 
         MenuItem save = new MenuItem("Save");
         save.setAccelerator(new KeyCodeCombination(KeyCode.S, KeyCombination.SHORTCUT_DOWN));
-        save.setOnAction(e -> ctx.getTabPane().saveActive());
+        save.setOnAction(_ -> ctx.getTabPane().saveActive());
 
         MenuItem settings = new MenuItem("Settings...");
         settings.setAccelerator(new KeyCodeCombination(KeyCode.COMMA, KeyCombination.SHORTCUT_DOWN));
-        settings.setOnAction(e -> openSettings());
+        settings.setOnAction(_ -> openSettings());
 
         MenuItem exit = new MenuItem("Exit");
-        exit.setOnAction(e -> { shutdown(); Platform.exit(); });
+        exit.setOnAction(_ -> { shutdown(); Platform.exit(); });
 
         file.getItems().addAll(openFolder, new SeparatorMenuItem(), newProject, newWorkspace,
                 new SeparatorMenuItem(), save, new SeparatorMenuItem(), settings,
@@ -188,25 +177,25 @@ public class EditorApp extends Application {
         MenuItem format = new MenuItem("Format Document");
         format.setAccelerator(new KeyCodeCombination(KeyCode.F,
                 KeyCombination.SHIFT_DOWN, KeyCombination.ALT_DOWN));
-        format.setOnAction(e -> ctx.getTabPane().formatActive());
+        format.setOnAction(_ -> ctx.getTabPane().formatActive());
 
         MenuItem goToDef = new MenuItem("Go to Definition");
         goToDef.setAccelerator(new KeyCodeCombination(KeyCode.F12));
-        goToDef.setOnAction(e -> ctx.getTabPane().goToDefinitionActive());
+        goToDef.setOnAction(_ -> ctx.getTabPane().goToDefinitionActive());
 
         MenuItem rename = new MenuItem("Rename Symbol");
         rename.setAccelerator(new KeyCodeCombination(KeyCode.F2));
-        rename.setOnAction(e -> ctx.getTabPane().renameActive());
+        rename.setOnAction(_ -> ctx.getTabPane().renameActive());
 
         MenuItem callHierarchy = new MenuItem("Show Call Hierarchy");
         callHierarchy.setAccelerator(new KeyCodeCombination(KeyCode.H,
                 KeyCombination.CONTROL_DOWN, KeyCombination.ALT_DOWN));
-        callHierarchy.setOnAction(e -> ctx.getTabPane().callHierarchyActive());
+        callHierarchy.setOnAction(_ -> ctx.getTabPane().callHierarchyActive());
 
         MenuItem findInFiles = new MenuItem("Find in Files...");
         findInFiles.setAccelerator(new KeyCodeCombination(KeyCode.F,
                 KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN));
-        findInFiles.setOnAction(e -> openFindInFiles());
+        findInFiles.setOnAction(_ -> openFindInFiles());
 
         code.getItems().addAll(format, goToDef, rename, callHierarchy,
                 new SeparatorMenuItem(), findInFiles);
@@ -218,33 +207,33 @@ public class EditorApp extends Application {
 
         MenuItem buildItem = new MenuItem("Build");
         buildItem.setAccelerator(new KeyCodeCombination(KeyCode.B, KeyCombination.SHORTCUT_DOWN));
-        buildItem.setOnAction(e -> bc.build());
+        buildItem.setOnAction(_ -> bc.build());
         buildItem.disableProperty().bind(noBuild);
 
         MenuItem buildLib = new MenuItem("Build Library");
-        buildLib.setOnAction(e -> bc.buildLibrary());
+        buildLib.setOnAction(_ -> bc.buildLibrary());
         buildLib.disableProperty().bind(noBuild);
 
         MenuItem buildExe = new MenuItem("Build Executable");
-        buildExe.setOnAction(e -> bc.buildExecutable());
+        buildExe.setOnAction(_ -> bc.buildExecutable());
         buildExe.disableProperty().bind(noBuild);
 
         MenuItem buildGui = new MenuItem("Build GUI Executable");
-        buildGui.setOnAction(e -> bc.buildGuiExecutable());
+        buildGui.setOnAction(_ -> bc.buildGuiExecutable());
         buildGui.disableProperty().bind(noBuild);
 
         MenuItem depsTree = new MenuItem("Show Dependency Tree");
-        depsTree.setOnAction(e -> bc.showDepsTree());
+        depsTree.setOnAction(_ -> bc.showDepsTree());
         depsTree.disableProperty().bind(noBuild);
 
         MenuItem depsForFile = new MenuItem("Show Dependencies for Current File");
         depsForFile.setAccelerator(new KeyCodeCombination(KeyCode.D,
                 KeyCombination.CONTROL_DOWN, KeyCombination.ALT_DOWN));
-        depsForFile.setOnAction(e -> bc.showDepsForFile(ctx.getTabPane().activePath()));
+        depsForFile.setOnAction(_ -> bc.showDepsForFile(ctx.getTabPane().activePath()));
         depsForFile.disableProperty().bind(noBuild);
 
         MenuItem stopBuild = new MenuItem("Stop Build");
-        stopBuild.setOnAction(e -> bc.stop());
+        stopBuild.setOnAction(_ -> bc.stop());
         stopBuild.disableProperty().bind(bc.buildingProperty().not());
 
         build.getItems().addAll(buildItem, buildLib, buildExe, buildGui,
@@ -255,18 +244,18 @@ public class EditorApp extends Application {
         MenuItem filterFiles = new MenuItem("Filter Files in Explorer");
         filterFiles.setAccelerator(new KeyCodeCombination(KeyCode.E,
                 KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN));
-        filterFiles.setOnAction(e -> toggleExplorerFilter());
+        filterFiles.setOnAction(_ -> toggleExplorerFilter());
 
         MenuItem toggleBottom = new MenuItem("Toggle Bottom Panel");
         toggleBottom.setAccelerator(new KeyCodeCombination(KeyCode.J, KeyCombination.SHORTCUT_DOWN));
-        toggleBottom.setOnAction(e -> toggleBottomPanel());
+        toggleBottom.setOnAction(_ -> toggleBottomPanel());
 
         Menu bottomTabs = new Menu("Bottom Tabs");
         OutputPane outputForMenu = ctx.getOutputPane();
         for (String name : outputForMenu.tabNames()) {
             CheckMenuItem item = new CheckMenuItem(name);
             item.setSelected(outputForMenu.isTabVisible(name));
-            item.setOnAction(e -> {
+            item.setOnAction(_ -> {
                 outputForMenu.setTabVisible(name, item.isSelected());
                 persistBottomTabVisibility(name, item.isSelected());
             });
@@ -306,7 +295,7 @@ public class EditorApp extends Application {
         Path root = resolveTargetRoot("Choose location for new project");
         if (root == null) return;
         boolean wasOpen = ctx.getWorkspace() != null
-                && ctx.getWorkspace().getRoot().equals(root);
+                && ctx.getWorkspace().root().equals(root);
         NewProjectDialog dlg = new NewProjectDialog(stage, root);
         dlg.showAndWait().ifPresent(p -> afterScaffoldWritten(p, root, wasOpen));
     }
@@ -315,7 +304,7 @@ public class EditorApp extends Application {
         Path root = resolveTargetRoot("Choose location for new workspace");
         if (root == null) return;
         boolean wasOpen = ctx.getWorkspace() != null
-                && ctx.getWorkspace().getRoot().equals(root);
+                && ctx.getWorkspace().root().equals(root);
         NewWorkspaceDialog dlg = new NewWorkspaceDialog(stage, root);
         dlg.showAndWait().ifPresent(p -> afterScaffoldWritten(p, root, wasOpen));
     }
@@ -324,7 +313,7 @@ public class EditorApp extends Application {
         DirectoryChooser dc = new DirectoryChooser();
         dc.setTitle(chooserTitle);
         if (ctx.getWorkspace() != null) {
-            File initial = ctx.getWorkspace().getRoot().toFile();
+            File initial = ctx.getWorkspace().root().toFile();
             if (initial.isDirectory()) dc.setInitialDirectory(initial);
         }
         File chosen = dc.showDialog(stage);
@@ -360,7 +349,7 @@ public class EditorApp extends Application {
         filterField.getStyleClass().add("mt-tree-filter");
         filterField.setVisible(false);
         filterField.setManaged(false);
-        filterField.textProperty().addListener((obs, oldV, newV) -> tree.setFilter(newV));
+        filterField.textProperty().addListener((_, _, newV) -> tree.setFilter(newV));
         filterField.setOnKeyPressed(ev -> {
             if (ev.getCode() == KeyCode.ESCAPE) {
                 hideExplorerFilter(filterField, tree);
@@ -385,11 +374,11 @@ public class EditorApp extends Application {
         explorerButton.setSelected(true);
         this.explorerActivityButton = explorerButton;
 
-        explorerButton.setOnAction(e -> {
+        explorerButton.setOnAction(_ -> {
             explorerButton.setSelected(true);
             showPanel(content, explorerPane);
         });
-        gitButton.setOnAction(e -> {
+        gitButton.setOnAction(_ -> {
             gitButton.setSelected(true);
             hideExplorerFilter(filterField, tree);
             showPanel(content, gitChanges);
@@ -498,8 +487,8 @@ public class EditorApp extends Application {
         Circle top = activityCircle(16, 6);
         Circle middle = activityCircle(24, 15);
         Circle bottom = activityCircle(11, 27);
-        Line main = activityLine(16, 8, 11, 25);
-        Line branch = activityLine(17, 8, 23, 14);
+        Line main = activityLine(16, 11, 25);
+        Line branch = activityLine(17, 23, 14);
 
         Group group = new Group(main, branch, top, middle, bottom);
         group.getStyleClass().add("mt-activity-graphic");
@@ -512,8 +501,8 @@ public class EditorApp extends Application {
         return circle;
     }
 
-    private Line activityLine(double x1, double y1, double x2, double y2) {
-        Line line = new Line(x1, y1, x2, y2);
+    private Line activityLine(double x1, double x2, double y2) {
+        Line line = new Line(x1, 8, x2, y2);
         line.getStyleClass().add("mt-activity-icon");
         return line;
     }

@@ -2,12 +2,7 @@ package org.mtype.editor.ui.output;
 
 import javafx.application.Platform;
 import javafx.geometry.Pos;
-import javafx.scene.control.Label;
-import javafx.scene.control.TreeCell;
-import javafx.scene.control.TreeItem;
-import javafx.scene.control.TreeView;
-import javafx.scene.control.ToggleButton;
-import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.*;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -20,9 +15,12 @@ import org.mtype.editor.lsp.LspBridge;
 
 import java.net.URI;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 
-/** Panel that shows incoming or outgoing call hierarchy for a chosen symbol. */
+/**
+ * Panel that shows incoming or outgoing call hierarchy for a chosen symbol.
+ */
 public class CallHierarchyPane extends BorderPane {
     private final AppContext ctx;
     private final TreeView<HierarchyNode> tree = new TreeView<>();
@@ -39,11 +37,11 @@ public class CallHierarchyPane extends BorderPane {
         incomingBtn.setToggleGroup(tg);
         outgoingBtn.setToggleGroup(tg);
         incomingBtn.setSelected(true);
-        incomingBtn.setOnAction(e -> {
+        incomingBtn.setOnAction(_ -> {
             if (!incomingBtn.isSelected()) incomingBtn.setSelected(true);
             else if (rootItem != null) loadRoot(rootItem);
         });
-        outgoingBtn.setOnAction(e -> {
+        outgoingBtn.setOnAction(_ -> {
             if (!outgoingBtn.isSelected()) outgoingBtn.setSelected(true);
             else if (rootItem != null) loadRoot(rootItem);
         });
@@ -56,7 +54,7 @@ public class CallHierarchyPane extends BorderPane {
         toolbar.setStyle("-fx-padding: 4 6 4 6;");
 
         tree.setShowRoot(true);
-        tree.setCellFactory(tv -> new HierarchyCell());
+        tree.setCellFactory(_ -> new HierarchyCell());
         tree.setOnMouseClicked(e -> {
             if (e.getButton() == MouseButton.PRIMARY && e.getClickCount() == 2) {
                 TreeItem<HierarchyNode> sel = tree.getSelectionModel().getSelectedItem();
@@ -86,7 +84,7 @@ public class CallHierarchyPane extends BorderPane {
         try {
             Path target = java.nio.file.Paths.get(URI.create(item.getUri()));
             int line = item.getSelectionRange() != null ? item.getSelectionRange().getStart().getLine() : 0;
-            int col  = item.getSelectionRange() != null ? item.getSelectionRange().getStart().getCharacter() : 0;
+            int col = item.getSelectionRange() != null ? item.getSelectionRange().getStart().getCharacter() : 0;
             ctx.getTabPane().openAt(target, line, col);
         } catch (Exception ex) {
             ctx.getStatusBar().setMessage("Bad URI: " + item.getUri());
@@ -104,7 +102,7 @@ public class CallHierarchyPane extends BorderPane {
             this.outgoing = outgoing;
             // mark expandable so the disclosure triangle shows before we know real children
             super.getChildren().add(new TreeItem<>(HierarchyNode.PLACEHOLDER));
-            expandedProperty().addListener((obs, was, isNow) -> {
+            expandedProperty().addListener((_, _, isNow) -> {
                 if (isNow && !loaded) loadChildren();
             });
         }
@@ -141,24 +139,23 @@ public class CallHierarchyPane extends BorderPane {
         }
     }
 
-    private static final class HierarchyNode {
-        static final HierarchyNode PLACEHOLDER = new HierarchyNode(null);
-        final CallHierarchyItem item;
-        HierarchyNode(CallHierarchyItem item) { this.item = item; }
+    private record HierarchyNode(CallHierarchyItem item) {
+            static final HierarchyNode PLACEHOLDER = new HierarchyNode(null);
 
         @Override
-        public String toString() {
-            if (item == null) return "loading…";
-            String name = item.getName() == null ? "?" : item.getName();
-            String detail = item.getDetail();
-            String file = "";
-            try {
-                Path p = java.nio.file.Paths.get(URI.create(item.getUri()));
-                file = "  —  " + (p.getFileName() == null ? p.toString() : p.getFileName().toString());
-            } catch (Exception ignored) {}
-            return (detail == null || detail.isBlank()) ? name + file : (name + "   " + detail + file);
+            public String toString() {
+                if (item == null) return "loading…";
+                String name = item.getName() == null ? "?" : item.getName();
+                String detail = item.getDetail();
+                String file = "";
+                try {
+                    Path p = Paths.get(URI.create(item.getUri()));
+                    file = "  —  " + (p.getFileName() == null ? p.toString() : p.getFileName().toString());
+                } catch (Exception ignored) {
+                }
+                return (detail == null || detail.isBlank()) ? name + file : (name + "   " + detail + file);
+            }
         }
-    }
 
     private static final class HierarchyCell extends TreeCell<HierarchyNode> {
         @Override

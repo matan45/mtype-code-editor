@@ -15,16 +15,20 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
-/** Apply LSP TextEdits / WorkspaceEdits to open editor tabs and on-disk files. */
+/**
+ * Apply LSP TextEdits / WorkspaceEdits to open editor tabs and on-disk files.
+ */
 public final class LspEdits {
-    private LspEdits() {}
+    private LspEdits() {
+    }
 
-    /** Apply a list of edits to a single CodeArea. Edits must not overlap. */
+    /**
+     * Apply a list of edits to a single CodeArea. Edits must not overlap.
+     */
     public static void applyToCodeArea(CodeArea area, List<? extends TextEdit> edits) {
         if (edits == null || edits.isEmpty()) return;
         String text = area.getText();
@@ -37,7 +41,11 @@ public final class LspEdits {
         for (TextEdit e : sorted) {
             int start = Positions.offset(text, e.getRange().getStart());
             int end = Positions.offset(text, e.getRange().getEnd());
-            if (start > end) { int t = start; start = end; end = t; }
+            if (start > end) {
+                int t = start;
+                start = end;
+                end = t;
+            }
             // Use replaceText against the current area text. We can't refresh `text` snapshot
             // each iteration cheaply, but since edits are non-overlapping and sorted descending,
             // CodeArea state stays consistent.
@@ -47,7 +55,9 @@ public final class LspEdits {
         area.moveTo(Math.min(caretBefore, finalLen));
     }
 
-    /** Apply a WorkspaceEdit across the whole AppContext (open tabs + on-disk files). */
+    /**
+     * Apply a WorkspaceEdit across the whole AppContext (open tabs + on-disk files).
+     */
     public static int applyWorkspaceEdit(AppContext ctx, WorkspaceEdit edit) {
         if (edit == null) return 0;
         int filesTouched = 0;
@@ -74,7 +84,11 @@ public final class LspEdits {
     private static boolean applyEditsToUri(AppContext ctx, String uri, List<? extends TextEdit> edits) {
         if (edits == null || edits.isEmpty()) return false;
         Path path;
-        try { path = Path.of(URI.create(uri)); } catch (Exception ex) { return false; }
+        try {
+            path = Path.of(URI.create(uri));
+        } catch (Exception ex) {
+            return false;
+        }
         EditorTab tab = ctx.getTabPane() == null ? null : ctx.getTabPane().findByPath(path);
         if (tab != null) {
             applyToCodeArea(tab.getCodeArea(), edits);
@@ -101,7 +115,11 @@ public final class LspEdits {
         for (TextEdit e : sorted) {
             int start = Positions.offset(text, e.getRange().getStart());
             int end = Positions.offset(text, e.getRange().getEnd());
-            if (start > end) { int t = start; start = end; end = t; }
+            if (start > end) {
+                int t = start;
+                start = end;
+                end = t;
+            }
             sb.replace(start, end, e.getNewText() == null ? "" : e.getNewText());
         }
         return sb.toString();

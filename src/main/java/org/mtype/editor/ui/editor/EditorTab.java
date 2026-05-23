@@ -34,7 +34,6 @@ import org.eclipse.lsp4j.Location;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
 import org.eclipse.lsp4j.TextEdit;
-import org.eclipse.lsp4j.WorkspaceEdit;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.CodeArea;
 import org.fxmisc.richtext.event.MouseOverTextEvent;
@@ -515,6 +514,10 @@ public class EditorTab extends Tab {
                 KeyCombination.CONTROL_DOWN, KeyCombination.ALT_DOWN));
         callHier.setOnAction(e -> showCallHierarchyAtCaret());
 
+        MenuItem findRefs = new MenuItem("Find All References");
+        findRefs.setAccelerator(new KeyCodeCombination(KeyCode.F12, KeyCombination.SHIFT_DOWN));
+        findRefs.setOnAction(e -> findReferencesAtCaret());
+
         MenuItem format = new MenuItem("Format Document");
         format.setAccelerator(new KeyCodeCombination(KeyCode.F,
                 KeyCombination.SHIFT_DOWN, KeyCombination.ALT_DOWN));
@@ -535,7 +538,7 @@ public class EditorTab extends Tab {
         menu.getItems().addAll(
                 quickFix,
                 new SeparatorMenuItem(),
-                goToDef, rename, callHier,
+                goToDef, rename, callHier, findRefs,
                 new SeparatorMenuItem(),
                 format,
                 new SeparatorMenuItem(),
@@ -710,6 +713,45 @@ public class EditorTab extends Tab {
                 }, Platform::runLater);
     }
 
+    public void findReferencesAtCaret() {
+        LspBridge lsp = ctx.getLspBridge();
+        if (lsp == null || !lsp.isReady()) {
+            ctx.getStatusBar().setMessage("LSP not ready");
+            return;
+        }
+        TwoDimensional.Position pos = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
+        int line = pos.getMajor();
+        int col = pos.getMinor();
+        String word = wordAt(line, col);
+        String label = word.isEmpty() ? "References" : word;
+        lsp.references(path, line, col, true).thenAcceptAsync(locations -> {
+            if (locations == null || locations.isEmpty()) {
+                ctx.getStatusBar().setMessage("No references for " + label);
+                ctx.getOutputPane().showReferences(label, java.util.Collections.emptyList());
+                return;
+            }
+            ctx.getOutputPane().showReferences(label, locations);
+        }, Platform::runLater);
+    }
+
+    private String wordAt(int line, int col) {
+        try {
+            String text = codeArea.getText();
+            int offset = Positions.offset(text, line, col);
+            int start = offset;
+            while (start > 0 && isIdentChar(text.charAt(start - 1))) start--;
+            int end = offset;
+            while (end < text.length() && isIdentChar(text.charAt(end))) end++;
+            return text.substring(start, end);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private static boolean isIdentChar(char c) {
+        return Character.isLetterOrDigit(c) || c == '_';
+    }
+
     public void renameAtCaret() {
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) {
@@ -721,8 +763,8 @@ public class EditorTab extends Tab {
         int col = pos.getMinor();
 
         lsp.prepareRename(path, line, col).thenAcceptAsync(info -> {
-            String placeholder = info != null && info.placeholder != null
-                    ? info.placeholder : wordAroundCaret();
+            String placeholder = info != null && info.placeholder() != null
+                    ? info.placeholder() : wordAroundCaret();
             if (placeholder == null || placeholder.isBlank()) {
                 ctx.getStatusBar().setMessage("Can't rename here");
                 return;
@@ -785,7 +827,7 @@ public class EditorTab extends Tab {
             e.consume();
             return;
         }
-        if (e.getCode() == KeyCode.F12) {
+        if (e.getCode() == KeyCode.F12 && !e.isShiftDown()) {
             goToDefinitionAtCaret();
             e.consume();
             return;
@@ -802,6 +844,11 @@ public class EditorTab extends Tab {
         }
         if (e.getCode() == KeyCode.H && e.isControlDown() && e.isAltDown()) {
             showCallHierarchyAtCaret();
+            e.consume();
+            return;
+        }
+        if (e.getCode() == KeyCode.F12 && e.isShiftDown()) {
+            findReferencesAtCaret();
             e.consume();
         }
     }

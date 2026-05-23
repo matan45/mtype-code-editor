@@ -1,63 +1,9 @@
 package org.mtype.editor.lsp;
 
 import javafx.application.Platform;
-import org.eclipse.lsp4j.CallHierarchyCapabilities;
-import org.eclipse.lsp4j.CallHierarchyIncomingCall;
-import org.eclipse.lsp4j.CallHierarchyIncomingCallsParams;
-import org.eclipse.lsp4j.CallHierarchyItem;
-import org.eclipse.lsp4j.CallHierarchyOutgoingCall;
-import org.eclipse.lsp4j.CallHierarchyOutgoingCallsParams;
-import org.eclipse.lsp4j.CallHierarchyPrepareParams;
-import org.eclipse.lsp4j.ClientCapabilities;
-import org.eclipse.lsp4j.CodeLens;
-import org.eclipse.lsp4j.CodeLensCapabilities;
-import org.eclipse.lsp4j.CodeLensParams;
-import org.eclipse.lsp4j.CompletionCapabilities;
-import org.eclipse.lsp4j.CompletionContext;
-import org.eclipse.lsp4j.CompletionItem;
-import org.eclipse.lsp4j.CompletionItemCapabilities;
-import org.eclipse.lsp4j.CompletionList;
-import org.eclipse.lsp4j.CompletionParams;
-import org.eclipse.lsp4j.CompletionTriggerKind;
-import org.eclipse.lsp4j.DefinitionParams;
-import org.eclipse.lsp4j.DidChangeTextDocumentParams;
-import org.eclipse.lsp4j.DidCloseTextDocumentParams;
-import org.eclipse.lsp4j.DidOpenTextDocumentParams;
-import org.eclipse.lsp4j.DocumentFormattingParams;
-import org.eclipse.lsp4j.FormattingOptions;
-import org.eclipse.lsp4j.Hover;
-import org.eclipse.lsp4j.HoverParams;
-import org.eclipse.lsp4j.InlayHint;
-import org.eclipse.lsp4j.InlayHintCapabilities;
-import org.eclipse.lsp4j.InlayHintParams;
-import org.eclipse.lsp4j.InitializeParams;
-import org.eclipse.lsp4j.InitializeResult;
-import org.eclipse.lsp4j.InitializedParams;
-import org.eclipse.lsp4j.Location;
-import org.eclipse.lsp4j.LocationLink;
-import org.eclipse.lsp4j.MarkedString;
-import org.eclipse.lsp4j.MarkupContent;
-import org.eclipse.lsp4j.Position;
-import org.eclipse.lsp4j.PrepareRenameParams;
-import org.eclipse.lsp4j.PrepareRenameResult;
-import org.eclipse.lsp4j.Range;
-import org.eclipse.lsp4j.ReferenceContext;
-import org.eclipse.lsp4j.ReferenceParams;
-import org.eclipse.lsp4j.ReferencesCapabilities;
-import org.eclipse.lsp4j.RenameCapabilities;
-import org.eclipse.lsp4j.RenameParams;
-import org.eclipse.lsp4j.TextDocumentClientCapabilities;
-import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
-import org.eclipse.lsp4j.TextDocumentIdentifier;
-import org.eclipse.lsp4j.TextDocumentItem;
-import org.eclipse.lsp4j.TextEdit;
-import org.eclipse.lsp4j.VersionedTextDocumentIdentifier;
-import org.eclipse.lsp4j.WorkspaceClientCapabilities;
-import org.eclipse.lsp4j.WorkspaceEdit;
-import org.eclipse.lsp4j.WorkspaceFolder;
+import org.eclipse.lsp4j.*;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
-import org.eclipse.lsp4j.jsonrpc.messages.Either3;
 import org.eclipse.lsp4j.launch.LSPLauncher;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.mtype.editor.app.AppContext;
@@ -70,11 +16,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 public class LspBridge {
     private final AppContext ctx;
@@ -102,7 +44,7 @@ public class LspBridge {
         String lspExe = resolveLanguageServerExecutable();
         ctx.getOutputPane().appendLspLog("[lsp] starting " + lspExe);
         ProcessBuilder pb = new ProcessBuilder(lspExe, "--stdio")
-                .directory(ws.getRoot().toFile())
+                .directory(ws.root().toFile())
                 .redirectErrorStream(false);
         process = pb.start();
 
@@ -128,9 +70,9 @@ public class LspBridge {
 
         InitializeParams init = new InitializeParams();
         init.setProcessId((int) ProcessHandle.current().pid());
-        init.setRootUri(ws.getRoot().toUri().toString());
-        WorkspaceFolder folder = new WorkspaceFolder(ws.getRoot().toUri().toString(),
-                ws.getRoot().getFileName() == null ? "root" : ws.getRoot().getFileName().toString());
+        init.setRootUri(ws.root().toUri().toString());
+        WorkspaceFolder folder = new WorkspaceFolder(ws.root().toUri().toString(),
+                ws.root().getFileName() == null ? "root" : ws.root().getFileName().toString());
         init.setWorkspaceFolders(Collections.singletonList(folder));
 
         ClientCapabilities caps = new ClientCapabilities();
@@ -165,7 +107,7 @@ public class LspBridge {
         caps.setWorkspace(wc);
         init.setCapabilities(caps);
 
-        startedServer.initialize(init).whenComplete((InitializeResult result, Throwable err) -> {
+        startedServer.initialize(init).whenComplete((InitializeResult _, Throwable err) -> {
             synchronized (LspBridge.this) {
                 if (startSession != session || server != startedServer) return;
             }
@@ -306,10 +248,6 @@ public class LspBridge {
 
     /* ============================== completion ============================== */
 
-    public CompletableFuture<List<CompletionItem>> completion(Path path, int line, int col) {
-        return completion(path, line, col, null);
-    }
-
     public CompletableFuture<List<CompletionItem>> completion(Path path, int line, int col, String triggerChar) {
         if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         CompletionParams params = new CompletionParams(
@@ -328,7 +266,7 @@ public class LspBridge {
             if (either.isLeft()) return either.getLeft();
             CompletionList list = either.getRight();
             return list != null ? list.getItems() : Collections.<CompletionItem>emptyList();
-        }).exceptionally(t -> Collections.emptyList());
+        }).exceptionally(_ -> Collections.emptyList());
     }
 
     /* ============================== hover ============================== */
@@ -339,7 +277,7 @@ public class LspBridge {
                 new TextDocumentIdentifier(path.toUri().toString()),
                 new Position(line, col));
         return server.getTextDocumentService().hover(params).thenApply(LspBridge::renderHover)
-                .exceptionally(t -> "");
+                .exceptionally(_ -> "");
     }
 
     private static String renderHover(Hover h) {
@@ -351,7 +289,7 @@ public class LspBridge {
         } else if (contents.isLeft() && contents.getLeft() != null) {
             StringBuilder sb = new StringBuilder();
             for (Either<String, MarkedString> e : contents.getLeft()) {
-                if (sb.length() > 0) sb.append("\n");
+                if (!sb.isEmpty()) sb.append("\n");
                 if (e.isLeft()) sb.append(e.getLeft());
                 else if (e.isRight()) sb.append(e.getRight().getValue());
             }
@@ -372,7 +310,7 @@ public class LspBridge {
         for (String line : lines) {
             String t = line.stripLeading();
             if (t.startsWith("```")) continue;
-            if (out.length() > 0) out.append('\n');
+            if (!out.isEmpty()) out.append('\n');
             out.append(line);
         }
         return out.toString().strip();
@@ -387,7 +325,7 @@ public class LspBridge {
                 new TextDocumentIdentifier(path.toUri().toString()),
                 opts);
         return server.getTextDocumentService().formatting(params)
-                .exceptionally(t -> Collections.emptyList());
+                .exceptionally(_ -> Collections.emptyList());
     }
 
     /* ============================== definition ============================== */
@@ -401,17 +339,17 @@ public class LspBridge {
             if (either == null) return null;
             if (either.isLeft()) {
                 List<? extends Location> locs = either.getLeft();
-                return locs != null && !locs.isEmpty() ? locs.get(0) : null;
+                return locs != null && !locs.isEmpty() ? locs.getFirst() : null;
             }
             if (either.isRight()) {
                 List<? extends LocationLink> links = either.getRight();
                 if (links != null && !links.isEmpty()) {
-                    LocationLink link = links.get(0);
+                    LocationLink link = links.getFirst();
                     return new Location(link.getTargetUri(), link.getTargetSelectionRange());
                 }
             }
             return null;
-        }).exceptionally(t -> null);
+        }).exceptionally(_ -> null);
     }
 
     /* ============================== code lens ============================== */
@@ -421,7 +359,7 @@ public class LspBridge {
         CodeLensParams params = new CodeLensParams(new TextDocumentIdentifier(path.toUri().toString()));
         return server.getTextDocumentService().codeLens(params)
                 .thenApply(list -> list == null ? Collections.<CodeLens>emptyList() : list)
-                .exceptionally(t -> Collections.emptyList());
+                .exceptionally(_ -> Collections.emptyList());
     }
 
     public CompletableFuture<List<InlayHint>> inlayHints(Path path, Range range) {
@@ -433,7 +371,7 @@ public class LspBridge {
         params.setRange(range);
         return server.getTextDocumentService().inlayHint(params)
                 .thenApply(list -> list == null ? Collections.<InlayHint>emptyList() : list)
-                .exceptionally(t -> Collections.emptyList());
+                .exceptionally(_ -> Collections.emptyList());
     }
 
     public CompletableFuture<List<? extends Location>> references(Path path, int line, int col, boolean includeDeclaration) {
@@ -444,7 +382,7 @@ public class LspBridge {
         params.setContext(new ReferenceContext(includeDeclaration));
         return server.getTextDocumentService().references(params)
                 .thenApply(list -> list == null ? Collections.<Location>emptyList() : list)
-                .exceptionally(t -> Collections.emptyList());
+                .exceptionally(_ -> Collections.emptyList());
     }
 
     /* ============================== rename ============================== */
@@ -465,7 +403,7 @@ public class LspBridge {
                 return new PrepareInfo(res.getRange(), res.getPlaceholder());
             }
             return null;
-        }).exceptionally(t -> null);
+        }).exceptionally(_ -> null);
     }
 
     public CompletableFuture<WorkspaceEdit> rename(Path path, int line, int col, String newName) {
@@ -474,13 +412,10 @@ public class LspBridge {
         params.setTextDocument(new TextDocumentIdentifier(path.toUri().toString()));
         params.setPosition(new Position(line, col));
         params.setNewName(newName);
-        return server.getTextDocumentService().rename(params).exceptionally(t -> null);
+        return server.getTextDocumentService().rename(params).exceptionally(_ -> null);
     }
 
-    public static final class PrepareInfo {
-        public final Range range;
-        public final String placeholder;
-        public PrepareInfo(Range r, String p) { this.range = r; this.placeholder = p; }
+    public record PrepareInfo(Range range, String placeholder) {
     }
 
     /* ============================== call hierarchy ============================== */
@@ -492,7 +427,7 @@ public class LspBridge {
         params.setPosition(new Position(line, col));
         return server.getTextDocumentService().prepareCallHierarchy(params)
                 .thenApply(list -> list == null ? Collections.<CallHierarchyItem>emptyList() : list)
-                .exceptionally(t -> Collections.emptyList());
+                .exceptionally(_ -> Collections.emptyList());
     }
 
     public CompletableFuture<List<CallHierarchyIncomingCall>> incomingCalls(CallHierarchyItem item) {
@@ -501,7 +436,7 @@ public class LspBridge {
         params.setItem(item);
         return server.getTextDocumentService().callHierarchyIncomingCalls(params)
                 .thenApply(list -> list == null ? Collections.<CallHierarchyIncomingCall>emptyList() : list)
-                .exceptionally(t -> Collections.emptyList());
+                .exceptionally(_ -> Collections.emptyList());
     }
 
     public CompletableFuture<List<CallHierarchyOutgoingCall>> outgoingCalls(CallHierarchyItem item) {
@@ -510,7 +445,7 @@ public class LspBridge {
         params.setItem(item);
         return server.getTextDocumentService().callHierarchyOutgoingCalls(params)
                 .thenApply(list -> list == null ? Collections.<CallHierarchyOutgoingCall>emptyList() : list)
-                .exceptionally(t -> Collections.emptyList());
+                .exceptionally(_ -> Collections.emptyList());
     }
 
     /* ============================== code actions ============================== */
@@ -526,15 +461,18 @@ public class LspBridge {
         params.setContext(cctx);
         return server.getTextDocumentService().codeAction(params)
                 .thenApply(list -> list == null ? Collections.<Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction>>emptyList() : list)
-                .exceptionally(t -> Collections.emptyList());
+                .exceptionally(_ -> Collections.emptyList());
     }
 
-    public CompletableFuture<Object> executeCommand(String command, List<Object> args) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(null);
+    public void executeCommand(String command, List<Object> args) {
+        if (!ready || server == null) {
+            CompletableFuture.completedFuture(null);
+            return;
+        }
         org.eclipse.lsp4j.ExecuteCommandParams params = new org.eclipse.lsp4j.ExecuteCommandParams();
         params.setCommand(command);
         params.setArguments(args == null ? Collections.emptyList() : args);
-        return server.getWorkspaceService().executeCommand(params)
-                .exceptionally(t -> null);
+        server.getWorkspaceService().executeCommand(params)
+                .exceptionally(_ -> null);
     }
 }

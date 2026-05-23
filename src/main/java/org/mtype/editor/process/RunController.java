@@ -35,7 +35,7 @@ public class RunController {
         String exe = settings.toolchain.interpreter;
 
         ProcessBuilder pb = new ProcessBuilder(exe, file.toString())
-                .directory(ws.getRoot().toFile())
+                .directory(ws.root().toFile())
                 .redirectErrorStream(false);
 
         Process proc;

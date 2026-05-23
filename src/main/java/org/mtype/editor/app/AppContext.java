@@ -75,7 +75,8 @@ public class AppContext {
         workspaceOpen.set(ws != null);
         treeView.setWorkspace(ws);
         if (gitChangesView != null) gitChangesView.setWorkspace(ws);
-        statusBar.setMessage("Opened " + ws.getRoot());
+        assert ws != null;
+        statusBar.setMessage("Opened " + ws.root());
         statusBar.setLspState("LSP: starting...");
         refreshHasProjectFile();
         try {

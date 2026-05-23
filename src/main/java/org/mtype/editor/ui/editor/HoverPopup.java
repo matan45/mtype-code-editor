@@ -20,9 +20,9 @@ public final class HoverPopup {
 
     private final Popup popup = new Popup();
     private final TextFlow flow = new TextFlow();
-    private final StackPane container = new StackPane(flow);
 
     public HoverPopup() {
+        StackPane container = new StackPane(flow);
         container.getStyleClass().add("hover-popup");
         flow.getStyleClass().add("hover-popup-content");
         flow.setMaxWidth(640);

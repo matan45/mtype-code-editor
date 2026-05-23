@@ -5,14 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.stream.Stream;
 
-public class Workspace {
-    private final Path root;
-
-    public Workspace(Path root) {
-        this.root = root;
-    }
-
-    public Path getRoot() { return root; }
+public record Workspace(Path root) {
 
     public boolean hasProjectFile() {
         if (root == null || !Files.isDirectory(root)) return false;

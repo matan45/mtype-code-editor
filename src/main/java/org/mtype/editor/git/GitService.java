@@ -46,7 +46,7 @@ public class GitService {
         public boolean ok() { return exitCode == 0; }
         public String stdoutJoined() { return String.join("\n", stdout); }
         public String stderrJoined() { return String.join("\n", stderr); }
-        public String firstStdoutLine() { return stdout.isEmpty() ? "" : stdout.get(0); }
+        public String firstStdoutLine() { return stdout.isEmpty() ? "" : stdout.getFirst(); }
     }
 
     public CompletableFuture<List<StatusEntry>> status() {
@@ -140,7 +140,7 @@ public class GitService {
             try {
                 ProcResult numstat = execSync(false, "diff", "--numstat", "HEAD", "--", rel);
                 if (numstat.ok() && !numstat.stdout.isEmpty()) {
-                    String row = numstat.stdout.get(0);
+                    String row = numstat.stdout.getFirst();
                     if (row.startsWith("-\t-\t")) {
                         return new DiffPair("", "", true);
                     }
@@ -314,11 +314,6 @@ public class GitService {
         });
     }
 
-    public CompletableFuture<Boolean> isGitRepo() {
-        return exec(false, "rev-parse", "--is-inside-work-tree").thenApply(r ->
-                r.ok() && "true".equals(r.firstStdoutLine().trim()));
-    }
-
     public CompletableFuture<List<Path>> conflictedFiles() {
         return exec(false, "diff", "--name-only", "--diff-filter=U").thenApply(r -> {
             if (!r.ok()) return Collections.emptyList();
@@ -398,7 +393,7 @@ public class GitService {
     private Path workspaceRootOrThrow() {
         Workspace ws = ctx.getWorkspace();
         if (ws == null) throw new IllegalStateException("No workspace open");
-        return ws.getRoot();
+        return ws.root();
     }
 
     /** Run git asynchronously. If echo is true, every line is also mirrored to the Git output tab. */
@@ -421,7 +416,7 @@ public class GitService {
 
         try {
             ProcessBuilder pb = new ProcessBuilder(cmd)
-                    .directory(ws.getRoot().toFile())
+                    .directory(ws.root().toFile())
                     .redirectErrorStream(false);
             Process proc = pb.start();
 

@@ -63,7 +63,7 @@ public class SettingsDialog extends Dialog<WorkspaceSettings> {
         Button cancel = (Button) pane.lookupButton(ButtonType.CANCEL);
         cancel.setText("Cancel");
 
-        setResultConverter(bt -> bt == ButtonType.OK ? collectSettings(current) : null);
+        setResultConverter(bt -> bt == ButtonType.OK ? collectSettings() : null);
 
         Platform.runLater(interpreterField::requestFocus);
     }
@@ -75,7 +75,7 @@ public class SettingsDialog extends Dialog<WorkspaceSettings> {
         fontFamilyCombo.setVisibleRowCount(12);
         fontFamilyCombo.setMaxWidth(Double.MAX_VALUE);
         // Render each family name in its own typeface so the user gets a live preview.
-        fontFamilyCombo.setCellFactory(lv -> new FontPreviewCell());
+        fontFamilyCombo.setCellFactory(_ -> new FontPreviewCell());
         fontFamilyCombo.setButtonCell(new FontPreviewCell());
     }
 
@@ -86,7 +86,7 @@ public class SettingsDialog extends Dialog<WorkspaceSettings> {
 
         String current = safe(s.editor.fontFamily);
         if (!current.isBlank() && !fontFamilyCombo.getItems().contains(current)) {
-            fontFamilyCombo.getItems().add(0, current);
+            fontFamilyCombo.getItems().addFirst(current);
         }
         fontFamilyCombo.setValue(current.isBlank() ? "JetBrains Mono" : current);
 
@@ -158,7 +158,7 @@ public class SettingsDialog extends Dialog<WorkspaceSettings> {
     private Button browse(String title, TextField target) {
         Button b = new Button("Browse...");
         b.getStyleClass().add("mt-browse-btn");
-        b.setOnAction(e -> {
+        b.setOnAction(_ -> {
             FileChooser fc = new FileChooser();
             fc.setTitle(title);
             fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("Executables", "*.exe"));
@@ -178,7 +178,7 @@ public class SettingsDialog extends Dialog<WorkspaceSettings> {
         return b;
     }
 
-    private WorkspaceSettings collectSettings(WorkspaceSettings base) {
+    private WorkspaceSettings collectSettings() {
         WorkspaceSettings s = new WorkspaceSettings();
         s.toolchain = new WorkspaceSettings.Toolchain();
         s.toolchain.interpreter = interpreterField.getText().trim();

@@ -39,7 +39,7 @@ final class InlayHintsController {
         this.layer.getStyleClass().add("mt-inlay-hints-layer");
         this.viewportSubscription = area.viewportDirtyEvents().subscribe(ignored ->
                 Platform.runLater(this::layoutHints));
-        this.layer.layoutBoundsProperty().addListener((obs, oldBounds, newBounds) -> layoutHints());
+        this.layer.layoutBoundsProperty().addListener((_, _, _) -> layoutHints());
     }
 
     void setHints(List<InlayHint> hints) {
@@ -173,14 +173,14 @@ final class InlayHintsController {
                 int length = text.getText() == null ? 0 : text.getText().length();
                 if (length == 0) continue;
                 int end = start + length;
-                double shift = shiftForSegment(start, end, lineGaps);
+                double shift = shiftForSegment(start, lineGaps);
                 child.setTranslateX(shift);
                 start = end;
             }
         }
     }
 
-    private double shiftForSegment(int start, int end, List<LineGap> gaps) {
+    private double shiftForSegment(int start, List<LineGap> gaps) {
         double shift = 0.0;
         for (LineGap gap : gaps) {
             int ch = gap.character();

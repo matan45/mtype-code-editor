@@ -39,7 +39,6 @@ public class DiffTab extends Tab {
     private final Path path;
     private final List<Integer> chunkStarts = new ArrayList<>();
     private int currentChunk = -1;
-    private CodeArea leftArea;
     private CodeArea rightArea;
 
     public DiffTab(AppContext ctx, Path path, String title, String leftText, String rightText, boolean binary) {
@@ -82,7 +81,6 @@ public class DiffTab extends Tab {
 
         CodeArea left = makeArea();
         CodeArea right = makeArea();
-        this.leftArea = left;
         this.rightArea = right;
         applyFontFromSettings(left);
         applyFontFromSettings(right);
@@ -143,25 +141,25 @@ public class DiffTab extends Tab {
         // bindBidirectional hits when the two viewports clamp to
         // slightly different max-scroll values at the document ends.
         boolean[] syncing = {false};
-        a.estimatedScrollYProperty().addListener((obs, oldV, newV) -> {
+        a.estimatedScrollYProperty().addListener((_, _, newV) -> {
             if (syncing[0] || newV == null) return;
             syncing[0] = true;
             try { b.estimatedScrollYProperty().setValue(newV); }
             finally { syncing[0] = false; }
         });
-        b.estimatedScrollYProperty().addListener((obs, oldV, newV) -> {
+        b.estimatedScrollYProperty().addListener((_, _, newV) -> {
             if (syncing[0] || newV == null) return;
             syncing[0] = true;
             try { a.estimatedScrollYProperty().setValue(newV); }
             finally { syncing[0] = false; }
         });
-        a.estimatedScrollXProperty().addListener((obs, oldV, newV) -> {
+        a.estimatedScrollXProperty().addListener((_, _, newV) -> {
             if (syncing[0] || newV == null) return;
             syncing[0] = true;
             try { b.estimatedScrollXProperty().setValue(newV); }
             finally { syncing[0] = false; }
         });
-        b.estimatedScrollXProperty().addListener((obs, oldV, newV) -> {
+        b.estimatedScrollXProperty().addListener((_, _, newV) -> {
             if (syncing[0] || newV == null) return;
             syncing[0] = true;
             try { a.estimatedScrollXProperty().setValue(newV); }
@@ -201,7 +199,7 @@ public class DiffTab extends Tab {
         if (prefs.fontSize > 0) {
             sb.append("-fx-font-size: ").append(prefs.fontSize).append("; ");
         }
-        if (sb.length() > 0) area.setStyle(sb.toString());
+        if (!sb.isEmpty()) area.setStyle(sb.toString());
     }
 
     private static IntFunction<Node> plainLineNumberFactory(Integer[] lineNums, int digits) {
@@ -339,11 +337,11 @@ public class DiffTab extends Tab {
             Button prev = new Button("↑");
             prev.getStyleClass().add("mt-diff-nav-btn");
             prev.setTooltip(new Tooltip("Previous change"));
-            prev.setOnAction(e -> jumpToChunk(-1));
+            prev.setOnAction(_ -> jumpToChunk(-1));
             Button next = new Button("↓");
             next.getStyleClass().add("mt-diff-nav-btn");
             next.setTooltip(new Tooltip("Next change"));
-            next.setOnAction(e -> jumpToChunk(1));
+            next.setOnAction(_ -> jumpToChunk(1));
             boolean hasChanges = !chunkStarts.isEmpty();
             prev.setDisable(!hasChanges);
             next.setDisable(!hasChanges);

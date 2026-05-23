@@ -3,7 +3,6 @@ package org.mtype.editor.syntax;
 public final class MTypeStyles {
     public static final String COMMENT = "mt-comment";
     public static final String STRING = "mt-string";
-    public static final String STRING_ESCAPE = "mt-string-escape";
     public static final String KEYWORD = "mt-keyword";
     public static final String MODIFIER = "mt-modifier";
     public static final String PRIMITIVE = "mt-primitive";

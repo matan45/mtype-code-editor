@@ -3,9 +3,12 @@ package org.mtype.editor.lsp;
 import org.eclipse.lsp4j.Position;
 
 public final class Positions {
-    private Positions() {}
+    private Positions() {
+    }
 
-    /** Convert an LSP (line, character) position to a 0-based offset in text. */
+    /**
+     * Convert an LSP (line, character) position to a 0-based offset in text.
+     */
     public static int offset(String text, int line, int character) {
         int idx = 0, curLine = 0;
         while (curLine < line && idx < text.length()) {

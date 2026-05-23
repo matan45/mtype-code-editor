@@ -4,30 +4,11 @@ import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.SimpleIntegerProperty;
 import javafx.geometry.Insets;
-import javafx.geometry.Pos;
 import javafx.geometry.Orientation;
-import javafx.scene.control.Button;
-import javafx.scene.control.ContextMenu;
-import javafx.scene.control.Label;
-import javafx.scene.control.ListCell;
-import javafx.scene.control.ListView;
-import javafx.scene.control.Menu;
-import javafx.scene.control.MenuButton;
-import javafx.scene.control.MenuItem;
-import javafx.scene.control.SelectionMode;
-import javafx.scene.control.SeparatorMenuItem;
-import javafx.scene.control.SplitPane;
-import javafx.scene.control.TextArea;
-import javafx.scene.control.Tooltip;
-import javafx.scene.control.TreeCell;
-import javafx.scene.control.TreeItem;
-import javafx.scene.control.TreeView;
+import javafx.geometry.Pos;
+import javafx.scene.control.*;
 import javafx.scene.input.MouseButton;
-import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
-import javafx.scene.layout.VBox;
+import javafx.scene.layout.*;
 import javafx.stage.Window;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.git.GitService;
@@ -57,7 +38,6 @@ public class GitChangesView extends BorderPane {
     private final ListView<CommitEntry> historyList = new ListView<>();
     private final Label historyStateLabel = new Label("No Git history");
     private final TextArea commitMessage = new TextArea();
-    private final Button commitButton = new Button("Commit");
     private final Label branchChip = new Label("");
     private final SimpleIntegerProperty stagedCount = new SimpleIntegerProperty(0);
     private Workspace workspace;
@@ -81,7 +61,7 @@ public class GitChangesView extends BorderPane {
 
         Button refresh = new Button("Refresh");
         refresh.getStyleClass().add("mt-panel-button");
-        refresh.setOnAction(e -> refresh());
+        refresh.setOnAction(_ -> refresh());
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
@@ -103,13 +83,14 @@ public class GitChangesView extends BorderPane {
             }
         });
 
+        Button commitButton = new Button("Commit");
         commitButton.getStyleClass().add("mt-git-commit-btn");
         commitButton.setMaxWidth(Double.MAX_VALUE);
         commitButton.disableProperty().bind(
                 Bindings.createBooleanBinding(
                         () -> commitMessage.getText() == null || commitMessage.getText().isBlank() || stagedCount.get() == 0,
                         commitMessage.textProperty(), stagedCount));
-        commitButton.setOnAction(e -> doCommit());
+        commitButton.setOnAction(_ -> doCommit());
 
         VBox commitBox = new VBox(commitMessage, commitButton);
         commitBox.setSpacing(4);
@@ -121,7 +102,7 @@ public class GitChangesView extends BorderPane {
 
         tree.setShowRoot(false);
         tree.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
-        tree.setCellFactory(tv -> new GitTreeCell());
+        tree.setCellFactory(_ -> new GitTreeCell());
         tree.getStyleClass().add("mt-git-tree");
         tree.setOnMouseClicked(event -> {
             if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2) {
@@ -132,7 +113,7 @@ public class GitChangesView extends BorderPane {
             }
         });
 
-        historyList.setCellFactory(tv -> new CommitHistoryCell());
+        historyList.setCellFactory(_ -> new CommitHistoryCell());
         historyList.getStyleClass().add("mt-git-history-list");
         historyList.setFocusTraversable(false);
 
@@ -190,7 +171,7 @@ public class GitChangesView extends BorderPane {
         git.recentCommits(HISTORY_LIMIT).handleAsync((commits, err) -> {
             if (workspace != ws) return null;
             if (err != null) {
-                showHistoryMessage("No Git history");
+                showHistoryMessage();
                 return null;
             }
             renderHistory(commits);
@@ -223,7 +204,7 @@ public class GitChangesView extends BorderPane {
         stagedCount.set(staged);
 
         if (entries.isEmpty()) {
-            showChangesMessage("No Git changes");
+            showChangesMessage();
             return;
         }
 
@@ -256,8 +237,8 @@ public class GitChangesView extends BorderPane {
         setCenter(stateLabel);
     }
 
-    private void showChangesMessage(String text) {
-        stateLabel.setText(text);
+    private void showChangesMessage() {
+        stateLabel.setText("No Git changes");
         changesPane.setCenter(stateLabel);
         showGitContent();
     }
@@ -270,7 +251,7 @@ public class GitChangesView extends BorderPane {
 
     private void renderHistory(List<CommitEntry> commits) {
         if (commits == null || commits.isEmpty()) {
-            showHistoryMessage("No Git history");
+            showHistoryMessage();
             return;
         }
         historyList.getItems().setAll(commits);
@@ -278,8 +259,8 @@ public class GitChangesView extends BorderPane {
         showGitContent();
     }
 
-    private void showHistoryMessage(String text) {
-        historyStateLabel.setText(text);
+    private void showHistoryMessage() {
+        historyStateLabel.setText("No Git history");
         historyPane.setCenter(historyStateLabel);
         if (workspace != null) showGitContent();
     }
@@ -313,8 +294,8 @@ public class GitChangesView extends BorderPane {
 
     private void doDiscard(List<Path> files) {
         Optional<javafx.scene.control.ButtonType> res = Dialogs.confirm(window(),
-                "Discard changes?",
-                files.size() + " file(s) will be reverted to HEAD. This cannot be undone.")
+                        "Discard changes?",
+                        files.size() + " file(s) will be reverted to HEAD. This cannot be undone.")
                 .showAndWait();
         if (res.isEmpty() || res.get() != javafx.scene.control.ButtonType.OK) return;
         runOp(ctx.getGitService().discard(files), "Discarded " + files.size() + " file(s)", "Discard failed");
@@ -323,7 +304,7 @@ public class GitChangesView extends BorderPane {
     private void doCommit() {
         String msg = commitMessage.getText();
         if (msg == null || msg.isBlank()) return;
-        runOp(ctx.getGitService().commit(msg), "Committed", "Commit failed", () -> commitMessage.clear());
+        runOp(ctx.getGitService().commit(msg), "Committed", "Commit failed", commitMessage::clear);
     }
 
     public void openBranchQuickPick() {
@@ -378,7 +359,8 @@ public class GitChangesView extends BorderPane {
                 "Switched to " + branch, "Checkout failed");
     }
 
-    private record BranchOption(String displayName, String fullRef, boolean remote) {}
+    private record BranchOption(String displayName, String fullRef, boolean remote) {
+    }
 
     private void doMerge() {
         GitService git = ctx.getGitService();
@@ -410,7 +392,7 @@ public class GitChangesView extends BorderPane {
                 var prompt = Dialogs.prompt(window(), "New Branch",
                         "Create branch from " + from, "Name:", "");
                 prompt.showAndWait().ifPresent(name -> {
-                    if (name == null || name.isBlank()) return;
+                    if (name.isBlank()) return;
                     runOp(ctx.getGitService().createBranch(name.trim(), from),
                             "Created and switched to " + name, "Create branch failed");
                 });
@@ -425,12 +407,12 @@ public class GitChangesView extends BorderPane {
         var currentF = git.currentBranch();
         var defaultF = git.defaultBranch();
         localsF.thenCombineAsync(currentF, (list, cur) -> list.stream()
-                        .filter(b -> !b.equals(cur))
-                        .collect(Collectors.toList()),
-                Platform::runLater)
+                                .filter(b -> !b.equals(cur))
+                                .collect(Collectors.toList()),
+                        Platform::runLater)
                 .thenCombineAsync(defaultF, (list, def) -> list.stream()
-                        .filter(b -> def == null || def.isBlank() || !b.equals(def))
-                        .collect(Collectors.toList()),
+                                .filter(b -> def == null || def.isBlank() || !b.equals(def))
+                                .collect(Collectors.toList()),
                         Platform::runLater)
                 .thenAcceptAsync(branches -> {
                     if (branches.isEmpty()) {
@@ -441,10 +423,10 @@ public class GitChangesView extends BorderPane {
                             "Delete Branch", branches, b -> b, null);
                     q.showAndWait().ifPresent(branch -> {
                         Optional<javafx.scene.control.ButtonType> res = Dialogs.confirm(window(),
-                                "Delete branch?", "Branch '" + branch + "' will be deleted.")
+                                        "Delete branch?", "Branch '" + branch + "' will be deleted.")
                                 .showAndWait();
                         if (res.isEmpty() || res.get() != javafx.scene.control.ButtonType.OK) return;
-                        ctx.getGitService().deleteBranch(branch, false).whenCompleteAsync((v, err) -> {
+                        ctx.getGitService().deleteBranch(branch, false).whenCompleteAsync((_, err) -> {
                             if (err == null) {
                                 ctx.getStatusBar().setMessage("Deleted " + branch);
                                 refresh();
@@ -453,8 +435,8 @@ public class GitChangesView extends BorderPane {
                             String msg = err.getCause() == null ? err.getMessage() : err.getCause().getMessage();
                             if (msg != null && msg.toLowerCase().contains("not fully merged")) {
                                 Optional<javafx.scene.control.ButtonType> force = Dialogs.confirm(window(),
-                                        "Force delete?",
-                                        "Branch '" + branch + "' is not fully merged. Force delete with -D?")
+                                                "Force delete?",
+                                                "Branch '" + branch + "' is not fully merged. Force delete with -D?")
                                         .showAndWait();
                                 if (force.isPresent() && force.get() == javafx.scene.control.ButtonType.OK) {
                                     runOp(ctx.getGitService().deleteBranch(branch, true),
@@ -493,7 +475,7 @@ public class GitChangesView extends BorderPane {
                        Runnable onSuccess,
                        boolean refreshOnFailure) {
         ctx.getStatusBar().setMessage(okMsg + "…");
-        fut.whenCompleteAsync((v, err) -> {
+        fut.whenCompleteAsync((_, err) -> {
             if (err == null) {
                 ctx.getStatusBar().setMessage(okMsg);
                 if (onSuccess != null) onSuccess.run();
@@ -525,7 +507,7 @@ public class GitChangesView extends BorderPane {
             body.append("Resolve conflict markers in the editor, stage the resolved files, then commit.");
             if (err == null && files != null && !files.isEmpty()) {
                 body.append("\n\nConflicted files:");
-                Path root = workspace.getRoot();
+                Path root = workspace.root();
                 for (Path file : files) {
                     Path display = root.relativize(file.toAbsolutePath().normalize());
                     body.append("\n- ").append(display);
@@ -537,25 +519,25 @@ public class GitChangesView extends BorderPane {
 
     private void buildOverflowMenu(MenuButton overflow) {
         MenuItem push = new MenuItem("Push");
-        push.setOnAction(e -> runOp(ctx.getGitService().push(), "Pushed", "Push failed"));
+        push.setOnAction(_ -> runOp(ctx.getGitService().push(), "Pushed", "Push failed"));
         MenuItem pull = new MenuItem("Pull");
-        pull.setOnAction(e -> runOp(ctx.getGitService().pull(), "Pulled", "Pull failed", null, true));
+        pull.setOnAction(_ -> runOp(ctx.getGitService().pull(), "Pulled", "Pull failed", null, true));
         MenuItem fetch = new MenuItem("Fetch");
-        fetch.setOnAction(e -> runOp(ctx.getGitService().fetch(), "Fetched", "Fetch failed"));
+        fetch.setOnAction(_ -> runOp(ctx.getGitService().fetch(), "Fetched", "Fetch failed"));
 
         MenuItem checkout = new MenuItem("Checkout Branch…");
-        checkout.setOnAction(e -> openBranchQuickPick());
+        checkout.setOnAction(_ -> openBranchQuickPick());
         MenuItem merge = new MenuItem("Merge Branch…");
-        merge.setOnAction(e -> doMerge());
+        merge.setOnAction(_ -> doMerge());
         MenuItem newBranch = new MenuItem("Create Branch…");
-        newBranch.setOnAction(e -> doCreateBranch());
+        newBranch.setOnAction(_ -> doCreateBranch());
         MenuItem delBranch = new MenuItem("Delete Branch…");
-        delBranch.setOnAction(e -> doDeleteBranch());
+        delBranch.setOnAction(_ -> doDeleteBranch());
 
         MenuItem stash = new MenuItem("Stash…");
-        stash.setOnAction(e -> doStash());
+        stash.setOnAction(_ -> doStash());
         MenuItem pop = new MenuItem("Pop Stash");
-        pop.setOnAction(e -> doStashPop());
+        pop.setOnAction(_ -> doStashPop());
 
         overflow.getItems().addAll(push, pull, fetch,
                 new SeparatorMenuItem(),
@@ -567,7 +549,10 @@ public class GitChangesView extends BorderPane {
     // ---------- Cell rendering ----------
 
     private record GitNode(String title, Path path, String badge, String group) {
-        static GitNode group(String title) { return new GitNode(title, null, null, null); }
+        static GitNode group(String title) {
+            return new GitNode(title, null, null, null);
+        }
+
         static GitNode file(StatusEntry e) {
             return new GitNode(e.path().getFileName().toString(), e.path(), e.label(), e.group());
         }
@@ -658,11 +643,11 @@ public class GitChangesView extends BorderPane {
         private ContextMenu buildContextMenu(Path file, String group) {
             ContextMenu menu = new ContextMenu();
             MenuItem openFile = new MenuItem("Open File");
-            openFile.setOnAction(e -> {
+            openFile.setOnAction(_ -> {
                 if (Files.isRegularFile(file)) ctx.getTabPane().openFile(file);
             });
             MenuItem openDiff = new MenuItem("Open Changes");
-            openDiff.setOnAction(e -> openDiff(file));
+            openDiff.setOnAction(_ -> openDiff(file));
 
             menu.getItems().addAll(openFile, openDiff, new SeparatorMenuItem());
 
@@ -672,13 +657,13 @@ public class GitChangesView extends BorderPane {
 
             if ("Staged Changes".equals(group)) {
                 MenuItem unstage = new MenuItem("Unstage Changes");
-                unstage.setOnAction(e -> doUnstage(targets));
+                unstage.setOnAction(_ -> doUnstage(targets));
                 menu.getItems().add(unstage);
             } else {
                 MenuItem stage = new MenuItem("Stage Changes");
-                stage.setOnAction(e -> doStage(targets));
+                stage.setOnAction(_ -> doStage(targets));
                 MenuItem discard = new MenuItem("Discard Changes");
-                discard.setOnAction(e -> doDiscard(targets));
+                discard.setOnAction(_ -> doDiscard(targets));
                 menu.getItems().addAll(stage, discard);
             }
             return menu;
@@ -697,7 +682,7 @@ public class GitChangesView extends BorderPane {
         }
     }
 
-    private class CommitHistoryCell extends ListCell<CommitEntry> {
+    private static class CommitHistoryCell extends ListCell<CommitEntry> {
         @Override
         protected void updateItem(CommitEntry item, boolean empty) {
             super.updateItem(item, empty);

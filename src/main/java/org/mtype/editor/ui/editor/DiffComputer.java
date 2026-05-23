@@ -75,8 +75,8 @@ public final class DiffComputer {
         if (text == null || text.isEmpty()) return new ArrayList<>();
         String[] parts = text.split("\n", -1);
         List<String> result = new ArrayList<>(Arrays.asList(parts));
-        if (!result.isEmpty() && result.get(result.size() - 1).isEmpty() && text.endsWith("\n")) {
-            result.remove(result.size() - 1);
+        if (!result.isEmpty() && result.getLast().isEmpty() && text.endsWith("\n")) {
+            result.removeLast();
         }
         for (int k = 0; k < result.size(); k++) {
             String line = result.get(k);

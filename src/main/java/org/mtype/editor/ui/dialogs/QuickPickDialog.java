@@ -5,34 +5,26 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
 import javafx.geometry.Insets;
-import javafx.scene.control.ButtonType;
-import javafx.scene.control.Dialog;
-import javafx.scene.control.DialogPane;
-import javafx.scene.control.Label;
-import javafx.scene.control.ListCell;
-import javafx.scene.control.ListView;
-import javafx.scene.control.TextField;
+import javafx.geometry.Pos;
+import javafx.scene.control.*;
 import javafx.scene.input.KeyCode;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.stage.Window;
 
-import javafx.geometry.Pos;
-import javafx.scene.layout.HBox;
-
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Function;
 
 public class QuickPickDialog<T> {
-    /** Sentinel class marking header rows in the internal model. */
+    /**
+     * Sentinel class marking header rows in the internal model.
+     */
     private static final class Header {
         final String text;
-        Header(String text) { this.text = text; }
+
+        Header(String text) {
+            this.text = text;
+        }
     }
 
     private final Dialog<T> dialog = new Dialog<>();
@@ -260,7 +252,9 @@ public class QuickPickDialog<T> {
         return false;
     }
 
-    /** Find the first index >= start (or <= start if step==-1) that is selectable (not a header). */
+    /**
+     * Find the first index >= start (or <= start if step==-1) that is selectable (not a header).
+     */
     private int firstSelectableIndex(int start, int step) {
         int i = start;
         while (i >= 0 && i < filtered.size()) {

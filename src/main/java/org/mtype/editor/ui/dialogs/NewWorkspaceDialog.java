@@ -52,14 +52,14 @@ public class NewWorkspaceDialog extends Dialog<Path> {
         Button addBtn = new Button("Add...");
         Button removeBtn = new Button("Remove");
         removeBtn.disableProperty().bind(membersList.getSelectionModel().selectedItemProperty().isNull());
-        addBtn.setOnAction(e -> {
+        addBtn.setOnAction(_ -> {
             TextInputDialog d = Dialogs.prompt(owner, "Add Member",
                     "Relative path to a member project (folder or .mtproj)",
                     "Path:", null);
             Optional<String> r = d.showAndWait();
             r.map(String::trim).filter(s -> !s.isEmpty()).ifPresent(members::add);
         });
-        removeBtn.setOnAction(e -> {
+        removeBtn.setOnAction(_ -> {
             String sel = membersList.getSelectionModel().getSelectedItem();
             if (sel != null) members.remove(sel);
         });

@@ -63,9 +63,9 @@ public class WorkspaceTreeView extends TreeView<Path> {
     public WorkspaceTreeView(AppContext ctx) {
         this.ctx = ctx;
         setShowRoot(true);
-        setCellFactory(tv -> new FileTreeCell());
+        setCellFactory(_ -> new FileTreeCell());
         getStyleClass().add("mt-tree");
-        filterDebounce.setOnFinished(e -> applyFilter(currentQuery));
+        filterDebounce.setOnFinished(_ -> applyFilter(currentQuery));
 
         setOnMouseClicked(event -> {
             if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 2) {
@@ -94,7 +94,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
             cancelActiveWalk();
             currentQuery = "";
             filterDebounce.stop();
-            LazyTreeItem root = new LazyTreeItem(ws.getRoot());
+            LazyTreeItem root = new LazyTreeItem(ws.root());
             root.setExpanded(true);
             originalRoot = root;
             setRoot(root);
@@ -110,7 +110,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
         } else {
             // Rebuild the lazy root in the background reference so a future filter-clear shows fresh state,
             // then re-run the walk.
-            LazyTreeItem root = new LazyTreeItem(ws.getRoot());
+            LazyTreeItem root = new LazyTreeItem(ws.root());
             root.setExpanded(true);
             originalRoot = root;
             applyFilter(currentQuery);
@@ -290,39 +290,39 @@ public class WorkspaceTreeView extends TreeView<Path> {
 
     private ContextMenu buildContextMenu() {
         MenuItem newFile = new MenuItem("New File...");
-        newFile.setOnAction(e -> newFileAction());
+        newFile.setOnAction(_ -> newFileAction());
 
         MenuItem newMt = new MenuItem("New .mt File...");
-        newMt.setOnAction(e -> newFileWithExtAction(".mt"));
+        newMt.setOnAction(_ -> newFileWithExtAction());
 
         MenuItem newFolder = new MenuItem("New Folder...");
-        newFolder.setOnAction(e -> newFolderAction());
+        newFolder.setOnAction(_ -> newFolderAction());
 
         MenuItem rename = new MenuItem("Rename...");
         rename.setAccelerator(new KeyCodeCombination(KeyCode.F2));
-        rename.setOnAction(e -> renameAction());
+        rename.setOnAction(_ -> renameAction());
 
         MenuItem delete = new MenuItem("Delete");
         delete.setAccelerator(new KeyCodeCombination(KeyCode.DELETE));
-        delete.setOnAction(e -> deleteAction());
+        delete.setOnAction(_ -> deleteAction());
 
         MenuItem copy = new MenuItem("Copy");
         copy.setAccelerator(new KeyCodeCombination(KeyCode.C, KeyCombination.CONTROL_DOWN));
-        copy.setOnAction(e -> clipAction(ClipboardOp.COPY));
+        copy.setOnAction(_ -> clipAction(ClipboardOp.COPY));
 
         MenuItem cut = new MenuItem("Cut");
         cut.setAccelerator(new KeyCodeCombination(KeyCode.X, KeyCombination.CONTROL_DOWN));
-        cut.setOnAction(e -> clipAction(ClipboardOp.CUT));
+        cut.setOnAction(_ -> clipAction(ClipboardOp.CUT));
 
         MenuItem paste = new MenuItem("Paste");
         paste.setAccelerator(new KeyCodeCombination(KeyCode.V, KeyCombination.CONTROL_DOWN));
-        paste.setOnAction(e -> pasteAction());
+        paste.setOnAction(_ -> pasteAction());
 
         MenuItem revealInOs = new MenuItem("Reveal in File Explorer");
-        revealInOs.setOnAction(e -> revealInOsAction());
+        revealInOs.setOnAction(_ -> revealInOsAction());
 
         MenuItem refreshItem = new MenuItem("Refresh");
-        refreshItem.setOnAction(e -> refresh());
+        refreshItem.setOnAction(_ -> refresh());
 
         ContextMenu menu = new ContextMenu(
                 newFile, newMt, newFolder,
@@ -333,7 +333,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
                 new SeparatorMenuItem(),
                 revealInOs, refreshItem);
 
-        menu.setOnShowing(e -> {
+        menu.setOnShowing(_ -> {
             Path sel = selectedPath();
             boolean hasSel = sel != null;
             boolean isRoot = hasSel && getRoot() != null && sel.equals(getRoot().getValue());
@@ -375,7 +375,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
                 "Create a file in " + dir.getFileName(), "Name:", null);
         d.showAndWait().map(String::trim).filter(s -> !s.isEmpty()).ifPresent(name -> {
             Path target = dir.resolve(name);
-            if (!validateName(name) || existsCheck(target)) return;
+            if (validateName(name) || existsCheck(target)) return;
             try { Files.createFile(target); }
             catch (IOException ex) { errorAlert("Could not create file", ex); return; }
             refreshDirectory(dir);
@@ -383,16 +383,16 @@ public class WorkspaceTreeView extends TreeView<Path> {
         });
     }
 
-    private void newFileWithExtAction(String ext) {
+    private void newFileWithExtAction() {
         Path dir = targetDirectory();
         if (dir == null) return;
-        TextInputDialog d = Dialogs.prompt(ownerWindow(), "New " + ext + " File",
-                "Create a " + ext + " file in " + dir.getFileName(),
+        TextInputDialog d = Dialogs.prompt(ownerWindow(), "New " + ".mt" + " File",
+                "Create a " + ".mt" + " file in " + dir.getFileName(),
                 "Name (without extension):", null);
         d.showAndWait().map(String::trim).filter(s -> !s.isEmpty()).ifPresent(name -> {
-            String full = name.toLowerCase().endsWith(ext) ? name : name + ext;
+            String full = name.toLowerCase().endsWith(".mt") ? name : name + ".mt";
             Path target = dir.resolve(full);
-            if (!validateName(full) || existsCheck(target)) return;
+            if (validateName(full) || existsCheck(target)) return;
             try { Files.createFile(target); }
             catch (IOException ex) { errorAlert("Could not create file", ex); return; }
             refreshDirectory(dir);
@@ -407,7 +407,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
                 "Create a folder in " + dir.getFileName(), "Name:", null);
         d.showAndWait().map(String::trim).filter(s -> !s.isEmpty()).ifPresent(name -> {
             Path target = dir.resolve(name);
-            if (!validateName(name) || existsCheck(target)) return;
+            if (validateName(name) || existsCheck(target)) return;
             try { Files.createDirectory(target); }
             catch (IOException ex) { errorAlert("Could not create folder", ex); return; }
             refreshDirectory(dir);
@@ -423,7 +423,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
                 "Rename " + currentName, "New name:", currentName);
         d.showAndWait().map(String::trim).filter(s -> !s.isEmpty() && !s.equals(currentName)).ifPresent(name -> {
             Path target = sel.resolveSibling(name);
-            if (!validateName(name) || existsCheck(target)) return;
+            if (validateName(name) || existsCheck(target)) return;
             try {
                 if (Files.isDirectory(sel)) ctx.getTabPane().closeUnder(sel);
                 else ctx.getTabPane().closeByPath(sel);
@@ -519,9 +519,9 @@ public class WorkspaceTreeView extends TreeView<Path> {
     private boolean validateName(String name) {
         if (name.contains("/") || name.contains("\\") || name.equals(".") || name.equals("..")) {
             Dialogs.error(ownerWindow(), null, "Invalid name.").showAndWait();
-            return false;
+            return true;
         }
-        return true;
+        return false;
     }
 
     private boolean existsCheck(Path target) {
@@ -638,7 +638,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
 
     private static class FileTreeCell extends TreeCell<Path> {
         private final javafx.beans.value.ChangeListener<Boolean> expandListener =
-                (obs, oldV, newV) -> refreshIcon();
+                (_, _, _) -> refreshIcon();
         private TreeItem<Path> watchedItem;
 
         @Override

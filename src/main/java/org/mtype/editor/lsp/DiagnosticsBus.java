@@ -51,14 +51,6 @@ public class DiagnosticsBus {
         }
     }
 
-    public int totalCount() {
-        synchronized (byUri) {
-            int n = 0;
-            for (List<Diagnostic> v : byUri.values()) n += v.size();
-            return n;
-        }
-    }
-
     public void addListener(BiConsumer<String, List<Diagnostic>> listener) {
         listeners.add(listener);
     }

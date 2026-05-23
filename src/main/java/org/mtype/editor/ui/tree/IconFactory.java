@@ -32,7 +32,7 @@ public final class IconFactory {
         }
         String name = p.getFileName() == null ? "" : p.getFileName().toString().toLowerCase();
         if (name.equals("mtproj.lock") || name.endsWith(".mtproj.lock")) {
-            return lockedM("#42A5F5", "#1565C0");
+            return lockedM();
         }
         if (name.endsWith(".mt"))          return letterM("#FFD93D", "#F39C12", null);
         if (name.endsWith(".mtc"))         return letterM("#4A90E2", "#2E5C8A", null);
@@ -64,8 +64,8 @@ public final class IconFactory {
         return pane;
     }
 
-    private static StackPane lockedM(String c1, String c2) {
-        StackPane base = letterM(c1, c2, "LOCK");
+    private static StackPane lockedM() {
+        StackPane base = letterM("#42A5F5", "#1565C0", "LOCK");
         // tiny padlock badge in top-right
         SVGPath shackle = new SVGPath();
         shackle.setContent("M1,3 Q1,0 2.5,0 Q4,0 4,3");

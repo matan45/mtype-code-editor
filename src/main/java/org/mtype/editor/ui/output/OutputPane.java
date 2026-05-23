@@ -26,9 +26,10 @@ public class OutputPane extends TabPane {
     private final Tab compileTab;
     private final Tab gitTab;
     private final Tab callHierarchyTab;
+    private final Tab referencesTab;
     private final Tab problemsTab;
     private CallHierarchyPane callHierarchyPane;
-    private ProblemsPane problemsPane;
+    private ReferencesPane referencesPane;
 
     public OutputPane() {
         runArea.setEditable(false);
@@ -45,7 +46,7 @@ public class OutputPane extends TabPane {
 
         Button clearLspButton = new Button("Clear");
         clearLspButton.getStyleClass().add("mt-output-toolbar-button");
-        clearLspButton.setOnAction(e -> lspArea.clear());
+        clearLspButton.setOnAction(_ -> lspArea.clear());
         HBox lspToolbar = new HBox(clearLspButton);
         lspToolbar.setAlignment(Pos.CENTER_RIGHT);
         lspToolbar.setPadding(new Insets(4, 6, 4, 6));
@@ -57,7 +58,7 @@ public class OutputPane extends TabPane {
 
         Button clearCompileButton = new Button("Clear");
         clearCompileButton.getStyleClass().add("mt-output-toolbar-button");
-        clearCompileButton.setOnAction(e -> compileArea.clear());
+        clearCompileButton.setOnAction(_ -> compileArea.clear());
         HBox compileToolbar = new HBox(clearCompileButton);
         compileToolbar.setAlignment(Pos.CENTER_RIGHT);
         compileToolbar.setPadding(new Insets(4, 6, 4, 6));
@@ -69,7 +70,7 @@ public class OutputPane extends TabPane {
 
         Button clearGitButton = new Button("Clear");
         clearGitButton.getStyleClass().add("mt-output-toolbar-button");
-        clearGitButton.setOnAction(e -> gitArea.clear());
+        clearGitButton.setOnAction(_ -> gitArea.clear());
         HBox gitToolbar = new HBox(clearGitButton);
         gitToolbar.setAlignment(Pos.CENTER_RIGHT);
         gitToolbar.setPadding(new Insets(4, 6, 4, 6));
@@ -81,16 +82,18 @@ public class OutputPane extends TabPane {
 
         callHierarchyTab = new Tab("Call Hierarchy");
         callHierarchyTab.setClosable(false);
+        referencesTab = new Tab("References");
+        referencesTab.setClosable(false);
         problemsTab = new Tab("Problems");
         problemsTab.setClosable(false);
 
-        getTabs().addAll(problemsTab, runTab, compileTab, lspTab, gitTab, callHierarchyTab);
+        getTabs().addAll(problemsTab, runTab, compileTab, lspTab, gitTab, callHierarchyTab, referencesTab);
         getStyleClass().add("mt-output-pane");
         setTabClosingPolicy(TabClosingPolicy.UNAVAILABLE);
     }
 
     private List<Tab> canonicalOrder() {
-        return List.of(problemsTab, runTab, compileTab, lspTab, gitTab, callHierarchyTab);
+        return List.of(problemsTab, runTab, compileTab, lspTab, gitTab, callHierarchyTab, referencesTab);
     }
 
     private Tab tabByName(String name) {
@@ -101,7 +104,7 @@ public class OutputPane extends TabPane {
     }
 
     public List<String> tabNames() {
-        return List.of("Problems", "Run", "Compile", "LSP Log", "Git", "Call Hierarchy");
+        return List.of("Problems", "Run", "Compile", "LSP Log", "Git", "Call Hierarchy", "References");
     }
 
     public boolean isTabVisible(String name) {
@@ -132,12 +135,17 @@ public class OutputPane extends TabPane {
         callHierarchyTab.setContent(callHierarchyPane);
     }
 
+    public void attachReferences(AppContext ctx) {
+        referencesPane = new ReferencesPane(ctx);
+        referencesTab.setContent(referencesPane);
+    }
+
     public void attachProblems(AppContext ctx) {
-        problemsPane = new ProblemsPane(ctx);
+        ProblemsPane problemsPane = new ProblemsPane(ctx);
         problemsTab.setContent(problemsPane);
         // Bind the tab label to the visible row count so the Clear button
         // (which clears rows but not the bus) also resets the label.
-        problemsPane.rowCountBinding().addListener((obs, oldV, newV) -> {
+        problemsPane.rowCountBinding().addListener((_, _, newV) -> {
             int n = newV.intValue();
             Platform.runLater(() ->
                     problemsTab.setText(n > 0 ? "Problems (" + n + ")" : "Problems"));
@@ -152,11 +160,17 @@ public class OutputPane extends TabPane {
         });
     }
 
+    public void showReferences(String symbolLabel, List<? extends org.eclipse.lsp4j.Location> locations) {
+        if (referencesPane == null) return;
+        Platform.runLater(() -> {
+            getSelectionModel().select(referencesTab);
+            referencesPane.show(symbolLabel, locations);
+        });
+    }
+
     public void appendRun(String line, boolean stderr) {
         String text = (stderr ? "[err] " : "") + line + System.lineSeparator();
-        Platform.runLater(() -> {
-            runArea.appendText(text);
-        });
+        Platform.runLater(() -> runArea.appendText(text));
     }
 
     public void appendLspLog(String line) {
@@ -198,20 +212,12 @@ public class OutputPane extends TabPane {
         Platform.runLater(compileArea::clear);
     }
 
-    public void clearGit() {
-        Platform.runLater(gitArea::clear);
-    }
-
     public void focusRun() {
         Platform.runLater(() -> getSelectionModel().select(runTab));
     }
 
     public void focusCompile() {
         Platform.runLater(() -> getSelectionModel().select(compileTab));
-    }
-
-    public void focusLsp() {
-        Platform.runLater(() -> getSelectionModel().select(lspTab));
     }
 
     public void focusGit() {
