@@ -141,6 +141,9 @@ public class EditorApp extends Application {
 
         stage.initStyle(StageStyle.UNDECORATED);
         stage.setTitle("mType Editor");
+        try (var in = EditorApp.class.getResourceAsStream("/icons/mtype-logo.png")) {
+            if (in != null) stage.getIcons().add(new javafx.scene.image.Image(in));
+        } catch (Exception ignored) {}
         stage.setScene(scene);
         stage.setOnCloseRequest(_ -> shutdown());
         WindowResizer.install(stage, scene);

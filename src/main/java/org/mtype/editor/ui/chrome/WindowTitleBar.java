@@ -4,9 +4,10 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Cursor;
 import javafx.scene.control.Button;
-import javafx.scene.control.Label;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.Tooltip;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -15,6 +16,8 @@ import javafx.scene.shape.Line;
 import javafx.scene.shape.Rectangle;
 import javafx.stage.Stage;
 import javafx.stage.WindowEvent;
+
+import java.io.InputStream;
 
 /**
  * Custom window title bar for UNDECORATED stages: hosts the menu bar inline
@@ -38,10 +41,12 @@ public class WindowTitleBar extends HBox {
         setPrefHeight(30);
         setPadding(new Insets(0, 0, 0, 8));
 
-        Label title = new Label();
-        title.textProperty().bind(stage.titleProperty());
-        title.getStyleClass().add("mt-title-bar-title");
-        HBox.setMargin(title, new Insets(0, 12, 0, 4));
+        ImageView logo = loadLogo();
+        logo.getStyleClass().add("mt-title-bar-logo");
+        Tooltip logoTooltip = new Tooltip();
+        logoTooltip.textProperty().bind(stage.titleProperty());
+        Tooltip.install(logo, logoTooltip);
+        HBox.setMargin(logo, new Insets(0, 10, 0, 4));
 
         // MenuBar default minHeight/prefHeight are sized for the OS menu; in
         // an inline title bar we want it flush with the chrome height so the
@@ -65,7 +70,7 @@ public class WindowTitleBar extends HBox {
         closeBtn.setOnAction(_ -> stage.fireEvent(
                 new WindowEvent(stage, WindowEvent.WINDOW_CLOSE_REQUEST)));
 
-        getChildren().addAll(title, menuBar, spacer, minBtn, maxBtn, closeBtn);
+        getChildren().addAll(logo, menuBar, spacer, minBtn, maxBtn, closeBtn);
 
         installDragHandlers();
     }
@@ -120,7 +125,7 @@ public class WindowTitleBar extends HBox {
             // buttons (and anything inside them) do not.
             javafx.scene.Node n = node;
             while (n != null && n != this) {
-                if (n.getStyleClass().contains("mt-title-bar-title")) return true;
+                if (n.getStyleClass().contains("mt-title-bar-logo")) return true;
                 if (n.getStyleClass().contains("mt-title-bar-button")) return false;
                 if (n.getStyleClass().contains("mt-title-bar-close")) return false;
                 if (n.getStyleClass().contains("mt-title-bar-menus")) return false;
@@ -173,6 +178,19 @@ public class WindowTitleBar extends HBox {
         front.getStyleClass().add("mt-title-bar-glyph");
         javafx.scene.Group g = new javafx.scene.Group(back, front);
         return g;
+    }
+
+    /** Bundled mType logo, scaled to a 20-px-tall ImageView. */
+    public static ImageView loadLogo() {
+        ImageView view = new ImageView();
+        try (InputStream in = WindowTitleBar.class.getResourceAsStream("/icons/mtype-logo.png")) {
+            if (in != null) view.setImage(new Image(in));
+        } catch (Exception ignored) {
+        }
+        view.setPreserveRatio(true);
+        view.setFitHeight(20);
+        view.setSmooth(true);
+        return view;
     }
 
     private javafx.scene.Node closeGlyph() {
