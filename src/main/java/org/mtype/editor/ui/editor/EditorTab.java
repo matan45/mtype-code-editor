@@ -30,6 +30,7 @@ import org.eclipse.lsp4j.Command;
 import org.fxmisc.richtext.CharacterHit;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionItemKind;
+import org.eclipse.lsp4j.InsertTextFormat;
 import org.eclipse.lsp4j.Location;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
@@ -102,6 +103,7 @@ public class EditorTab extends Tab {
     private long openedLspSession = -1;
     private boolean suppressDirty = true;
     private List<CompletionItem> currentCompletionItems = Collections.emptyList();
+    private SnippetSession activeSnippet;
 
     public EditorTab(AppContext ctx, Path path) {
         this.ctx = ctx;
@@ -818,6 +820,12 @@ public class EditorTab extends Tab {
                 }
             }
         }
+        if (e.getCode() == KeyCode.TAB && activeSnippet != null) {
+            if (advanceSnippet()) {
+                e.consume();
+                return;
+            }
+        }
         if (e.getCode() == KeyCode.SPACE && e.isControlDown()) {
             requestCompletionNow();
             e.consume();
@@ -988,6 +996,10 @@ public class EditorTab extends Tab {
     /* ----- completion ----- */
 
     private void maybeAutoCompletion(String oldText, String newText) {
+        if (activeSnippet != null) {
+            completionMenu.hide();
+            return;
+        }
         int caret = codeArea.getCaretPosition();
         int delta = newText.length() - oldText.length();
         if (delta != 1) {
@@ -1099,8 +1111,40 @@ public class EditorTab extends Tab {
         while (wordStart > 0 && isWordChar(text.charAt(wordStart - 1))) wordStart--;
         int start = serverStart >= 0 ? Math.min(serverStart, wordStart) : wordStart;
         int end = serverEnd >= 0 ? Math.max(serverEnd, caret) : caret;
-        codeArea.replaceText(start, end, newText);
+        activeSnippet = null;
+        if (ci.getInsertTextFormat() == InsertTextFormat.Snippet) {
+            SnippetSession snippet = SnippetSession.parse(newText, start);
+            codeArea.replaceText(start, end, snippet.text());
+            activeSnippet = snippet;
+            applySnippetSelection(snippet.firstSelection());
+        } else {
+            codeArea.replaceText(start, end, newText);
+        }
         completionMenu.hide();
+    }
+
+    private boolean advanceSnippet() {
+        javafx.scene.control.IndexRange selection = codeArea.getSelection();
+        SnippetSession.Selection next = activeSnippet.advance(
+                codeArea.getCaretPosition(),
+                selection.getStart(),
+                selection.getEnd());
+        if (next == null) {
+            activeSnippet = null;
+            return false;
+        }
+        applySnippetSelection(next);
+        return true;
+    }
+
+    private void applySnippetSelection(SnippetSession.Selection selection) {
+        int length = codeArea.getLength();
+        int start = Math.max(0, Math.min(selection.start(), length));
+        int end = Math.max(0, Math.min(selection.end(), length));
+        codeArea.selectRange(start, end);
+        if (selection.finalCaret()) {
+            activeSnippet = null;
+        }
     }
 
     private String currentWordPrefix() {

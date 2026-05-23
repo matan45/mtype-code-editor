@@ -82,7 +82,7 @@ public class LspBridge {
 
         CompletionCapabilities completion = new CompletionCapabilities();
         CompletionItemCapabilities itemCaps = new CompletionItemCapabilities();
-        itemCaps.setSnippetSupport(false);
+        itemCaps.setSnippetSupport(true);
         completion.setCompletionItem(itemCaps);
         td.setCompletion(completion);
 
