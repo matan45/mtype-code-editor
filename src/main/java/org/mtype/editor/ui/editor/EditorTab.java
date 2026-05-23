@@ -39,6 +39,7 @@ import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.CodeArea;
 import org.fxmisc.richtext.event.MouseOverTextEvent;
 import org.fxmisc.richtext.model.StyleSpans;
+import org.fxmisc.richtext.model.StyleSpansBuilder;
 import org.fxmisc.richtext.model.TwoDimensional;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.lsp.LspBridge;
@@ -58,6 +59,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -71,6 +73,7 @@ public class EditorTab extends Tab {
                 t.setDaemon(true);
                 return t;
             });
+    private static final String INLAY_HINT_ANCHOR_STYLE = "mt-inlay-hint-anchor";
 
     private final AppContext ctx;
     private final Path path;
@@ -82,6 +85,7 @@ public class EditorTab extends Tab {
     private final HoverPopup hoverPopup = new HoverPopup();
     private final Pane inlayHintsLayer = new Pane();
     private final InlayHintsController inlayHintsController;
+    private final Set<Integer> inlayHintAnchorOffsets = new HashSet<>();
     private final Map<Integer, CodeLensLine> codeLensByParagraph = new HashMap<>();
     private final Set<Integer> codeLensParagraphStyles = new HashSet<>();
     private final Map<Integer, org.eclipse.lsp4j.DiagnosticSeverity> diagnosticsByLine = new HashMap<>();
@@ -114,7 +118,7 @@ public class EditorTab extends Tab {
         VirtualizedScrollPane<CodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
         StackPane editorStack = new StackPane(scroll, inlayHintsLayer);
         setContent(editorStack);
-        inlayHintsController = new InlayHintsController(codeArea, inlayHintsLayer);
+        inlayHintsController = new InlayHintsController(codeArea, inlayHintsLayer, this::setInlayHintAnchors);
 
         loadFile();
         suppressDirty = false;
@@ -860,20 +864,71 @@ public class EditorTab extends Tab {
 
     private void applyCombinedStyles() {
         if (lastTokenSpans == null) return;
+        StyleSpans<Collection<String>> combined = lastTokenSpans;
         if (lastDiagnosticSpans != null) {
             try {
-                StyleSpans<Collection<String>> combined = lastTokenSpans.overlay(
+                combined = combined.overlay(
                         lastDiagnosticSpans,
-                        (a, b) -> {
-                            java.util.Set<String> merged = new java.util.LinkedHashSet<>(a);
-                            merged.addAll(b);
-                            return merged;
-                        });
-                codeArea.setStyleSpans(0, combined);
-                return;
+                        EditorTab::mergeStyles);
             } catch (Exception ignored) {}
         }
-        codeArea.setStyleSpans(0, lastTokenSpans);
+        StyleSpans<Collection<String>> inlayAnchors = inlayAnchorSpans(codeArea.getLength());
+        if (inlayAnchors != null) {
+            try {
+                combined = combined.overlay(inlayAnchors, EditorTab::mergeStyles);
+            } catch (Exception ignored) {}
+        }
+        codeArea.setStyleSpans(0, combined);
+    }
+
+    private void setInlayHintAnchors(List<Position> positions) {
+        Set<Integer> next = new HashSet<>();
+        String text = codeArea.getText();
+        int length = text.length();
+        if (positions != null && length > 0) {
+            for (Position position : positions) {
+                if (position == null) continue;
+                try {
+                    int offset = Positions.offset(text, position);
+                    if (offset >= 0 && offset < length) {
+                        char c = text.charAt(offset);
+                        if (c != '\n' && c != '\r') next.add(offset);
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+        if (next.equals(inlayHintAnchorOffsets)) return;
+        inlayHintAnchorOffsets.clear();
+        inlayHintAnchorOffsets.addAll(next);
+        applyCombinedStyles();
+        Platform.runLater(inlayHintsController::refreshLayout);
+    }
+
+    private StyleSpans<Collection<String>> inlayAnchorSpans(int length) {
+        if (inlayHintAnchorOffsets.isEmpty() || length <= 0) return null;
+        StyleSpansBuilder<Collection<String>> builder = new StyleSpansBuilder<>();
+        int cursor = 0;
+        boolean addedAnchor = false;
+        for (int offset : new TreeSet<>(inlayHintAnchorOffsets)) {
+            if (offset < cursor || offset < 0 || offset >= length) continue;
+            if (offset > cursor) {
+                builder.add(Collections.emptyList(), offset - cursor);
+            }
+            builder.add(Collections.singleton(INLAY_HINT_ANCHOR_STYLE), 1);
+            cursor = offset + 1;
+            addedAnchor = true;
+        }
+        if (!addedAnchor) return null;
+        if (cursor < length) {
+            builder.add(Collections.emptyList(), length - cursor);
+        }
+        return builder.create();
+    }
+
+    private static Collection<String> mergeStyles(Collection<String> a, Collection<String> b) {
+        java.util.Set<String> merged = new java.util.LinkedHashSet<>(a);
+        merged.addAll(b);
+        return merged;
     }
 
     /* ----- LSP sync ----- */

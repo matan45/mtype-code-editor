@@ -21,17 +21,20 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 final class InlayHintsController {
     private final CodeArea area;
     private final Pane layer;
+    private final Consumer<List<Position>> anchorListener;
     private final List<RenderedHint> rendered = new ArrayList<>();
     private final Subscription viewportSubscription;
 
-    InlayHintsController(CodeArea area, Pane layer) {
+    InlayHintsController(CodeArea area, Pane layer, Consumer<List<Position>> anchorListener) {
         this.area = area;
         this.layer = layer;
+        this.anchorListener = anchorListener;
         this.layer.setMouseTransparent(true);
         this.layer.getStyleClass().add("mt-inlay-hints-layer");
         this.viewportSubscription = area.viewportDirtyEvents().subscribe(ignored ->
@@ -61,17 +64,23 @@ final class InlayHintsController {
             rendered.add(new RenderedHint(renderPosition(hint, text), label));
             layer.getChildren().add(label);
         }
+        publishAnchors();
         layoutHints();
     }
 
     void clear() {
         rendered.clear();
         layer.getChildren().clear();
+        publishAnchors();
     }
 
     void dispose() {
         viewportSubscription.unsubscribe();
         clear();
+    }
+
+    void refreshLayout() {
+        layoutHints();
     }
 
     private void layoutHints() {
@@ -175,11 +184,18 @@ final class InlayHintsController {
         double shift = 0.0;
         for (LineGap gap : gaps) {
             int ch = gap.character();
-            if (ch <= start || (ch > start && ch < end)) {
+            if (ch <= start) {
                 shift += gap.width();
             }
         }
         return shift;
+    }
+
+    private void publishAnchors() {
+        if (anchorListener == null) return;
+        anchorListener.accept(rendered.stream()
+                .map(RenderedHint::position)
+                .toList());
     }
 
     private List<Node> paragraphTextNodes() {
