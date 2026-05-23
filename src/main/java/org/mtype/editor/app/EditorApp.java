@@ -27,6 +27,7 @@ import org.mtype.editor.process.BuildController;
 import org.mtype.editor.process.RunController;
 import org.mtype.editor.ui.dialogs.NewProjectDialog;
 import org.mtype.editor.ui.dialogs.NewWorkspaceDialog;
+import org.mtype.editor.ui.chrome.WindowMaximizer;
 import org.mtype.editor.ui.chrome.WindowResizer;
 import org.mtype.editor.ui.chrome.WindowTitleBar;
 import org.mtype.editor.ui.editor.EditorTabPane;
@@ -147,7 +148,7 @@ public class EditorApp extends Application {
         stage.setScene(scene);
         stage.setOnCloseRequest(_ -> shutdown());
         WindowResizer.install(stage, scene);
-        stage.setMaximized(true);
+        WindowMaximizer.maximize(stage);
         stage.show();
     }
 

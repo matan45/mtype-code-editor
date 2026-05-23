@@ -48,7 +48,7 @@ public final class WindowResizer {
     }
 
     private void onMoved(MouseEvent e) {
-        if (stage.isMaximized() || stage.isFullScreen()) {
+        if (WindowMaximizer.isMaximized(stage) || stage.isFullScreen()) {
             resetCursorIfIdle();
             return;
         }
@@ -62,7 +62,7 @@ public final class WindowResizer {
 
     private void onPressed(MouseEvent e) {
         if (e.getButton() != MouseButton.PRIMARY) return;
-        if (stage.isMaximized() || stage.isFullScreen()) return;
+        if (WindowMaximizer.isMaximized(stage) || stage.isFullScreen()) return;
         Edge edge = detectEdge(e.getSceneX(), e.getSceneY());
         if (edge == null) return;
         active = edge;

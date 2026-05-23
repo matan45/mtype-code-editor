@@ -86,7 +86,7 @@ public class WindowTitleBar extends HBox {
         StackPane minBtn = ChromeCircles.minimize("Minimize",
                 () -> stage.setIconified(true));
         StackPane maxBtn = ChromeCircles.maximize("Maximize",
-                () -> stage.setMaximized(!stage.isMaximized()));
+                () -> WindowMaximizer.toggle(stage));
         StackPane closeBtn = ChromeCircles.close("Close",
                 () -> stage.fireEvent(new WindowEvent(stage, WindowEvent.WINDOW_CLOSE_REQUEST)));
 
@@ -132,10 +132,10 @@ public class WindowTitleBar extends HBox {
             // If the user starts dragging a maximized window, restore it
             // first and align the cursor to roughly the same relative
             // position in the restored window.
-            if (stage.isMaximized()) {
+            if (WindowMaximizer.isMaximized(stage)) {
                 double prevW = stage.getWidth();
                 double ratio = prevW > 0 ? dragOffsetX / prevW : 0.5;
-                stage.setMaximized(false);
+                WindowMaximizer.restore(stage);
                 double newW = stage.getWidth();
                 dragOffsetX = ratio * newW;
                 dragOffsetY = Math.min(dragOffsetY, getHeight());
@@ -149,7 +149,7 @@ public class WindowTitleBar extends HBox {
         setOnMouseClicked(e -> {
             if (e.getButton() == MouseButton.PRIMARY && e.getClickCount() == 2
                     && isDragSurface(e.getTarget())) {
-                stage.setMaximized(!stage.isMaximized());
+                WindowMaximizer.toggle(stage);
             }
         });
     }
