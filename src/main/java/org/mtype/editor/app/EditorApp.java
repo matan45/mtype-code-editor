@@ -72,6 +72,7 @@ public class EditorApp extends Application {
 
         OutputPane output = new OutputPane();
         ctx.setOutputPane(output);
+        applyPersistedBottomTabVisibility(output);
 
         EditorTabPane tabPane = new EditorTabPane(ctx);
         ctx.setTabPane(tabPane);
@@ -265,7 +266,10 @@ public class EditorApp extends Application {
         for (String name : outputForMenu.tabNames()) {
             CheckMenuItem item = new CheckMenuItem(name);
             item.setSelected(outputForMenu.isTabVisible(name));
-            item.setOnAction(e -> outputForMenu.setTabVisible(name, item.isSelected()));
+            item.setOnAction(e -> {
+                outputForMenu.setTabVisible(name, item.isSelected());
+                persistBottomTabVisibility(name, item.isSelected());
+            });
             bottomTabs.getItems().add(item);
         }
 
@@ -423,6 +427,27 @@ public class EditorApp extends Application {
         filterField.setVisible(false);
         filterField.setManaged(false);
         tree.requestFocus();
+    }
+
+    private void applyPersistedBottomTabVisibility(OutputPane output) {
+        var prefs = ctx.getSettings().view;
+        if (prefs == null || prefs.hiddenBottomTabs == null) return;
+        for (String name : output.tabNames()) {
+            if (prefs.hiddenBottomTabs.contains(name)) output.setTabVisible(name, false);
+        }
+    }
+
+    private void persistBottomTabVisibility(String name, boolean visible) {
+        var settings = ctx.getSettings();
+        if (settings.view == null) settings.view = new org.mtype.editor.workspace.WorkspaceSettings.ViewPrefs();
+        if (settings.view.hiddenBottomTabs == null) settings.view.hiddenBottomTabs = new java.util.LinkedHashSet<>();
+        if (visible) settings.view.hiddenBottomTabs.remove(name);
+        else settings.view.hiddenBottomTabs.add(name);
+        try {
+            SettingsStore.save(settings);
+        } catch (java.io.IOException ex) {
+            ctx.getStatusBar().setMessage("Could not save view prefs: " + ex.getMessage());
+        }
     }
 
     private void toggleBottomPanel() {

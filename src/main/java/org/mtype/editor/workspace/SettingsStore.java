@@ -32,6 +32,8 @@ public final class SettingsStore {
             if (loaded == null) return WorkspaceSettings.defaults();
             if (loaded.toolchain == null) loaded.toolchain = WorkspaceSettings.Toolchain.defaults();
             if (loaded.editor == null) loaded.editor = WorkspaceSettings.EditorPrefs.defaults();
+            if (loaded.view == null) loaded.view = WorkspaceSettings.ViewPrefs.defaults();
+            if (loaded.view.hiddenBottomTabs == null) loaded.view.hiddenBottomTabs = new java.util.LinkedHashSet<>();
             return loaded;
         } catch (IOException e) {
             return WorkspaceSettings.defaults();

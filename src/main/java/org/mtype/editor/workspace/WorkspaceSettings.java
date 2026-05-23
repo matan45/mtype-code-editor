@@ -1,13 +1,18 @@
 package org.mtype.editor.workspace;
 
+import java.util.LinkedHashSet;
+import java.util.Set;
+
 public class WorkspaceSettings {
     public Toolchain toolchain = Toolchain.defaults();
     public EditorPrefs editor = EditorPrefs.defaults();
+    public ViewPrefs view = ViewPrefs.defaults();
 
     public static WorkspaceSettings defaults() {
         WorkspaceSettings s = new WorkspaceSettings();
         s.toolchain = Toolchain.defaults();
         s.editor = EditorPrefs.defaults();
+        s.view = ViewPrefs.defaults();
         return s;
     }
 
@@ -35,6 +40,14 @@ public class WorkspaceSettings {
 
         public static EditorPrefs defaults() {
             return new EditorPrefs();
+        }
+    }
+
+    public static class ViewPrefs {
+        public Set<String> hiddenBottomTabs = new LinkedHashSet<>();
+
+        public static ViewPrefs defaults() {
+            return new ViewPrefs();
         }
     }
 }
