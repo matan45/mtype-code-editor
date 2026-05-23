@@ -25,8 +25,11 @@ import javafx.scene.layout.VBox;
 import javafx.scene.text.Text;
 import javafx.scene.text.TextFlow;
 import javafx.stage.Stage;
+import javafx.stage.StageStyle;
 import javafx.util.Duration;
 import org.mtype.editor.app.AppContext;
+import org.mtype.editor.ui.chrome.WindowResizer;
+import org.mtype.editor.ui.chrome.WindowTitleBar;
 import org.mtype.editor.search.FindInFilesService;
 import org.mtype.editor.search.SearchMatch;
 import org.mtype.editor.search.SearchQuery;
@@ -67,7 +70,13 @@ public class FindInFilesWindow {
         BorderPane root = new BorderPane();
         root.getStyleClass().addAll("mt-dialog", "mt-find-in-files");
 
-        root.setTop(buildTop());
+        stage.initStyle(StageStyle.UNDECORATED);
+        stage.initOwner(owner);
+        stage.setTitle("Find in Files");
+        WindowTitleBar titleBar = new WindowTitleBar(stage, null);
+
+        VBox topStack = new VBox(titleBar, buildTop());
+        root.setTop(topStack);
         root.setCenter(buildCenter());
         root.setBottom(buildStatusBar());
 
@@ -79,9 +88,8 @@ public class FindInFilesWindow {
                 new KeyCodeCombination(KeyCode.ESCAPE),
                 this::hide);
 
-        stage.initOwner(owner);
-        stage.setTitle("Find in Files");
         stage.setScene(scene);
+        WindowResizer.install(stage, scene);
         stage.setOnCloseRequest(e -> { e.consume(); hide(); });
 
         wireListeners();

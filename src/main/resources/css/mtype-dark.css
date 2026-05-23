@@ -1403,36 +1403,29 @@
     -fx-background-color: #2d333b;
 }
 
-.mt-title-bar-button {
+/* Chrome circles are drawn from shape primitives (see ChromeCircles.java)
+ * so styling lives in Java, not CSS. The style class is kept here only as
+ * a hook for drag-surface detection. */
+.mt-chrome-circle {
     -fx-background-color: transparent;
-    -fx-background-radius: 0;
-    -fx-border-width: 0;
-    -fx-padding: 0;
 }
 
-.mt-title-bar-button:hover {
-    -fx-background-color: #2d333b;
+/* Dialog popups share the chrome background so they read as part of the
+ * same family as the main window. */
+.mt-dialog-title-bar {
+    -fx-background-color: #1f2329;
+    -fx-border-color: transparent transparent #181a1f transparent;
+    -fx-border-width: 0 0 1 0;
 }
 
-.mt-title-bar-button:armed {
-    -fx-background-color: #3a4048;
+.mt-dialog-title {
+    -fx-text-fill: #c8cdd4;
+    -fx-font-size: 12;
 }
 
-.mt-title-bar-close:hover {
-    -fx-background-color: #e81123;
-}
-
-.mt-title-bar-close:armed {
-    -fx-background-color: #c50e1f;
-}
-
-.mt-title-bar-close:hover .mt-title-bar-glyph,
-.mt-title-bar-close:armed .mt-title-bar-glyph {
-    -fx-stroke: #ffffff;
-}
-
-.mt-title-bar-glyph {
-    -fx-stroke: #c8cdd4;
-    -fx-stroke-width: 1;
-    -fx-fill: transparent;
+.mt-dialog-subheader {
+    -fx-background-color: #21252b;
+    -fx-text-fill: #abb2bf;
+    -fx-padding: 8 12 8 12;
+    -fx-font-size: 13;
 }

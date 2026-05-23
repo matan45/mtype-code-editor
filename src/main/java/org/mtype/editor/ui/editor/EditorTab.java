@@ -770,16 +770,12 @@ public class EditorTab extends Tab {
                 return;
             }
             TextInputDialog dlg = new TextInputDialog(placeholder);
-            dlg.initStyle(javafx.stage.StageStyle.UTILITY);
             dlg.initOwner(codeArea.getScene() != null ? codeArea.getScene().getWindow() : null);
             dlg.setTitle("Rename Symbol");
             dlg.setHeaderText("Rename '" + placeholder + "'");
             dlg.setContentText("New name");
-            dlg.setGraphic(null);
+            org.mtype.editor.ui.dialogs.Dialogs.theme(dlg);
             javafx.scene.control.DialogPane pane = dlg.getDialogPane();
-            pane.getStyleClass().add("mt-dialog");
-            var cssUrl = EditorTab.class.getResource("/css/mtype-dark.css");
-            if (cssUrl != null) pane.getStylesheets().add(cssUrl.toExternalForm());
             javafx.scene.control.TextField field = dlg.getEditor();
             field.getStyleClass().add("mt-rename-field");
             javafx.application.Platform.runLater(() -> {

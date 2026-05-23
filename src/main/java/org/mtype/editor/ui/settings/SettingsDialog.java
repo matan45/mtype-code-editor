@@ -23,6 +23,7 @@ import javafx.scene.text.Text;
 import javafx.stage.FileChooser;
 import javafx.stage.StageStyle;
 import javafx.stage.Window;
+import org.mtype.editor.ui.chrome.DialogTitleBar;
 import org.mtype.editor.workspace.WorkspaceSettings;
 
 import java.io.File;
@@ -44,7 +45,7 @@ public class SettingsDialog extends Dialog<WorkspaceSettings> {
 
     public SettingsDialog(Window owner, WorkspaceSettings current) {
         initOwner(owner);
-        initStyle(StageStyle.UTILITY);
+        initStyle(StageStyle.UNDECORATED);
         setTitle("Settings");
         setHeaderText("Editor & Toolchain");
         setGraphic(null);
@@ -53,6 +54,19 @@ public class SettingsDialog extends Dialog<WorkspaceSettings> {
         pane.getStyleClass().add("mt-dialog");
         var cssUrl = SettingsDialog.class.getResource("/css/mtype-dark.css");
         if (cssUrl != null) pane.getStylesheets().add(cssUrl.toExternalForm());
+
+        // Move the headerText into a sub-row under our custom title bar so
+        // setHeader() doesn't drop it.
+        String existingHeader = getHeaderText();
+        setHeaderText(null);
+        DialogTitleBar bar = new DialogTitleBar(this);
+        if (existingHeader != null && !existingHeader.isEmpty()) {
+            Label sub = new Label(existingHeader);
+            sub.getStyleClass().add("mt-dialog-subheader");
+            pane.setHeader(new VBox(bar, sub));
+        } else {
+            pane.setHeader(bar);
+        }
 
         configureFontFamilyCombo();
         prefillFields(current);

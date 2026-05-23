@@ -6,9 +6,12 @@ import javafx.scene.control.Alert.AlertType;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.DialogPane;
+import javafx.scene.control.Label;
 import javafx.scene.control.TextInputDialog;
+import javafx.scene.layout.VBox;
 import javafx.stage.StageStyle;
 import javafx.stage.Window;
+import org.mtype.editor.ui.chrome.DialogTitleBar;
 
 public final class Dialogs {
     private Dialogs() {}
@@ -40,15 +43,34 @@ public final class Dialogs {
     }
 
     /**
-     * Apply the dark theme + remove the default JavaFX ?-graphic header icon.
+     * Apply the dark theme + replace the native window chrome with our
+     * borderless title bar so popups match the editor's main window.
+     *
+     * Alert/Input dialogs that set a headerText keep it visible in a
+     * sub-row below the title bar so we don't lose any explanatory copy.
      */
     public static <T> void theme(Dialog<T> dlg) {
-        try { dlg.initStyle(StageStyle.UTILITY); } catch (IllegalStateException ignored) {}
+        try { dlg.initStyle(StageStyle.UNDECORATED); } catch (IllegalStateException ignored) {}
         dlg.setGraphic(null);
         DialogPane pane = dlg.getDialogPane();
         if (!pane.getStyleClass().contains("mt-dialog")) {
             pane.getStyleClass().add("mt-dialog");
         }
+
+        // setHeader() replaces any headerText layout, so we extract it
+        // first and re-render it below the chrome.
+        String existingHeaderText = pane.getHeaderText();
+        pane.setHeaderText(null);
+        DialogTitleBar bar = new DialogTitleBar(dlg);
+        if (existingHeaderText != null && !existingHeaderText.isEmpty()) {
+            Label sub = new Label(existingHeaderText);
+            sub.getStyleClass().add("mt-dialog-subheader");
+            VBox box = new VBox(bar, sub);
+            pane.setHeader(box);
+        } else {
+            pane.setHeader(bar);
+        }
+
         var cssUrl = Dialogs.class.getResource("/css/mtype-dark.css");
         if (cssUrl != null) {
             String url = cssUrl.toExternalForm();
