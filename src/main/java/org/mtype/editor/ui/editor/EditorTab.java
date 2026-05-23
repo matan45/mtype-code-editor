@@ -15,7 +15,6 @@ import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TextInputDialog;
-import javafx.scene.control.Tooltip;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
@@ -80,7 +79,7 @@ public class EditorTab extends Tab {
     private final AtomicInteger version = new AtomicInteger(1);
     private final ContextMenu completionMenu = new ContextMenu();
     private final ContextMenu referencesMenu = new ContextMenu();
-    private final Tooltip hoverTooltip = new Tooltip();
+    private final HoverPopup hoverPopup = new HoverPopup();
     private final Pane inlayHintsLayer = new Pane();
     private final InlayHintsController inlayHintsController;
     private final Map<Integer, CodeLensLine> codeLensByParagraph = new HashMap<>();
@@ -144,7 +143,7 @@ public class EditorTab extends Tab {
             Point2D pos = e.getScreenPosition();
             requestHover(charIdx, pos);
         });
-        codeArea.addEventHandler(MouseOverTextEvent.MOUSE_OVER_TEXT_END, e -> hoverTooltip.hide());
+        codeArea.addEventHandler(MouseOverTextEvent.MOUSE_OVER_TEXT_END, e -> hoverPopup.hide());
 
         // Ctrl+Click → go to definition
         codeArea.setOnMouseClicked(e -> {
@@ -1071,9 +1070,8 @@ public class EditorTab extends Tab {
         if (ctx.getLspBridge() == null) return;
         TwoDimensional.Position p = codeArea.offsetToPosition(charIdx, TwoDimensional.Bias.Forward);
         ctx.getLspBridge().hover(path, p.getMajor(), p.getMinor()).thenAcceptAsync(content -> {
-            if (content == null || content.isBlank()) { hoverTooltip.hide(); return; }
-            hoverTooltip.setText(content);
-            hoverTooltip.show(codeArea, pos.getX() + 10, pos.getY() + 10);
+            if (content == null || content.isBlank()) { hoverPopup.hide(); return; }
+            hoverPopup.show(codeArea, content, pos.getX() + 10, pos.getY() + 10);
         }, Platform::runLater);
     }
 }

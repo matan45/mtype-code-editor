@@ -58,7 +58,7 @@ final class InlayHintsController {
                 label.getStyleClass().add("mt-inlay-hint-type");
             }
             label.setMouseTransparent(true);
-            rendered.add(new RenderedHint(hint.getPosition(), label));
+            rendered.add(new RenderedHint(renderPosition(hint, text), label));
             layer.getChildren().add(label);
         }
         layoutHints();
@@ -212,6 +212,120 @@ final class InlayHintsController {
         boolean left = Boolean.TRUE.equals(hint.getPaddingLeft());
         boolean right = Boolean.TRUE.equals(hint.getPaddingRight());
         return (left ? " " : "") + text + (right ? " " : "");
+    }
+
+    private Position renderPosition(InlayHint hint, String labelText) {
+        Position p = hint.getPosition();
+        if (!isTypeHint(hint, labelText) || p == null) return p;
+
+        String text = area.getText();
+        int offset;
+        try {
+            offset = Positions.offset(text, p.getLine(), p.getCharacter());
+        } catch (Exception ignored) {
+            return p;
+        }
+
+        if (offset < 0 || offset > text.length()) {
+            return p;
+        }
+
+        Position bareLambdaPosition = bareLambdaParamEndOnLine(text, offset);
+        if (bareLambdaPosition != null) {
+            return bareLambdaPosition;
+        }
+
+        if (offset == text.length() || !isIdentifierChar(text.charAt(offset))) {
+            int next = skipHorizontalWhitespace(text, offset);
+            if (next >= text.length() || !isIdentifierChar(text.charAt(next))) {
+                return p;
+            }
+            int candidateEnd = identifierEnd(text, next);
+            int afterCandidate = skipHorizontalWhitespace(text, candidateEnd);
+            if (afterCandidate + 1 >= text.length()
+                    || text.charAt(afterCandidate) != '-'
+                    || text.charAt(afterCandidate + 1) != '>') {
+                return p;
+            }
+            return positionAtOffset(text, candidateEnd);
+        }
+
+        return positionAtOffset(text, identifierEnd(text, offset));
+    }
+
+    private static Position bareLambdaParamEndOnLine(String text, int offset) {
+        int safeOffset = Math.max(0, Math.min(offset, text.length()));
+        int lineStart = text.lastIndexOf('\n', Math.max(0, safeOffset - 1)) + 1;
+        int lineEnd = text.indexOf('\n', safeOffset);
+        if (lineEnd < 0) lineEnd = text.length();
+
+        int arrow = text.indexOf("->", lineStart);
+        while (arrow >= 0 && arrow < lineEnd) {
+            int beforeArrow = skipHorizontalWhitespaceBackward(text, arrow - 1, lineStart);
+            if (beforeArrow >= lineStart && isIdentifierChar(text.charAt(beforeArrow))) {
+                int idEnd = beforeArrow + 1;
+                int idStart = beforeArrow;
+                while (idStart > lineStart && isIdentifierChar(text.charAt(idStart - 1))) {
+                    idStart--;
+                }
+                if (safeOffset <= idEnd) {
+                    return positionAtOffset(text, idEnd);
+                }
+            }
+            arrow = text.indexOf("->", arrow + 2);
+        }
+        return null;
+    }
+
+    private static int skipHorizontalWhitespaceBackward(String text, int offset, int minInclusive) {
+        int i = Math.min(offset, text.length() - 1);
+        while (i >= minInclusive) {
+            char c = text.charAt(i);
+            if (c != ' ' && c != '\t') break;
+            i--;
+        }
+        return i;
+    }
+
+    private static int skipHorizontalWhitespace(String text, int offset) {
+        int i = Math.max(0, Math.min(offset, text.length()));
+        while (i < text.length()) {
+            char c = text.charAt(i);
+            if (c != ' ' && c != '\t') break;
+            i++;
+        }
+        return i;
+    }
+
+    private static int identifierEnd(String text, int offset) {
+        int end = offset;
+        while (end < text.length() && isIdentifierChar(text.charAt(end))) {
+            end++;
+        }
+        return end;
+    }
+
+    private static boolean isTypeHint(InlayHint hint, String labelText) {
+        if (hint.getKind() == InlayHintKind.Type) return true;
+        return labelText != null && labelText.trim().startsWith(":");
+    }
+
+    private static boolean isIdentifierChar(char c) {
+        return Character.isLetterOrDigit(c) || c == '_';
+    }
+
+    private static Position positionAtOffset(String text, int offset) {
+        int safeOffset = Math.max(0, Math.min(offset, text.length()));
+        int line = 0;
+        int lineStart = 0;
+        for (int i = 0; i < safeOffset; i++) {
+            char c = text.charAt(i);
+            if (c == '\n') {
+                line++;
+                lineStart = i + 1;
+            }
+        }
+        return new Position(line, safeOffset - lineStart);
     }
 
     private record RenderedHint(Position position, Label label) {}

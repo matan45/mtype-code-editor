@@ -345,17 +345,37 @@ public class LspBridge {
     private static String renderHover(Hover h) {
         if (h == null || h.getContents() == null) return "";
         Either<List<Either<String, MarkedString>>, MarkupContent> contents = h.getContents();
-        if (contents.isRight() && contents.getRight() != null) return contents.getRight().getValue();
-        if (contents.isLeft() && contents.getLeft() != null) {
+        String raw;
+        if (contents.isRight() && contents.getRight() != null) {
+            raw = contents.getRight().getValue();
+        } else if (contents.isLeft() && contents.getLeft() != null) {
             StringBuilder sb = new StringBuilder();
             for (Either<String, MarkedString> e : contents.getLeft()) {
                 if (sb.length() > 0) sb.append("\n");
                 if (e.isLeft()) sb.append(e.getLeft());
                 else if (e.isRight()) sb.append(e.getRight().getValue());
             }
-            return sb.toString();
+            raw = sb.toString();
+        } else {
+            return "";
         }
-        return "";
+        return stripMarkdownFences(raw);
+    }
+
+    // Strip ```lang … ``` fences so JavaFX Tooltip (plain text only) doesn't
+    // show literal backticks. Drops lines that are exactly a fence marker;
+    // keeps everything inside.
+    private static String stripMarkdownFences(String s) {
+        if (s == null || s.isEmpty()) return s;
+        String[] lines = s.split("\\r?\\n", -1);
+        StringBuilder out = new StringBuilder();
+        for (String line : lines) {
+            String t = line.stripLeading();
+            if (t.startsWith("```")) continue;
+            if (out.length() > 0) out.append('\n');
+            out.append(line);
+        }
+        return out.toString().strip();
     }
 
     /* ============================== formatting ============================== */

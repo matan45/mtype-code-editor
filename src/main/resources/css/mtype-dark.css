@@ -1032,13 +1032,52 @@
    Tooltips (hover info)
    =========================================================== */
 .tooltip {
-    -fx-background-color: #21252b;
-    -fx-text-fill: #abb2bf;
-    -fx-border-color: #181a1f;
+    -fx-background-color: #1c1f25;
+    -fx-background-radius: 4;
+    -fx-text-fill: #d7dae0;
+    -fx-border-color: #3e4451;
     -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-padding: 7 11 7 11;
     -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
     -fx-font-size: 12;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.55), 10, 0.25, 0, 3);
+    -fx-wrap-text: false;
 }
+
+/* ===========================================================
+   Hover popup (LSP textDocument/hover) — syntax-highlighted
+   =========================================================== */
+.hover-popup {
+    -fx-background-color: #1c1f25;
+    -fx-background-radius: 4;
+    -fx-border-color: #3e4451;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-padding: 8 12 8 12;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.55), 10, 0.25, 0, 3);
+}
+.hover-popup-content {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 12;
+    -fx-line-spacing: 2;
+}
+.hover-popup .text                 { -fx-fill: #d7dae0; }
+.hover-popup .text.mt-comment      { -fx-fill: #5c6370; -fx-font-style: italic; }
+.hover-popup .text.mt-string       { -fx-fill: #98c379; }
+.hover-popup .text.mt-string-escape{ -fx-fill: #56b6c2; }
+.hover-popup .text.mt-keyword      { -fx-fill: #c678dd; }
+.hover-popup .text.mt-modifier     { -fx-fill: #c678dd; -fx-font-style: italic; }
+.hover-popup .text.mt-primitive    { -fx-fill: #e5c07b; }
+.hover-popup .text.mt-type         { -fx-fill: #e5c07b; }
+.hover-popup .text.mt-number       { -fx-fill: #d19a66; }
+.hover-popup .text.mt-constant     { -fx-fill: #d19a66; }
+.hover-popup .text.mt-function     { -fx-fill: #61afef; }
+.hover-popup .text.mt-member       { -fx-fill: #e06c75; }
+.hover-popup .text.mt-bracket      { -fx-fill: #56b6c2; }
+.hover-popup .text.mt-operator     { -fx-fill: #56b6c2; }
+.hover-popup .text.mt-punct        { -fx-fill: #abb2bf; }
+.hover-popup .text.mt-annotation   { -fx-fill: #e5c07b; -fx-font-weight: bold; }
 
 /* ===========================================================
    Git panel — commit row + hover actions + branch chip
