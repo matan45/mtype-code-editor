@@ -20,12 +20,15 @@ import javafx.scene.shape.SVGPath;
 import javafx.scene.text.Font;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
+import javafx.stage.StageStyle;
 import org.mtype.editor.git.GitService;
 import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.process.BuildController;
 import org.mtype.editor.process.RunController;
 import org.mtype.editor.ui.dialogs.NewProjectDialog;
 import org.mtype.editor.ui.dialogs.NewWorkspaceDialog;
+import org.mtype.editor.ui.chrome.WindowResizer;
+import org.mtype.editor.ui.chrome.WindowTitleBar;
 import org.mtype.editor.ui.editor.EditorTabPane;
 import org.mtype.editor.ui.git.GitChangesView;
 import org.mtype.editor.ui.output.OutputPane;
@@ -108,9 +111,8 @@ public class EditorApp extends Application {
         ToolBar toolbar = new ToolBar(runBtn, stopBtn, buildBtn, stopBuildBtn);
 
         MenuBar menuBar = buildMenuBar();
-        BorderPane topBar = new BorderPane();
-        topBar.setTop(menuBar);
-        topBar.setCenter(toolbar);
+        WindowTitleBar titleBar = new WindowTitleBar(stage, menuBar);
+        VBox topBar = new VBox(titleBar, toolbar);
 
         SplitPane verticalSplit = new SplitPane(tabPane, output);
         verticalSplit.setOrientation(Orientation.VERTICAL);
@@ -137,9 +139,11 @@ public class EditorApp extends Application {
                 new KeyCodeCombination(KeyCode.S, KeyCombination.SHORTCUT_DOWN),
                 tabPane::saveActive);
 
+        stage.initStyle(StageStyle.UNDECORATED);
         stage.setTitle("mType Editor");
         stage.setScene(scene);
         stage.setOnCloseRequest(_ -> shutdown());
+        WindowResizer.install(stage, scene);
         stage.setMaximized(true);
         stage.show();
     }

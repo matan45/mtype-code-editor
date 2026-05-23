@@ -1370,3 +1370,69 @@
     -fx-font-size: 11;
     -fx-padding: 1 6 1 6;
 }
+
+/* ===========================================================
+   Custom window chrome (StageStyle.UNDECORATED title bar)
+   =========================================================== */
+
+.mt-title-bar {
+    -fx-background-color: #1f2329;
+    -fx-border-color: transparent transparent #181a1f transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.mt-title-bar-title {
+    -fx-text-fill: #9aa1ab;
+    -fx-font-size: 12;
+}
+
+/* MenuBar embedded directly in the title bar — strip its own padding
+ * and background so it blends with the chrome row. */
+.mt-title-bar-menus {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+.mt-title-bar-menus > .menu > .label {
+    -fx-padding: 6 10 6 10;
+    -fx-text-fill: #c8cdd4;
+}
+
+.mt-title-bar-menus > .menu:hover,
+.mt-title-bar-menus > .menu:showing {
+    -fx-background-color: #2d333b;
+}
+
+.mt-title-bar-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 0;
+    -fx-border-width: 0;
+    -fx-padding: 0;
+}
+
+.mt-title-bar-button:hover {
+    -fx-background-color: #2d333b;
+}
+
+.mt-title-bar-button:armed {
+    -fx-background-color: #3a4048;
+}
+
+.mt-title-bar-close:hover {
+    -fx-background-color: #e81123;
+}
+
+.mt-title-bar-close:armed {
+    -fx-background-color: #c50e1f;
+}
+
+.mt-title-bar-close:hover .mt-title-bar-glyph,
+.mt-title-bar-close:armed .mt-title-bar-glyph {
+    -fx-stroke: #ffffff;
+}
+
+.mt-title-bar-glyph {
+    -fx-stroke: #c8cdd4;
+    -fx-stroke-width: 1;
+    -fx-fill: transparent;
+}
