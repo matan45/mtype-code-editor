@@ -2,6 +2,8 @@ package org.mtype.editor.ui.chrome;
 
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
+import javafx.scene.control.Label;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
@@ -30,7 +32,22 @@ public class WindowTitleBar extends HBox {
     private double dragOffsetY;
     private boolean dragging;
 
+    /** Main-window mode: logo + inline menu bar + min/max/close. */
     public WindowTitleBar(Stage stage, MenuBar menuBar) {
+        this(stage, menuBar, /*leadingLabel=*/null);
+    }
+
+    /**
+     * Auxiliary-window mode: a plain title label on the left (no logo,
+     * no menu) bound to the stage title — matches the look of our dialog
+     * popups (Switch Branch etc.) so the Find in Files window doesn't
+     * read as the main editor at a glance.
+     */
+    public WindowTitleBar(Stage stage) {
+        this(stage, /*menuBar=*/null, /*leadingLabel=*/buildTitleLabel(stage));
+    }
+
+    private WindowTitleBar(Stage stage, MenuBar menuBar, Label leadingLabel) {
         this.stage = stage;
         getStyleClass().add("mt-title-bar");
         setAlignment(Pos.CENTER_LEFT);
@@ -38,19 +55,26 @@ public class WindowTitleBar extends HBox {
         setPrefHeight(30);
         setMaxHeight(30);
         setFillHeight(false);
-        setPadding(new Insets(0, 0, 0, 8));
+        setPadding(new Insets(0, 0, 0, 10));
 
-        ImageView logo = loadLogo();
-        logo.getStyleClass().add("mt-title-bar-logo");
-        Tooltip logoTooltip = new Tooltip();
-        logoTooltip.textProperty().bind(stage.titleProperty());
-        Tooltip.install(logo, logoTooltip);
-        HBox.setMargin(logo, new Insets(0, 10, 0, 4));
+        // Choose the leading node: a Label for auxiliary windows, the
+        // bundled mType logo (cropped to the m-glyph) for the main window.
+        Node leading;
+        if (leadingLabel != null) {
+            leading = leadingLabel;
+        } else {
+            ImageView logo = loadLogo();
+            logo.getStyleClass().add("mt-title-bar-logo");
+            Tooltip logoTooltip = new Tooltip();
+            logoTooltip.textProperty().bind(stage.titleProperty());
+            Tooltip.install(logo, logoTooltip);
+            HBox.setMargin(logo, new Insets(0, 10, 0, 0));
+            leading = logo;
+        }
 
         // MenuBar default minHeight/prefHeight are sized for the OS menu; in
         // an inline title bar we want it flush with the chrome height so the
-        // hover background doesn't visibly overhang. May be null for
-        // auxiliary windows (Find in Files etc.) that have no menus.
+        // hover background doesn't visibly overhang.
         if (menuBar != null) {
             menuBar.getStyleClass().add("mt-title-bar-menus");
             menuBar.setMinHeight(USE_PREF_SIZE);
@@ -72,12 +96,19 @@ public class WindowTitleBar extends HBox {
         HBox.setMargin(closeBtn, new Insets(0, 12, 0, 0));
 
         if (menuBar != null) {
-            getChildren().addAll(logo, menuBar, spacer, minBtn, maxBtn, closeBtn);
+            getChildren().addAll(leading, menuBar, spacer, minBtn, maxBtn, closeBtn);
         } else {
-            getChildren().addAll(logo, spacer, minBtn, maxBtn, closeBtn);
+            getChildren().addAll(leading, spacer, minBtn, maxBtn, closeBtn);
         }
 
         installDragHandlers();
+    }
+
+    private static Label buildTitleLabel(Stage stage) {
+        Label label = new Label();
+        label.textProperty().bind(stage.titleProperty());
+        label.getStyleClass().add("mt-dialog-title");
+        return label;
     }
 
     /**

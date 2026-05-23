@@ -72,8 +72,8 @@ public class FindInFilesWindow {
 
         stage.initStyle(StageStyle.UNDECORATED);
         stage.initOwner(owner);
-        stage.setTitle("Find in Files");
-        WindowTitleBar titleBar = new WindowTitleBar(stage, null);
+        stage.setTitle("Search");
+        WindowTitleBar titleBar = new WindowTitleBar(stage);
 
         VBox topStack = new VBox(titleBar, buildTop());
         root.setTop(topStack);
