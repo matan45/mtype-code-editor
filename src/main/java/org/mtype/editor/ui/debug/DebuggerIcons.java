@@ -89,6 +89,17 @@ public final class DebuggerIcons {
         return wrap(shaft, head, dot);
     }
 
+    /** Hammer for Build. */
+    public static Node buildIcon() {
+        SVGPath hammer = new SVGPath();
+        hammer.setContent("M3.2 13.7 L1.7 12.2 L8.6 5.3 L10.1 6.8 Z "
+                + "M7.2 2.8 L8.5 1.5 L14.4 5.2 L12.6 7.0 L10.8 5.2 L9.4 6.6 L7.9 5.1 L9.3 3.7 Z");
+        hammer.getStyleClass().addAll("mt-debug-icon-fill", "mt-build-icon");
+        Group g = wrap(hammer);
+        g.getStyleClass().add("mt-build-graphic");
+        return g;
+    }
+
     /** Circular arrow for Restart. */
     public static Node restartIcon() {
         SVGPath arc = new SVGPath();

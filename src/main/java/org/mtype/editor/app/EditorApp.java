@@ -122,8 +122,9 @@ public class EditorApp extends Application {
         PackageController packageController = new PackageController(ctx);
         ctx.setPackageController(packageController);
 
-        Button runBtn = new Button("Run");
-        Button stopBtn = new Button("Stop");
+        Button runBtn = toolbarIconButton(DebuggerIcons.playIcon(), "Run");
+        runBtn.getStyleClass().add("mt-run-button");
+        Button stopBtn = toolbarIconButton(DebuggerIcons.stopIcon(), "Stop");
         runBtn.disableProperty().bind(runController.runningProperty());
         stopBtn.disableProperty().bind(runController.runningProperty().not());
         runBtn.setOnAction(_ -> {
@@ -132,15 +133,13 @@ public class EditorApp extends Application {
         });
         stopBtn.setOnAction(_ -> runController.stop());
 
-        Button buildBtn = new Button("Build");
-        Button stopBuildBtn = new Button("Stop Build");
+        Button buildBtn = toolbarIconButton(DebuggerIcons.buildIcon(), "Build");
+        buildBtn.getStyleClass().add("mt-build-button");
         buildBtn.disableProperty().bind(
                 buildController.buildingProperty().or(ctx.hasProjectFileProperty().not()));
-        stopBuildBtn.disableProperty().bind(buildController.buildingProperty().not());
         buildBtn.setOnAction(_ -> buildController.build());
-        stopBuildBtn.setOnAction(_ -> buildController.stop());
 
-        ToolBar toolbar = new ToolBar(runBtn, stopBtn, buildBtn, stopBuildBtn);
+        ToolBar toolbar = new ToolBar(runBtn, stopBtn, buildBtn);
 
         MenuBar menuBar = buildMenuBar();
         WindowTitleBar titleBar = new WindowTitleBar(stage, menuBar);
@@ -585,6 +584,14 @@ public class EditorApp extends Application {
         sidePanel.setMinWidth(220);
         sidePanel.setPrefWidth(280);
         return sidePanel;
+    }
+
+    private Button toolbarIconButton(Node graphic, String tooltip) {
+        Button b = new Button();
+        b.setGraphic(graphic);
+        b.setTooltip(new Tooltip(tooltip));
+        b.getStyleClass().add("mt-toolbar-icon-button");
+        return b;
     }
 
     private ToggleButton activityButton(String tooltip, Node graphic) {
