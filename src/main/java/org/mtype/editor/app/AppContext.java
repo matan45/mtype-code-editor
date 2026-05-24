@@ -9,6 +9,7 @@ import org.mtype.editor.git.GitService;
 import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.process.BuildController;
 import org.mtype.editor.process.RunController;
+import org.mtype.editor.terminal.TerminalController;
 import org.mtype.editor.ui.debug.DebuggerPanel;
 import org.mtype.editor.ui.editor.EditorTabPane;
 import org.mtype.editor.ui.git.GitChangesView;
@@ -27,6 +28,7 @@ public class AppContext {
     private LspBridge lspBridge;
     private RunController runController;
     private BuildController buildController;
+    private TerminalController terminalController;
     private EditorTabPane tabPane;
     private OutputPane outputPane;
     private StatusBar statusBar;
@@ -47,6 +49,7 @@ public class AppContext {
     public LspBridge getLspBridge() { return lspBridge; }
     public RunController getRunController() { return runController; }
     public BuildController getBuildController() { return buildController; }
+    public TerminalController getTerminalController() { return terminalController; }
     public EditorTabPane getTabPane() { return tabPane; }
     public OutputPane getOutputPane() { return outputPane; }
     public StatusBar getStatusBar() { return statusBar; }
@@ -66,6 +69,7 @@ public class AppContext {
     public void setLspBridge(LspBridge b) { this.lspBridge = b; }
     public void setRunController(RunController r) { this.runController = r; }
     public void setBuildController(BuildController b) { this.buildController = b; }
+    public void setTerminalController(TerminalController t) { this.terminalController = t; }
     public void setTabPane(EditorTabPane p) { this.tabPane = p; }
     public void setOutputPane(OutputPane o) { this.outputPane = o; }
     public void setStatusBar(StatusBar s) { this.statusBar = s; }

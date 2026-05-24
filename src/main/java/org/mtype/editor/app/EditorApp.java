@@ -28,6 +28,7 @@ import org.mtype.editor.git.GitService;
 import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.process.BuildController;
 import org.mtype.editor.process.RunController;
+import org.mtype.editor.terminal.TerminalController;
 import org.mtype.editor.ui.debug.DebuggerIcons;
 import org.mtype.editor.ui.debug.DebuggerPanel;
 import org.mtype.editor.ui.dialogs.NewProjectDialog;
@@ -69,6 +70,8 @@ public class EditorApp extends Application {
 
         OutputPane output = new OutputPane();
         ctx.setOutputPane(output);
+        TerminalController terminalController = new TerminalController(ctx);
+        ctx.setTerminalController(terminalController);
         applyPersistedBottomTabVisibility(output);
 
         EditorTabPane tabPane = new EditorTabPane(ctx);
@@ -99,6 +102,7 @@ public class EditorApp extends Application {
         output.attachCallHierarchy(ctx);
         output.attachReferences(ctx);
         output.attachProblems(ctx);
+        output.attachTerminal(ctx);
 
         RunController runController = new RunController(ctx);
         ctx.setRunController(runController);
@@ -320,8 +324,37 @@ public class EditorApp extends Application {
 
         view.getItems().addAll(filterFiles, toggleBottom, new SeparatorMenuItem(), bottomTabs);
 
-        mb.getMenus().addAll(file, code, build, view);
+        Menu terminal = new Menu("Terminal");
+        MenuItem newTerminal = new MenuItem("New Terminal");
+        newTerminal.setAccelerator(new KeyCodeCombination(KeyCode.BACK_QUOTE,
+                KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN));
+        newTerminal.setOnAction(_ -> openNewTerminal());
+
+        MenuItem focusTerminal = new MenuItem("Focus Terminal");
+        focusTerminal.setAccelerator(new KeyCodeCombination(KeyCode.BACK_QUOTE,
+                KeyCombination.SHORTCUT_DOWN));
+        focusTerminal.setOnAction(_ -> focusTerminal());
+
+        terminal.getItems().addAll(newTerminal, focusTerminal);
+
+        mb.getMenus().addAll(file, code, build, view, terminal);
         return mb;
+    }
+
+    private void openNewTerminal() {
+        ensureBottomPanelVisible();
+        OutputPane output = ctx.getOutputPane();
+        output.setTabVisible("Terminal", true);
+        persistBottomTabVisibility("Terminal", true);
+        output.newTerminal();
+    }
+
+    private void focusTerminal() {
+        ensureBottomPanelVisible();
+        OutputPane output = ctx.getOutputPane();
+        output.setTabVisible("Terminal", true);
+        persistBottomTabVisibility("Terminal", true);
+        output.focusTerminal();
     }
 
     private void openFindInFiles() {
@@ -523,6 +556,14 @@ public class EditorApp extends Application {
         }
     }
 
+    private void ensureBottomPanelVisible() {
+        if (verticalSplit == null || outputPane == null) return;
+        if (!verticalSplit.getItems().contains(outputPane)) {
+            verticalSplit.getItems().add(outputPane);
+            verticalSplit.setDividerPositions(lastBottomDivider);
+        }
+    }
+
     private void toggleExplorerFilter() {
         if (explorerFilterField == null) return;
         // Make sure the Explorer panel is showing.
@@ -588,6 +629,7 @@ public class EditorApp extends Application {
         try { if (ctx.getDebuggerBridge() != null) ctx.getDebuggerBridge().stop(); } catch (Exception ignored) {}
         try { if (ctx.getRunController() != null) ctx.getRunController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getBuildController() != null) ctx.getBuildController().stop(); } catch (Exception ignored) {}
+        try { if (ctx.getTerminalController() != null) ctx.getTerminalController().shutdownAll(); } catch (Exception ignored) {}
         try { if (ctx.getLspBridge() != null) ctx.getLspBridge().stop(); } catch (Exception ignored) {}
         try { if (ctx.getFindInFilesWindow() != null) ctx.getFindInFilesWindow().cancelSearch(); } catch (Exception ignored) {}
     }

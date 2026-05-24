@@ -251,6 +251,36 @@
     -fx-background-color: #3e4451;
 }
 
+.mt-terminal-pane,
+.mt-terminal-view,
+.mt-terminal-tabs {
+    -fx-background-color: #282c34;
+}
+.mt-terminal-tabs > .tab-header-background {
+    -fx-background-color: #21252b;
+}
+.mt-terminal-output {
+    -fx-font-size: 12;
+}
+.mt-terminal-input {
+    -fx-background-color: #1c1f25;
+    -fx-text-fill: #d7dae0;
+    -fx-prompt-text-fill: #636d83;
+    -fx-border-color: #181a1f transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+    -fx-padding: 6 8 6 8;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12;
+    -fx-caret-color: #528bff;
+    -fx-highlight-fill: #3e4451;
+    -fx-highlight-text-fill: #ffffff;
+}
+.mt-terminal-input:focused {
+    -fx-border-color: #528bff transparent transparent transparent;
+}
+
 /* ----- Status bar ----- */
 .mt-status-bar {
     -fx-background-color: #21252b;
