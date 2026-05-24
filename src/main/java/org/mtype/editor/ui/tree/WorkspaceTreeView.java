@@ -158,6 +158,36 @@ public class WorkspaceTreeView extends TreeView<Path> {
         this.onFilterReset = callback;
     }
 
+    /** Reveal the active editor's file: clear filter, expand ancestors, select, scroll. */
+    public void revealActiveFile() {
+        Path active = ctx.getTabPane() == null ? null : ctx.getTabPane().activePath();
+        if (active == null) {
+            ctx.getStatusBar().setMessage("No file open");
+            return;
+        }
+        // The filtered tree uses a non-lazy root and a different parent chain,
+        // so clear the filter before walking the lazy tree.
+        if (!currentQuery.isEmpty()) {
+            currentQuery = "";
+            filterDebounce.stop();
+            cancelActiveWalk();
+            if (originalRoot != null) setRoot(originalRoot);
+            if (onFilterReset != null) onFilterReset.run();
+        }
+        LazyTreeItem item = findItem(active);
+        if (item == null) {
+            ctx.getStatusBar().setMessage("File not in workspace tree");
+            return;
+        }
+        TreeItem<Path> p = item.getParent();
+        while (p != null) { p.setExpanded(true); p = p.getParent(); }
+        getSelectionModel().clearSelection();
+        getSelectionModel().select(item);
+        int row = getRow(item);
+        if (row >= 0) scrollTo(row);
+        requestFocus();
+    }
+
     private void applyFilter(String query) {
         cancelActiveWalk();
         if (query.isEmpty()) {

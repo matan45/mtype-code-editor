@@ -11,6 +11,7 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
@@ -533,7 +534,15 @@ public class EditorApp extends Application {
         tree.setOnFilterReset(filterField::clear);
         this.explorerFilterField = filterField;
 
-        VBox explorerPane = new VBox(filterField, tree);
+        Button selectOpenedBtn = new Button();
+        selectOpenedBtn.setGraphic(selectOpenedFileIcon());
+        selectOpenedBtn.setTooltip(new Tooltip("Select Opened File"));
+        selectOpenedBtn.getStyleClass().add("mt-explorer-toolbar-button");
+        selectOpenedBtn.setOnAction(_ -> tree.revealActiveFile());
+        HBox explorerToolbar = new HBox(selectOpenedBtn);
+        explorerToolbar.getStyleClass().add("mt-explorer-toolbar");
+
+        VBox explorerPane = new VBox(explorerToolbar, filterField, tree);
         VBox.setVgrow(tree, Priority.ALWAYS);
 
         StackPane content = new StackPane(explorerPane, gitChanges, debuggerPanel);
@@ -658,6 +667,18 @@ public class EditorApp extends Application {
             explorerFilterField.setManaged(true);
             explorerFilterField.requestFocus();
         }
+    }
+
+    private Node selectOpenedFileIcon() {
+        Circle outer = new Circle(8, 8, 6);
+        Circle middle = new Circle(8, 8, 3);
+        Circle center = new Circle(8, 8, 1);
+        outer.getStyleClass().add("mt-activity-icon");
+        middle.getStyleClass().add("mt-activity-icon");
+        center.getStyleClass().add("mt-activity-icon-fill");
+        Group g = new Group(outer, middle, center);
+        g.getStyleClass().add("mt-activity-graphic");
+        return g;
     }
 
     private Node explorerIcon() {
