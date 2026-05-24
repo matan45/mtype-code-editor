@@ -22,6 +22,7 @@ import javafx.scene.input.KeyCombination;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
+import javafx.scene.input.ScrollEvent;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
@@ -77,6 +78,7 @@ public class EditorTab extends Tab {
                 return t;
             });
     private static final double CODE_LENS_LABEL_X = 65;
+    private static final double EDITOR_SCROLL_SENSITIVITY = 1.8;
     private static final String INLAY_HINT_ANCHOR_STYLE = "mt-inlay-hint-anchor";
 
     private final AppContext ctx;
@@ -122,6 +124,7 @@ public class EditorTab extends Tab {
         referencesMenu.getStyleClass().add("mt-references");
 
         VirtualizedScrollPane<CodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
+        installScrollSensitivity();
         StackPane editorStack = new StackPane(scroll, inlayHintsLayer);
         setContent(editorStack);
         inlayHintsController = new InlayHintsController(codeArea, inlayHintsLayer, this::setInlayHintAnchors);
@@ -380,6 +383,28 @@ public class EditorTab extends Tab {
             case Information -> "info";
             case Hint -> "hint";
         };
+    }
+
+    private void installScrollSensitivity() {
+        codeArea.addEventFilter(ScrollEvent.SCROLL, event -> {
+            if (event.isShortcutDown() || event.isInertia()) return;
+
+            double deltaY = event.getDeltaY();
+            double deltaX = event.getDeltaX();
+            if (deltaY == 0 && deltaX == 0) return;
+
+            if (deltaY != 0) {
+                double nextY = codeArea.estimatedScrollYProperty().getValue()
+                        - deltaY * EDITOR_SCROLL_SENSITIVITY;
+                codeArea.estimatedScrollYProperty().setValue(Math.max(0, nextY));
+            }
+            if (deltaX != 0) {
+                double nextX = codeArea.estimatedScrollXProperty().getValue()
+                        - deltaX * EDITOR_SCROLL_SENSITIVITY;
+                codeArea.estimatedScrollXProperty().setValue(Math.max(0, nextX));
+            }
+            event.consume();
+        });
     }
 
     private void scheduleCodeLensRefresh() {
@@ -939,6 +964,10 @@ public class EditorTab extends Tab {
             if (mi.getStyleableNode() != null && mi.getStyleableNode().isFocused()) return mi;
         }
         return completionMenu.getItems().isEmpty() ? null : completionMenu.getItems().get(0);
+    }
+
+    public boolean canClose() {
+        return confirmDiscardIfDirty();
     }
 
     private boolean confirmDiscardIfDirty() {
