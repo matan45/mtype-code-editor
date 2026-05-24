@@ -1,0 +1,105 @@
+name: Build
+
+on:
+  push:
+    branches: [main, mtpm]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: mType-Editor-windows
+            package_glob: target/dist/mType Editor
+          - os: macos-latest
+            artifact_name: mType-Editor-macos
+            package_glob: target/dist/mType Editor.app
+          - os: ubuntu-latest
+            artifact_name: mType-Editor-linux
+            package_glob: target/dist/mType Editor
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Generate macOS .icns
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          mkdir -p icon.iconset
+          src=src/main/resources/icons/mtype-logo.png
+          sips -z 16 16     "$src" --out icon.iconset/icon_16x16.png
+          sips -z 32 32     "$src" --out icon.iconset/icon_16x16@2x.png
+          sips -z 32 32     "$src" --out icon.iconset/icon_32x32.png
+          sips -z 64 64     "$src" --out icon.iconset/icon_32x32@2x.png
+          sips -z 128 128   "$src" --out icon.iconset/icon_128x128.png
+          sips -z 256 256   "$src" --out icon.iconset/icon_128x128@2x.png
+          sips -z 256 256   "$src" --out icon.iconset/icon_256x256.png
+          sips -z 512 512   "$src" --out icon.iconset/icon_256x256@2x.png
+          sips -z 512 512   "$src" --out icon.iconset/icon_512x512.png
+          sips -z 1024 1024 "$src" --out icon.iconset/icon_512x512@2x.png
+          iconutil -c icns icon.iconset -o src/main/resources/icons/mtype-logo.icns
+
+      - name: Build distribution
+        run: mvn -B -Pdist -DskipTests package
+
+      - name: Show dist contents
+        shell: bash
+        run: ls -la target/dist/
+
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/dist/mType Editor" -DestinationPath "target/${{ matrix.artifact_name }}.zip"
+
+      - name: Archive (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd target/dist
+          tar -czf "../${{ matrix.artifact_name }}.tar.gz" "mType Editor.app"
+
+      - name: Archive (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd target/dist
+          tar -czf "../${{ matrix.artifact_name }}.tar.gz" "mType Editor"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: target/${{ matrix.artifact_name }}.*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Attach to release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

@@ -23,6 +23,8 @@
         <javafx-maven-plugin.version>0.0.8</javafx-maven-plugin.version>
         <maven-shade-plugin.version>3.6.0</maven-shade-plugin.version>
         <jpackage-maven-plugin.version>1.6.5</jpackage-maven-plugin.version>
+
+        <dist.icon>${project.basedir}/src/main/resources/icons/mtype-logo.png</dist.icon>
     </properties>
 
     <dependencies>
@@ -166,7 +168,7 @@
                                     <input>${project.build.directory}/jpackage-input</input>
                                     <mainJar>app.jar</mainJar>
                                     <mainClass>org.mtype.editor.app.Launcher</mainClass>
-                                    <icon>${project.basedir}/src/main/resources/icons/mtype-logo.ico</icon>
+                                    <icon>${dist.icon}</icon>
                                     <javaOptions>
                                         <option>-Xmx1g</option>
                                     </javaOptions>
@@ -176,6 +178,36 @@
                     </plugin>
                 </plugins>
             </build>
+        </profile>
+
+        <profile>
+            <id>icon-windows</id>
+            <activation>
+                <os><family>windows</family></os>
+            </activation>
+            <properties>
+                <dist.icon>${project.basedir}/src/main/resources/icons/mtype-logo.ico</dist.icon>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>icon-mac</id>
+            <activation>
+                <os><family>mac</family></os>
+            </activation>
+            <properties>
+                <dist.icon>${project.basedir}/src/main/resources/icons/mtype-logo.icns</dist.icon>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>icon-linux</id>
+            <activation>
+                <os><name>linux</name></os>
+            </activation>
+            <properties>
+                <dist.icon>${project.basedir}/src/main/resources/icons/mtype-logo.png</dist.icon>
+            </properties>
         </profile>
     </profiles>
 
