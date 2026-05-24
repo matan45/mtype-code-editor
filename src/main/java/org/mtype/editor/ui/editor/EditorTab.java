@@ -1408,9 +1408,8 @@ public class EditorTab extends Tab {
             case Enum -> "E";
             case EnumMember -> "e";
             case Method, Function, Constructor -> "ƒ";
-            case Field -> "f";
             case Property -> "p";
-            case Variable -> "v";
+            case Field, Variable -> "v";
             case Constant -> "c";
             case Keyword -> "k";
             case Module -> "m";
