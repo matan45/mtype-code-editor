@@ -76,6 +76,7 @@ public class EditorTab extends Tab {
                 t.setDaemon(true);
                 return t;
             });
+    private static final double CODE_LENS_LABEL_X = 65;
     private static final String INLAY_HINT_ANCHOR_STYLE = "mt-inlay-hint-anchor";
 
     private final AppContext ctx;
@@ -325,7 +326,7 @@ public class EditorTab extends Tab {
         Label title = new Label(lens.title);
         title.getStyleClass().add("mt-code-lens");
         title.setCursor(Cursor.HAND);
-        title.setTranslateX(50);
+        title.setTranslateX(CODE_LENS_LABEL_X);
         title.setOnMouseClicked(e -> {
             showCodeLensReferences(lens, title);
             e.consume();

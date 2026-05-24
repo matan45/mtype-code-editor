@@ -222,12 +222,14 @@ public class OutputPane extends TabPane {
 
     public void appendDebugConsole(String line, String category) {
         if (line == null) return;
-        String prefix = "stderr".equals(category) ? "[err] " : "";
+        boolean stderr = "stderr".equals(category);
+        boolean console = "console".equals(category);
+        String prefix = stderr ? "[err] " : "";
         String text = prefix + line + System.lineSeparator();
         String style;
-        if ("stderr".equals(category)) style = "-fx-fill: #e06c75;";
-        else if ("console".equals(category)) style = "-fx-fill: #9da5b4;";
-        else style = "";
+        if (stderr) style = "-fx-fill: #ff5252; -fx-font-weight: bold;";
+        else if (console) style = "-fx-fill: #7a8290; -fx-font-style: italic;";
+        else style = "-fx-fill: #abb2bf;";
         Platform.runLater(() -> {
             int start = debugConsoleArea.getLength();
             debugConsoleArea.appendText(text);
