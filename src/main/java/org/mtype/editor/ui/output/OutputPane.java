@@ -21,10 +21,12 @@ public class OutputPane extends TabPane {
     private final TextArea lspArea = new TextArea();
     private final InlineCssTextArea compileArea = new InlineCssTextArea();
     private final InlineCssTextArea gitArea = new InlineCssTextArea();
+    private final InlineCssTextArea debugConsoleArea = new InlineCssTextArea();
     private final Tab runTab;
     private final Tab lspTab;
     private final Tab compileTab;
     private final Tab gitTab;
+    private final Tab debugConsoleTab;
     private final Tab callHierarchyTab;
     private final Tab referencesTab;
     private final Tab problemsTab;
@@ -40,6 +42,8 @@ public class OutputPane extends TabPane {
         compileArea.getStyleClass().add("mt-output");
         gitArea.setEditable(false);
         gitArea.getStyleClass().add("mt-output");
+        debugConsoleArea.setEditable(false);
+        debugConsoleArea.getStyleClass().add("mt-output");
 
         runTab = new Tab("Run", runArea);
         runTab.setClosable(false);
@@ -80,6 +84,18 @@ public class OutputPane extends TabPane {
         gitTab = new Tab("Git", gitContent);
         gitTab.setClosable(false);
 
+        Button clearDebugButton = new Button("Clear");
+        clearDebugButton.getStyleClass().add("mt-output-toolbar-button");
+        clearDebugButton.setOnAction(_ -> debugConsoleArea.clear());
+        HBox debugToolbar = new HBox(clearDebugButton);
+        debugToolbar.setAlignment(Pos.CENTER_RIGHT);
+        debugToolbar.setPadding(new Insets(4, 6, 4, 6));
+        debugToolbar.getStyleClass().add("mt-output-toolbar");
+        BorderPane debugContent = new BorderPane(new VirtualizedScrollPane<>(debugConsoleArea));
+        debugContent.setTop(debugToolbar);
+        debugConsoleTab = new Tab("Debug Console", debugContent);
+        debugConsoleTab.setClosable(false);
+
         callHierarchyTab = new Tab("Call Hierarchy");
         callHierarchyTab.setClosable(false);
         referencesTab = new Tab("References");
@@ -87,13 +103,13 @@ public class OutputPane extends TabPane {
         problemsTab = new Tab("Problems");
         problemsTab.setClosable(false);
 
-        getTabs().addAll(problemsTab, runTab, compileTab, lspTab, gitTab, callHierarchyTab, referencesTab);
+        getTabs().addAll(problemsTab, runTab, debugConsoleTab, compileTab, lspTab, gitTab, callHierarchyTab, referencesTab);
         getStyleClass().add("mt-output-pane");
         setTabClosingPolicy(TabClosingPolicy.UNAVAILABLE);
     }
 
     private List<Tab> canonicalOrder() {
-        return List.of(problemsTab, runTab, compileTab, lspTab, gitTab, callHierarchyTab, referencesTab);
+        return List.of(problemsTab, runTab, debugConsoleTab, compileTab, lspTab, gitTab, callHierarchyTab, referencesTab);
     }
 
     private Tab tabByName(String name) {
@@ -104,7 +120,7 @@ public class OutputPane extends TabPane {
     }
 
     public List<String> tabNames() {
-        return List.of("Problems", "Run", "Compile", "LSP Log", "Git", "Call Hierarchy", "References");
+        return List.of("Problems", "Run", "Debug Console", "Compile", "LSP Log", "Git", "Call Hierarchy", "References");
     }
 
     public boolean isTabVisible(String name) {
@@ -202,6 +218,32 @@ public class OutputPane extends TabPane {
             gitArea.moveTo(end);
             gitArea.requestFollowCaret();
         });
+    }
+
+    public void appendDebugConsole(String line, String category) {
+        if (line == null) return;
+        String prefix = "stderr".equals(category) ? "[err] " : "";
+        String text = prefix + line + System.lineSeparator();
+        String style;
+        if ("stderr".equals(category)) style = "-fx-fill: #e06c75;";
+        else if ("console".equals(category)) style = "-fx-fill: #9da5b4;";
+        else style = "";
+        Platform.runLater(() -> {
+            int start = debugConsoleArea.getLength();
+            debugConsoleArea.appendText(text);
+            int end = debugConsoleArea.getLength();
+            debugConsoleArea.setStyle(start, end, style);
+            debugConsoleArea.moveTo(end);
+            debugConsoleArea.requestFollowCaret();
+        });
+    }
+
+    public void clearDebugConsole() {
+        Platform.runLater(debugConsoleArea::clear);
+    }
+
+    public void focusDebugConsole() {
+        Platform.runLater(() -> getSelectionModel().select(debugConsoleTab));
     }
 
     public void clearRun() {

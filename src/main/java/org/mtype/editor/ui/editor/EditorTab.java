@@ -42,6 +42,8 @@ import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
 import org.fxmisc.richtext.model.TwoDimensional;
 import org.mtype.editor.app.AppContext;
+import org.mtype.editor.debug.BreakpointService;
+import org.mtype.editor.debug.DebuggerEventBus;
 import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.lsp.LspEdits;
 import org.mtype.editor.lsp.Positions;
@@ -51,6 +53,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -104,6 +107,7 @@ public class EditorTab extends Tab {
     private boolean suppressDirty = true;
     private List<CompletionItem> currentCompletionItems = Collections.emptyList();
     private SnippetSession activeSnippet;
+    private int executionLine = -1;
 
     public EditorTab(AppContext ctx, Path path) {
         this.ctx = ctx;
@@ -176,6 +180,53 @@ public class EditorTab extends Tab {
 
         Platform.runLater(this::applyHighlightingNow);
         onLspReady();
+        wireDebuggerHooks();
+    }
+
+    private void wireDebuggerHooks() {
+        BreakpointService bs = ctx.getBreakpointService();
+        if (bs != null) {
+            bs.addListener((p, _) -> {
+                if (p == null || !p.equals(path)) return;
+                Platform.runLater(() -> codeArea.setParagraphGraphicFactory(this::paragraphGraphic));
+            });
+        }
+        DebuggerEventBus bus = ctx.getDebuggerEventBus();
+        if (bus != null) {
+            bus.onStopped(e -> {
+                if (e.file() == null || !e.file().equals(path)) {
+                    updateExecutionLine(-1);
+                    return;
+                }
+                updateExecutionLine(e.line());
+                int line0 = e.line();
+                if (line0 >= 0 && line0 < codeArea.getParagraphs().size()) {
+                    codeArea.moveTo(line0, 0);
+                    codeArea.requestFollowCaret();
+                }
+            });
+            bus.onResumed(() -> updateExecutionLine(-1));
+            bus.onTerminated(() -> updateExecutionLine(-1));
+        }
+    }
+
+    private void updateExecutionLine(int newLine) {
+        int old = executionLine;
+        executionLine = newLine;
+        int paragraphCount = codeArea.getParagraphs().size();
+        if (old >= 0 && old < paragraphCount && old != newLine) {
+            codeArea.setParagraphStyle(old,
+                    codeLensParagraphStyles.contains(old)
+                            ? Collections.singletonList("mt-code-lens-paragraph")
+                            : Collections.emptyList());
+        }
+        if (newLine >= 0 && newLine < paragraphCount) {
+            List<String> classes = new ArrayList<>(2);
+            classes.add("mt-execution-line");
+            if (codeLensParagraphStyles.contains(newLine)) classes.add("mt-code-lens-paragraph");
+            codeArea.setParagraphStyle(newLine, classes);
+        }
+        codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
     }
 
     public Path getPath() { return path; }
@@ -293,14 +344,29 @@ public class EditorTab extends Tab {
         Label label = new Label(Integer.toString(paragraphIndex + 1));
         label.getStyleClass().add("lineno");
 
+        javafx.scene.layout.Region breakpoint = new javafx.scene.layout.Region();
+        breakpoint.getStyleClass().add("mt-gutter-breakpoint");
+        BreakpointService bs = ctx.getBreakpointService();
+        boolean isBreakpointOn = bs != null && bs.breakpointsIn(path).contains(paragraphIndex);
+        if (isBreakpointOn) breakpoint.getStyleClass().add("mt-gutter-breakpoint-on");
+        breakpoint.setOnMouseClicked(e -> {
+            if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY && bs != null) {
+                bs.toggle(path, paragraphIndex);
+                e.consume();
+            }
+        });
+
         javafx.scene.layout.Region marker = new javafx.scene.layout.Region();
         marker.getStyleClass().add("mt-gutter-marker");
         org.eclipse.lsp4j.DiagnosticSeverity sev = diagnosticsByLine.get(paragraphIndex);
         if (sev != null) {
             marker.getStyleClass().add("mt-gutter-" + gutterSeverityClass(sev));
         }
+        if (paragraphIndex == executionLine) {
+            marker.getStyleClass().add("mt-gutter-execution-arrow");
+        }
 
-        javafx.scene.layout.HBox row = new javafx.scene.layout.HBox(marker, label);
+        javafx.scene.layout.HBox row = new javafx.scene.layout.HBox(breakpoint, marker, label);
         row.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         row.getStyleClass().add("mt-gutter-row");
         return row;

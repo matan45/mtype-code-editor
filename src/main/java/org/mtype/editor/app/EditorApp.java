@@ -21,10 +21,15 @@ import javafx.scene.text.Font;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
+import org.mtype.editor.debug.BreakpointService;
+import org.mtype.editor.debug.DebuggerBridge;
+import org.mtype.editor.debug.DebuggerEventBus;
 import org.mtype.editor.git.GitService;
 import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.process.BuildController;
 import org.mtype.editor.process.RunController;
+import org.mtype.editor.ui.debug.DebuggerIcons;
+import org.mtype.editor.ui.debug.DebuggerPanel;
 import org.mtype.editor.ui.dialogs.NewProjectDialog;
 import org.mtype.editor.ui.dialogs.NewWorkspaceDialog;
 import org.mtype.editor.ui.chrome.WindowMaximizer;
@@ -81,6 +86,16 @@ public class EditorApp extends Application {
         LspBridge lsp = new LspBridge(ctx);
         ctx.setLspBridge(lsp);
 
+        DebuggerEventBus debugEvents = new DebuggerEventBus();
+        ctx.setDebuggerEventBus(debugEvents);
+        BreakpointService breakpoints = new BreakpointService();
+        ctx.setBreakpointService(breakpoints);
+        DebuggerBridge debugger = new DebuggerBridge(ctx, debugEvents, breakpoints);
+        ctx.setDebuggerBridge(debugger);
+        breakpoints.attachBridge(debugger);
+        DebuggerPanel debuggerPanel = new DebuggerPanel(ctx);
+        ctx.setDebuggerPanel(debuggerPanel);
+
         output.attachCallHierarchy(ctx);
         output.attachReferences(ctx);
         output.attachProblems(ctx);
@@ -121,7 +136,7 @@ public class EditorApp extends Application {
         this.verticalSplit = verticalSplit;
         this.outputPane = output;
 
-        Node sidePanel = buildSidePanel(tree, gitChanges);
+        Node sidePanel = buildSidePanel(tree, gitChanges, debuggerPanel);
 
         SplitPane mainSplit = new SplitPane(sidePanel, verticalSplit);
         mainSplit.setOrientation(Orientation.HORIZONTAL);
@@ -139,6 +154,39 @@ public class EditorApp extends Application {
         scene.getAccelerators().put(
                 new KeyCodeCombination(KeyCode.S, KeyCombination.SHORTCUT_DOWN),
                 tabPane::saveActive);
+
+        DebuggerPanel dp = debuggerPanel;
+        scene.getAccelerators().put(new KeyCodeCombination(KeyCode.F5), dp::onStartOrContinue);
+        scene.getAccelerators().put(
+                new KeyCodeCombination(KeyCode.F5, KeyCombination.SHIFT_DOWN),
+                () -> ctx.getDebuggerBridge().stop());
+        scene.getAccelerators().put(new KeyCodeCombination(KeyCode.F10), () -> {
+            if (ctx.getDebuggerBridge().getState() == DebuggerEventBus.State.PAUSED) {
+                ctx.getDebuggerBridge().stepOver();
+            }
+        });
+        scene.getAccelerators().put(new KeyCodeCombination(KeyCode.F11), () -> {
+            if (ctx.getDebuggerBridge().getState() == DebuggerEventBus.State.PAUSED) {
+                ctx.getDebuggerBridge().stepInto();
+            }
+        });
+        scene.getAccelerators().put(
+                new KeyCodeCombination(KeyCode.F11, KeyCombination.SHIFT_DOWN),
+                () -> {
+                    if (ctx.getDebuggerBridge().getState() == DebuggerEventBus.State.PAUSED) {
+                        ctx.getDebuggerBridge().stepOut();
+                    }
+                });
+        scene.getAccelerators().put(new KeyCodeCombination(KeyCode.F9), () -> {
+            EditorTabPane tp = ctx.getTabPane();
+            if (tp == null) return;
+            var tab = tp.openTabs().stream()
+                    .filter(t -> t.getPath() != null && t.getPath().equals(tp.activePath()))
+                    .findFirst().orElse(null);
+            if (tab == null) return;
+            int line0 = tab.getCodeArea().getCurrentParagraph();
+            ctx.getBreakpointService().toggle(tab.getPath(), line0);
+        });
 
         stage.initStyle(StageStyle.UNDECORATED);
         stage.setTitle("mType Editor");
@@ -356,7 +404,7 @@ public class EditorApp extends Application {
         stage.setTitle("mType Editor - " + root.getFileName());
     }
 
-    private Node buildSidePanel(WorkspaceTreeView tree, GitChangesView gitChanges) {
+    private Node buildSidePanel(WorkspaceTreeView tree, GitChangesView gitChanges, DebuggerPanel debuggerPanel) {
         TextField filterField = new TextField();
         filterField.setPromptText("Filter files...");
         filterField.getStyleClass().add("mt-tree-filter");
@@ -375,15 +423,19 @@ public class EditorApp extends Application {
         VBox explorerPane = new VBox(filterField, tree);
         VBox.setVgrow(tree, Priority.ALWAYS);
 
-        StackPane content = new StackPane(explorerPane, gitChanges);
+        StackPane content = new StackPane(explorerPane, gitChanges, debuggerPanel);
         gitChanges.setVisible(false);
         gitChanges.setManaged(false);
+        debuggerPanel.setVisible(false);
+        debuggerPanel.setManaged(false);
 
         ToggleGroup group = new ToggleGroup();
         ToggleButton explorerButton = activityButton("Explorer", explorerIcon());
         ToggleButton gitButton = activityButton("Git", gitIcon());
+        ToggleButton debugButton = activityButton("Debug", DebuggerIcons.activityBugIcon());
         explorerButton.setToggleGroup(group);
         gitButton.setToggleGroup(group);
+        debugButton.setToggleGroup(group);
         explorerButton.setSelected(true);
         this.explorerActivityButton = explorerButton;
 
@@ -396,8 +448,13 @@ public class EditorApp extends Application {
             hideExplorerFilter(filterField, tree);
             showPanel(content, gitChanges);
         });
+        debugButton.setOnAction(_ -> {
+            debugButton.setSelected(true);
+            hideExplorerFilter(filterField, tree);
+            showPanel(content, debuggerPanel);
+        });
 
-        VBox activityBar = new VBox(explorerButton, gitButton);
+        VBox activityBar = new VBox(explorerButton, gitButton, debugButton);
         activityBar.getStyleClass().add("mt-activity-bar");
 
         BorderPane sidePanel = new BorderPane(content);
@@ -528,6 +585,7 @@ public class EditorApp extends Application {
     private synchronized void shutdown() {
         if (shutdownStarted) return;
         shutdownStarted = true;
+        try { if (ctx.getDebuggerBridge() != null) ctx.getDebuggerBridge().stop(); } catch (Exception ignored) {}
         try { if (ctx.getRunController() != null) ctx.getRunController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getBuildController() != null) ctx.getBuildController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getLspBridge() != null) ctx.getLspBridge().stop(); } catch (Exception ignored) {}

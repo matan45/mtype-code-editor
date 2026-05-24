@@ -2,10 +2,14 @@ package org.mtype.editor.app;
 
 import javafx.beans.property.ReadOnlyBooleanProperty;
 import javafx.beans.property.ReadOnlyBooleanWrapper;
+import org.mtype.editor.debug.BreakpointService;
+import org.mtype.editor.debug.DebuggerBridge;
+import org.mtype.editor.debug.DebuggerEventBus;
 import org.mtype.editor.git.GitService;
 import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.process.BuildController;
 import org.mtype.editor.process.RunController;
+import org.mtype.editor.ui.debug.DebuggerPanel;
 import org.mtype.editor.ui.editor.EditorTabPane;
 import org.mtype.editor.ui.git.GitChangesView;
 import org.mtype.editor.ui.output.OutputPane;
@@ -30,6 +34,10 @@ public class AppContext {
     private GitChangesView gitChangesView;
     private GitService gitService;
     private FindInFilesWindow findInFilesWindow;
+    private DebuggerBridge debuggerBridge;
+    private DebuggerEventBus debuggerEventBus;
+    private BreakpointService breakpointService;
+    private DebuggerPanel debuggerPanel;
     private final ReadOnlyBooleanWrapper hasProjectFile = new ReadOnlyBooleanWrapper(false);
     private final ReadOnlyBooleanWrapper workspaceOpen = new ReadOnlyBooleanWrapper(false);
 
@@ -46,6 +54,10 @@ public class AppContext {
     public GitChangesView getGitChangesView() { return gitChangesView; }
     public GitService getGitService() { return gitService; }
     public FindInFilesWindow getFindInFilesWindow() { return findInFilesWindow; }
+    public DebuggerBridge getDebuggerBridge() { return debuggerBridge; }
+    public DebuggerEventBus getDebuggerEventBus() { return debuggerEventBus; }
+    public BreakpointService getBreakpointService() { return breakpointService; }
+    public DebuggerPanel getDebuggerPanel() { return debuggerPanel; }
     public ReadOnlyBooleanProperty hasProjectFileProperty() { return hasProjectFile.getReadOnlyProperty(); }
     public ReadOnlyBooleanProperty workspaceOpenProperty() { return workspaceOpen.getReadOnlyProperty(); }
 
@@ -61,6 +73,10 @@ public class AppContext {
     public void setGitChangesView(GitChangesView g) { this.gitChangesView = g; }
     public void setGitService(GitService s) { this.gitService = s; }
     public void setFindInFilesWindow(FindInFilesWindow w) { this.findInFilesWindow = w; }
+    public void setDebuggerBridge(DebuggerBridge b) { this.debuggerBridge = b; }
+    public void setDebuggerEventBus(DebuggerEventBus b) { this.debuggerEventBus = b; }
+    public void setBreakpointService(BreakpointService s) { this.breakpointService = s; }
+    public void setDebuggerPanel(DebuggerPanel p) { this.debuggerPanel = p; }
 
     public void refreshHasProjectFile() {
         hasProjectFile.set(workspace != null && workspace.hasProjectFile());
@@ -68,6 +84,8 @@ public class AppContext {
 
     public void openWorkspace(Workspace ws) {
         if (this.workspace != null) {
+            try { if (debuggerBridge != null) debuggerBridge.stop(); } catch (Exception ignored) {}
+            try { if (breakpointService != null) breakpointService.clearAll(); } catch (Exception ignored) {}
             try { lspBridge.stop(); } catch (Exception ignored) {}
             tabPane.closeAll();
         }
