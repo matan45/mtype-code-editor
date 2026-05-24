@@ -106,6 +106,9 @@ public class EditorTab extends Tab {
     private ScheduledFuture<?> pendingInlayHints;
     private int codeLensRequestSerial;
     private int inlayHintRequestSerial;
+    private double pendingScrollX;
+    private double pendingScrollY;
+    private boolean scrollFlushScheduled;
     private long openedLspSession = -1;
     private boolean suppressDirty = true;
     private List<CompletionItem> currentCompletionItems = Collections.emptyList();
@@ -393,17 +396,24 @@ public class EditorTab extends Tab {
             double deltaX = event.getDeltaX();
             if (deltaY == 0 && deltaX == 0) return;
 
-            if (deltaY != 0) {
-                double nextY = codeArea.estimatedScrollYProperty().getValue()
-                        - deltaY * EDITOR_SCROLL_SENSITIVITY;
-                codeArea.estimatedScrollYProperty().setValue(Math.max(0, nextY));
-            }
-            if (deltaX != 0) {
-                double nextX = codeArea.estimatedScrollXProperty().getValue()
-                        - deltaX * EDITOR_SCROLL_SENSITIVITY;
-                codeArea.estimatedScrollXProperty().setValue(Math.max(0, nextX));
-            }
+            pendingScrollY -= deltaY * EDITOR_SCROLL_SENSITIVITY;
+            pendingScrollX -= deltaX * EDITOR_SCROLL_SENSITIVITY;
+            scheduleScrollFlush();
             event.consume();
+        });
+    }
+
+    private void scheduleScrollFlush() {
+        if (scrollFlushScheduled) return;
+        scrollFlushScheduled = true;
+        Platform.runLater(() -> {
+            scrollFlushScheduled = false;
+            double y = pendingScrollY;
+            double x = pendingScrollX;
+            pendingScrollY = 0;
+            pendingScrollX = 0;
+            if (y != 0) codeArea.scrollYBy(y);
+            if (x != 0) codeArea.scrollXBy(x);
         });
     }
 

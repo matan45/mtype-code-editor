@@ -12,6 +12,7 @@ import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
+import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.Dragboard;
 import javafx.scene.input.KeyCode;
@@ -326,6 +327,9 @@ public class WorkspaceTreeView extends TreeView<Path> {
         paste.setAccelerator(new KeyCodeCombination(KeyCode.V, KeyCombination.CONTROL_DOWN));
         paste.setOnAction(_ -> pasteAction());
 
+        MenuItem copyPath = new MenuItem("Copy Path");
+        copyPath.setOnAction(_ -> copyPathAction());
+
         MenuItem revealInOs = new MenuItem("Reveal in File Explorer");
         revealInOs.setOnAction(_ -> revealInOsAction());
 
@@ -339,7 +343,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
                 new SeparatorMenuItem(),
                 cut, copy, paste,
                 new SeparatorMenuItem(),
-                revealInOs, refreshItem);
+                copyPath, revealInOs, refreshItem);
 
         menu.setOnShowing(_ -> {
             List<Path> selected = selectedMutablePaths();
@@ -352,6 +356,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
             copy.setDisable(!hasSel);
             cut.setDisable(!hasMutableSel);
             paste.setDisable(clipboardPaths.isEmpty() || targetDirectory() == null);
+            copyPath.setDisable(!hasSel);
             revealInOs.setDisable(!singleMutableSel);
         });
 
@@ -629,6 +634,14 @@ public class WorkspaceTreeView extends TreeView<Path> {
         ctx.refreshHasProjectFile();
         ctx.getStatusBar().setMessage("Moved " + describePaths(moved));
         return true;
+    }
+
+    private void copyPathAction() {
+        Path sel = selectedPath();
+        if (sel == null) return;
+        ClipboardContent cc = new ClipboardContent();
+        cc.putString(sel.toAbsolutePath().toString());
+        Clipboard.getSystemClipboard().setContent(cc);
     }
 
     private void revealInOsAction() {

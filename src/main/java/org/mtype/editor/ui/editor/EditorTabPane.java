@@ -8,6 +8,7 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
+import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.DataFormat;
 import javafx.scene.input.Dragboard;
@@ -178,12 +179,17 @@ public class EditorTabPane extends TabPane {
         MenuItem closeAll = new MenuItem("Close All");
         MenuItem closeLeft = new MenuItem("Close All To The Left");
         MenuItem closeRight = new MenuItem("Close All To The Right");
+        MenuItem copyPath = new MenuItem("Copy Path");
 
         close.setOnAction(e -> closeTab(t));
         closeOthers.setOnAction(e -> closeAllButThis(t));
         closeAll.setOnAction(e -> closeAllInteractive());
         closeLeft.setOnAction(e -> closeTabsToLeftOf(t));
         closeRight.setOnAction(e -> closeTabsToRightOf(t));
+        copyPath.setOnAction(e -> {
+            Path p = pathOf(t);
+            if (p != null) copyToClipboard(p.toAbsolutePath().toString());
+        });
 
         menu.getItems().addAll(
                 close,
@@ -192,7 +198,9 @@ public class EditorTabPane extends TabPane {
                 closeAll,
                 new SeparatorMenuItem(),
                 closeLeft,
-                closeRight
+                closeRight,
+                new SeparatorMenuItem(),
+                copyPath
         );
 
         menu.setOnShowing(ev -> {
@@ -201,9 +209,22 @@ public class EditorTabPane extends TabPane {
             closeOthers.setDisable(size <= 1);
             closeLeft.setDisable(idx <= 0);
             closeRight.setDisable(idx < 0 || idx >= size - 1);
+            copyPath.setDisable(pathOf(t) == null);
         });
 
         t.setContextMenu(menu);
+    }
+
+    private static Path pathOf(Tab t) {
+        if (t instanceof EditorTab et) return et.getPath();
+        if (t instanceof DiffTab dt) return dt.getPath();
+        return null;
+    }
+
+    private static void copyToClipboard(String s) {
+        ClipboardContent cc = new ClipboardContent();
+        cc.putString(s);
+        Clipboard.getSystemClipboard().setContent(cc);
     }
 
     private void wireTabHeaderDragHandlers() {
