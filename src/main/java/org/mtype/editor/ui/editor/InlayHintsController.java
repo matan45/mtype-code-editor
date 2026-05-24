@@ -30,6 +30,7 @@ final class InlayHintsController {
     private final Consumer<List<Position>> anchorListener;
     private final List<RenderedHint> rendered = new ArrayList<>();
     private final Subscription viewportSubscription;
+    private boolean layoutScheduled;
 
     InlayHintsController(CodeArea area, Pane layer, Consumer<List<Position>> anchorListener) {
         this.area = area;
@@ -37,9 +38,8 @@ final class InlayHintsController {
         this.anchorListener = anchorListener;
         this.layer.setMouseTransparent(true);
         this.layer.getStyleClass().add("mt-inlay-hints-layer");
-        this.viewportSubscription = area.viewportDirtyEvents().subscribe(ignored ->
-                Platform.runLater(this::layoutHints));
-        this.layer.layoutBoundsProperty().addListener((_, _, _) -> layoutHints());
+        this.viewportSubscription = area.viewportDirtyEvents().subscribe(ignored -> requestLayout());
+        this.layer.layoutBoundsProperty().addListener((_, _, _) -> requestLayout());
     }
 
     void setHints(List<InlayHint> hints) {
@@ -64,8 +64,11 @@ final class InlayHintsController {
             rendered.add(new RenderedHint(renderPosition(hint, text), label));
             layer.getChildren().add(label);
         }
+        rendered.sort(Comparator
+                .comparingInt((RenderedHint h) -> h.position().getLine())
+                .thenComparingInt(h -> h.position().getCharacter()));
         publishAnchors();
-        layoutHints();
+        requestLayout();
     }
 
     void clear() {
@@ -80,24 +83,44 @@ final class InlayHintsController {
     }
 
     void refreshLayout() {
-        layoutHints();
+        requestLayout();
+    }
+
+    private void requestLayout() {
+        if (layoutScheduled) return;
+        layoutScheduled = true;
+        Platform.runLater(() -> {
+            layoutScheduled = false;
+            layoutHints();
+        });
     }
 
     private void layoutHints() {
-        resetInlineGaps();
+        List<Node> paragraphTexts = paragraphTextNodes();
+        resetInlineGaps(paragraphTexts);
         if (rendered.isEmpty() || layer.getScene() == null) return;
 
-        List<RenderedHint> ordered = rendered.stream()
-                .sorted(Comparator
-                        .comparingInt((RenderedHint h) -> h.position().getLine())
-                        .thenComparingInt(h -> h.position().getCharacter()))
-                .toList();
+        VisibleLines visibleLines = visibleLines(paragraphTexts);
+        if (visibleLines == null) {
+            rendered.forEach(hint -> hint.label().setVisible(false));
+            return;
+        }
+
+        for (RenderedHint hint : rendered) {
+            int line = hint.position().getLine();
+            if (line < visibleLines.first() || line > visibleLines.last()) {
+                hint.label().setVisible(false);
+            }
+        }
+
         List<LineGap> gaps = new ArrayList<>();
         int currentLine = -1;
         double currentLineShift = 0.0;
 
-        for (RenderedHint hint : ordered) {
+        for (RenderedHint hint : rendered) {
             Position p = hint.position();
+            if (p.getLine() < visibleLines.first() || p.getLine() > visibleLines.last()) continue;
+
             Label label = hint.label();
             Optional<Bounds> maybeBounds;
             try {
@@ -132,11 +155,11 @@ final class InlayHintsController {
             currentLineShift += width;
         }
 
-        applyInlineGaps(gaps);
+        applyInlineGaps(paragraphTexts, gaps);
     }
 
-    private void resetInlineGaps() {
-        for (Node paragraphText : paragraphTextNodes()) {
+    private void resetInlineGaps(List<Node> paragraphTexts) {
+        for (Node paragraphText : paragraphTexts) {
             if (paragraphText instanceof Pane pane) {
                 for (Node child : pane.getChildren()) {
                     if (child instanceof Text) {
@@ -147,9 +170,8 @@ final class InlayHintsController {
         }
     }
 
-    private void applyInlineGaps(List<LineGap> gaps) {
+    private void applyInlineGaps(List<Node> paragraphTexts, List<LineGap> gaps) {
         if (gaps.isEmpty()) return;
-        List<Node> paragraphTexts = paragraphTextNodes();
         int visibleCount = Math.min(paragraphTexts.size(), area.getVisibleParagraphs().size());
         for (int visible = 0; visible < visibleCount; visible++) {
             int paragraphIndex;
@@ -204,6 +226,22 @@ final class InlayHintsController {
                 .filter(node -> node instanceof Pane)
                 .sorted(Comparator.comparingDouble(this::screenMinY))
                 .collect(Collectors.toList());
+    }
+
+    private VisibleLines visibleLines(List<Node> paragraphTexts) {
+        int visibleCount = Math.min(paragraphTexts.size(), area.getVisibleParagraphs().size());
+        if (visibleCount <= 0) return null;
+
+        int first = Integer.MAX_VALUE;
+        int last = Integer.MIN_VALUE;
+        for (int visible = 0; visible < visibleCount; visible++) {
+            try {
+                int paragraphIndex = area.visibleParToAllParIndex(visible);
+                first = Math.min(first, paragraphIndex);
+                last = Math.max(last, paragraphIndex);
+            } catch (Exception ignored) {}
+        }
+        return first == Integer.MAX_VALUE ? null : new VisibleLines(first, last);
     }
 
     private double screenMinY(Node node) {
@@ -346,4 +384,5 @@ final class InlayHintsController {
 
     private record RenderedHint(Position position, Label label) {}
     private record LineGap(int line, int character, double width) {}
+    private record VisibleLines(int first, int last) {}
 }
