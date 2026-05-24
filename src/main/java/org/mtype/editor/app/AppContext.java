@@ -8,6 +8,7 @@ import org.mtype.editor.debug.DebuggerEventBus;
 import org.mtype.editor.git.GitService;
 import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.process.BuildController;
+import org.mtype.editor.process.PackageController;
 import org.mtype.editor.process.RunController;
 import org.mtype.editor.terminal.TerminalController;
 import org.mtype.editor.ui.debug.DebuggerPanel;
@@ -28,6 +29,7 @@ public class AppContext {
     private LspBridge lspBridge;
     private RunController runController;
     private BuildController buildController;
+    private PackageController packageController;
     private TerminalController terminalController;
     private EditorTabPane tabPane;
     private OutputPane outputPane;
@@ -49,6 +51,7 @@ public class AppContext {
     public LspBridge getLspBridge() { return lspBridge; }
     public RunController getRunController() { return runController; }
     public BuildController getBuildController() { return buildController; }
+    public PackageController getPackageController() { return packageController; }
     public TerminalController getTerminalController() { return terminalController; }
     public EditorTabPane getTabPane() { return tabPane; }
     public OutputPane getOutputPane() { return outputPane; }
@@ -69,6 +72,7 @@ public class AppContext {
     public void setLspBridge(LspBridge b) { this.lspBridge = b; }
     public void setRunController(RunController r) { this.runController = r; }
     public void setBuildController(BuildController b) { this.buildController = b; }
+    public void setPackageController(PackageController p) { this.packageController = p; }
     public void setTerminalController(TerminalController t) { this.terminalController = t; }
     public void setTabPane(EditorTabPane p) { this.tabPane = p; }
     public void setOutputPane(OutputPane o) { this.outputPane = o; }

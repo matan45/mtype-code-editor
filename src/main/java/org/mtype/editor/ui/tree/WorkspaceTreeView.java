@@ -5,6 +5,7 @@ import javafx.application.Platform;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ContextMenu;
+import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SelectionMode;
@@ -23,6 +24,8 @@ import javafx.scene.input.TransferMode;
 import javafx.stage.Window;
 import javafx.util.Duration;
 import org.mtype.editor.app.AppContext;
+import org.mtype.editor.process.PackageController;
+import org.mtype.editor.ui.dialogs.AddPackageDialog;
 import org.mtype.editor.ui.dialogs.Dialogs;
 import org.mtype.editor.workspace.Workspace;
 
@@ -336,6 +339,41 @@ public class WorkspaceTreeView extends TreeView<Path> {
         MenuItem refreshItem = new MenuItem("Refresh");
         refreshItem.setOnAction(_ -> refresh());
 
+        MenuItem pkgInstall = new MenuItem("Install");
+        pkgInstall.setOnAction(_ -> runMtpmFromTree(pc -> pc.install(selectedPath())));
+
+        MenuItem pkgAdd = new MenuItem("Add Package...");
+        pkgAdd.setOnAction(_ -> {
+            Path mtproj = selectedPath();
+            if (mtproj == null) return;
+            AddPackageDialog dlg = new AddPackageDialog(ownerWindow(), mtproj);
+            dlg.showAndWait().ifPresent(spec -> runMtpmFromTree(pc -> pc.add(mtproj, spec)));
+        });
+
+        MenuItem pkgRemove = new MenuItem("Remove Package...");
+        pkgRemove.setOnAction(_ -> {
+            Path mtproj = selectedPath();
+            if (mtproj == null) return;
+            var prompt = Dialogs.prompt(ownerWindow(), "Remove Package",
+                    "Remove package from " + mtproj.getFileName(),
+                    "Package name:", "");
+            prompt.showAndWait().map(String::trim).filter(s -> !s.isEmpty()).ifPresent(name -> {
+                var confirm = Dialogs.confirm(ownerWindow(), "Remove " + name + "?",
+                        "Remove " + name + " from " + mtproj.getFileName() + " and clean mt_modules?");
+                var result = confirm.showAndWait();
+                if (result.isPresent() && result.get() == ButtonType.OK) {
+                    runMtpmFromTree(pc -> pc.remove(mtproj, name));
+                }
+            });
+        });
+
+        MenuItem pkgList = new MenuItem("List Packages");
+        pkgList.setOnAction(_ -> runMtpmFromTree(pc -> pc.list(selectedPath())));
+
+        Menu pkgMenu = new Menu("Package");
+        pkgMenu.getItems().addAll(pkgInstall, pkgAdd, pkgRemove,
+                new SeparatorMenuItem(), pkgList);
+
         ContextMenu menu = new ContextMenu(
                 newFile, newMt, newFolder,
                 new SeparatorMenuItem(),
@@ -343,7 +381,9 @@ public class WorkspaceTreeView extends TreeView<Path> {
                 new SeparatorMenuItem(),
                 cut, copy, paste,
                 new SeparatorMenuItem(),
-                copyPath, revealInOs, refreshItem);
+                copyPath, revealInOs, refreshItem,
+                new SeparatorMenuItem(),
+                pkgMenu);
 
         menu.setOnShowing(_ -> {
             List<Path> selected = selectedMutablePaths();
@@ -358,9 +398,21 @@ public class WorkspaceTreeView extends TreeView<Path> {
             paste.setDisable(clipboardPaths.isEmpty() || targetDirectory() == null);
             copyPath.setDisable(!hasSel);
             revealInOs.setDisable(!singleMutableSel);
+
+            boolean isMtproj = sel != null && sel.getFileName() != null
+                    && sel.getFileName().toString().toLowerCase().endsWith(".mtproj");
+            PackageController pkgCtrl = ctx.getPackageController();
+            boolean pkgBusy = pkgCtrl != null && pkgCtrl.runningProperty().get();
+            pkgMenu.setDisable(!isMtproj || pkgBusy);
         });
 
         return menu;
+    }
+
+    private void runMtpmFromTree(java.util.function.Consumer<PackageController> action) {
+        PackageController pc = ctx.getPackageController();
+        if (pc == null) return;
+        action.accept(pc);
     }
 
     private Path selectedPath() {

@@ -26,11 +26,15 @@ import org.mtype.editor.debug.DebuggerBridge;
 import org.mtype.editor.debug.DebuggerEventBus;
 import org.mtype.editor.git.GitService;
 import org.mtype.editor.lsp.LspBridge;
+import org.mtype.editor.process.AddPackageSpec;
 import org.mtype.editor.process.BuildController;
+import org.mtype.editor.process.PackageController;
 import org.mtype.editor.process.RunController;
 import org.mtype.editor.terminal.TerminalController;
 import org.mtype.editor.ui.debug.DebuggerIcons;
 import org.mtype.editor.ui.debug.DebuggerPanel;
+import org.mtype.editor.ui.dialogs.AddPackageDialog;
+import org.mtype.editor.ui.dialogs.Dialogs;
 import org.mtype.editor.ui.dialogs.NewProjectDialog;
 import org.mtype.editor.ui.dialogs.NewWorkspaceDialog;
 import org.mtype.editor.ui.chrome.WindowMaximizer;
@@ -46,6 +50,8 @@ import org.mtype.editor.workspace.SettingsStore;
 import org.mtype.editor.workspace.Workspace;
 
 import java.io.File;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 public class EditorApp extends Application {
@@ -109,6 +115,9 @@ public class EditorApp extends Application {
 
         BuildController buildController = new BuildController(ctx);
         ctx.setBuildController(buildController);
+
+        PackageController packageController = new PackageController(ctx);
+        ctx.setPackageController(packageController);
 
         Button runBtn = new Button("Run");
         Button stopBtn = new Button("Stop");
@@ -300,6 +309,54 @@ public class EditorApp extends Application {
                 new SeparatorMenuItem(), depsTree, depsForFile,
                 new SeparatorMenuItem(), stopBuild);
 
+        Menu pkg = new Menu("Package");
+        PackageController pc = ctx.getPackageController();
+        javafx.beans.binding.BooleanBinding noPkg =
+                pc.runningProperty().or(ctx.hasProjectFileProperty().not());
+
+        MenuItem pkgInstall = new MenuItem("Install");
+        pkgInstall.setOnAction(_ -> pc.install(findSingleMtproj()));
+        pkgInstall.disableProperty().bind(noPkg);
+
+        MenuItem pkgAdd = new MenuItem("Add Package...");
+        pkgAdd.setOnAction(_ -> {
+            Path mtproj = findSingleMtproj();
+            AddPackageDialog dlg = new AddPackageDialog(stage, mtproj);
+            dlg.showAndWait().ifPresent(spec -> pc.add(mtproj, spec));
+        });
+        pkgAdd.disableProperty().bind(noPkg);
+
+        MenuItem pkgRemove = new MenuItem("Remove Package...");
+        pkgRemove.setOnAction(_ -> {
+            Path mtproj = findSingleMtproj();
+            var prompt = Dialogs.prompt(stage, "Remove Package",
+                    mtproj != null ? "Remove package from " + mtproj.getFileName() : "Remove package",
+                    "Package name:", "");
+            prompt.showAndWait().map(String::trim).filter(s -> !s.isEmpty()).ifPresent(name -> {
+                var confirm = Dialogs.confirm(stage, "Remove " + name + "?",
+                        mtproj != null
+                                ? "Remove " + name + " from " + mtproj.getFileName() + " and clean mt_modules?"
+                                : "Remove " + name + " and clean mt_modules?");
+                var result = confirm.showAndWait();
+                if (result.isPresent() && result.get() == javafx.scene.control.ButtonType.OK) {
+                    pc.remove(mtproj, name);
+                }
+            });
+        });
+        pkgRemove.disableProperty().bind(noPkg);
+
+        MenuItem pkgList = new MenuItem("List Packages");
+        pkgList.setOnAction(_ -> pc.list(findSingleMtproj()));
+        pkgList.disableProperty().bind(noPkg);
+
+        MenuItem pkgStop = new MenuItem("Stop");
+        pkgStop.setOnAction(_ -> pc.stop());
+        pkgStop.disableProperty().bind(pc.runningProperty().not());
+
+        pkg.getItems().addAll(pkgInstall, pkgAdd, pkgRemove,
+                new SeparatorMenuItem(), pkgList,
+                new SeparatorMenuItem(), pkgStop);
+
         Menu view = new Menu("View");
         MenuItem filterFiles = new MenuItem("Filter Files in Explorer");
         filterFiles.setAccelerator(new KeyCodeCombination(KeyCode.E,
@@ -337,8 +394,24 @@ public class EditorApp extends Application {
 
         terminal.getItems().addAll(newTerminal, focusTerminal);
 
-        mb.getMenus().addAll(file, code, build, view, terminal);
+        mb.getMenus().addAll(file, code, pkg, build, view, terminal);
         return mb;
+    }
+
+    /** Return the single .mtproj at the workspace root, or null if zero or multiple exist. */
+    private Path findSingleMtproj() {
+        if (ctx.getWorkspace() == null) return null;
+        Path root = ctx.getWorkspace().root();
+        Path single = null;
+        try (DirectoryStream<Path> ds = Files.newDirectoryStream(root, "*.mtproj")) {
+            for (Path p : ds) {
+                if (single != null) return null;
+                single = p;
+            }
+        } catch (java.io.IOException ignored) {
+            return null;
+        }
+        return single;
     }
 
     private void openNewTerminal() {
@@ -629,6 +702,7 @@ public class EditorApp extends Application {
         try { if (ctx.getDebuggerBridge() != null) ctx.getDebuggerBridge().stop(); } catch (Exception ignored) {}
         try { if (ctx.getRunController() != null) ctx.getRunController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getBuildController() != null) ctx.getBuildController().stop(); } catch (Exception ignored) {}
+        try { if (ctx.getPackageController() != null) ctx.getPackageController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getTerminalController() != null) ctx.getTerminalController().shutdownAll(); } catch (Exception ignored) {}
         try { if (ctx.getLspBridge() != null) ctx.getLspBridge().stop(); } catch (Exception ignored) {}
         try { if (ctx.getFindInFilesWindow() != null) ctx.getFindInFilesWindow().cancelSearch(); } catch (Exception ignored) {}

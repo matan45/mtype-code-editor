@@ -20,11 +20,13 @@ public class OutputPane extends TabPane {
     private final TextArea runArea = new TextArea();
     private final TextArea lspArea = new TextArea();
     private final InlineCssTextArea compileArea = new InlineCssTextArea();
+    private final InlineCssTextArea packagesArea = new InlineCssTextArea();
     private final InlineCssTextArea gitArea = new InlineCssTextArea();
     private final InlineCssTextArea debugConsoleArea = new InlineCssTextArea();
     private final Tab runTab;
     private final Tab lspTab;
     private final Tab compileTab;
+    private final Tab packagesTab;
     private final Tab gitTab;
     private final Tab debugConsoleTab;
     private final Tab terminalTab;
@@ -42,6 +44,8 @@ public class OutputPane extends TabPane {
         lspArea.getStyleClass().add("mt-output");
         compileArea.setEditable(false);
         compileArea.getStyleClass().add("mt-output");
+        packagesArea.setEditable(false);
+        packagesArea.getStyleClass().add("mt-output");
         gitArea.setEditable(false);
         gitArea.getStyleClass().add("mt-output");
         debugConsoleArea.setEditable(false);
@@ -73,6 +77,18 @@ public class OutputPane extends TabPane {
         compileContent.setTop(compileToolbar);
         compileTab = new Tab("Compile", compileContent);
         compileTab.setClosable(false);
+
+        Button clearPackagesButton = new Button("Clear");
+        clearPackagesButton.getStyleClass().add("mt-output-toolbar-button");
+        clearPackagesButton.setOnAction(_ -> packagesArea.clear());
+        HBox packagesToolbar = new HBox(clearPackagesButton);
+        packagesToolbar.setAlignment(Pos.CENTER_RIGHT);
+        packagesToolbar.setPadding(new Insets(4, 6, 4, 6));
+        packagesToolbar.getStyleClass().add("mt-output-toolbar");
+        BorderPane packagesContent = new BorderPane(new VirtualizedScrollPane<>(packagesArea));
+        packagesContent.setTop(packagesToolbar);
+        packagesTab = new Tab("Packages", packagesContent);
+        packagesTab.setClosable(false);
 
         Button clearGitButton = new Button("Clear");
         clearGitButton.getStyleClass().add("mt-output-toolbar-button");
@@ -107,13 +123,13 @@ public class OutputPane extends TabPane {
         problemsTab = new Tab("Problems");
         problemsTab.setClosable(false);
 
-        getTabs().addAll(problemsTab, runTab, terminalTab, debugConsoleTab, compileTab, lspTab, gitTab, callHierarchyTab, referencesTab);
+        getTabs().addAll(problemsTab, runTab, terminalTab, debugConsoleTab, compileTab, packagesTab, lspTab, gitTab, callHierarchyTab, referencesTab);
         getStyleClass().add("mt-output-pane");
         setTabClosingPolicy(TabClosingPolicy.UNAVAILABLE);
     }
 
     private List<Tab> canonicalOrder() {
-        return List.of(problemsTab, runTab, terminalTab, debugConsoleTab, compileTab, lspTab, gitTab, callHierarchyTab, referencesTab);
+        return List.of(problemsTab, runTab, terminalTab, debugConsoleTab, compileTab, packagesTab, lspTab, gitTab, callHierarchyTab, referencesTab);
     }
 
     private Tab tabByName(String name) {
@@ -124,7 +140,7 @@ public class OutputPane extends TabPane {
     }
 
     public List<String> tabNames() {
-        return List.of("Problems", "Run", "Terminal", "Debug Console", "Compile", "LSP Log", "Git", "Call Hierarchy", "References");
+        return List.of("Problems", "Run", "Terminal", "Debug Console", "Compile", "Packages", "LSP Log", "Git", "Call Hierarchy", "References");
     }
 
     public boolean isTabVisible(String name) {
@@ -216,6 +232,19 @@ public class OutputPane extends TabPane {
         });
     }
 
+    public void appendPackages(String line, boolean stderr) {
+        String text = line + System.lineSeparator();
+        String style = stderr ? "-fx-fill: #e06c75;" : "";
+        Platform.runLater(() -> {
+            int start = packagesArea.getLength();
+            packagesArea.appendText(text);
+            int end = packagesArea.getLength();
+            packagesArea.setStyle(start, end, style);
+            packagesArea.moveTo(end);
+            packagesArea.requestFollowCaret();
+        });
+    }
+
     public void appendGit(String line, boolean stderr) {
         String text = line + System.lineSeparator();
         String style = stderr ? "-fx-fill: #e06c75;" : "";
@@ -265,12 +294,20 @@ public class OutputPane extends TabPane {
         Platform.runLater(compileArea::clear);
     }
 
+    public void clearPackages() {
+        Platform.runLater(packagesArea::clear);
+    }
+
     public void focusRun() {
         Platform.runLater(() -> getSelectionModel().select(runTab));
     }
 
     public void focusCompile() {
         Platform.runLater(() -> getSelectionModel().select(compileTab));
+    }
+
+    public void focusPackages() {
+        Platform.runLater(() -> getSelectionModel().select(packagesTab));
     }
 
     public void focusGit() {
