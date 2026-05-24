@@ -11,7 +11,9 @@ import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +36,8 @@ public class DebuggerBridge {
     private boolean running;
     private Path lastFile;
     private DebuggerEventBus.State state = DebuggerEventBus.State.IDLE;
+    private final Deque<String> pendingVariableScopes = new ArrayDeque<>();
+    private final Deque<Long> pendingExpandRefs = new ArrayDeque<>();
 
     public DebuggerBridge(AppContext ctx, DebuggerEventBus events, BreakpointService breakpoints) {
         this.ctx = ctx;
@@ -88,6 +92,8 @@ public class DebuggerBridge {
     public synchronized void stop() {
         session++;
         running = false;
+        synchronized (pendingVariableScopes) { pendingVariableScopes.clear(); }
+        synchronized (pendingExpandRefs) { pendingExpandRefs.clear(); }
         Process p = process;
         BufferedWriter w = writer;
         process = null;
@@ -131,9 +137,15 @@ public class DebuggerBridge {
 
     public void getStackTrace() { send("GETSTACKTRACE", Map.of()); }
 
-    public void getVariables(String scope) { send("GETVARIABLES", linked("scope", scope)); }
+    public void getVariables(String scope) {
+        synchronized (pendingVariableScopes) { pendingVariableScopes.add(scope); }
+        send("GETVARIABLES", linked("scope", scope));
+    }
 
-    public void expandVariable(long reference) { send("EXPANDVARIABLE", linked("ref", Long.toString(reference))); }
+    public void expandVariable(long reference) {
+        synchronized (pendingExpandRefs) { pendingExpandRefs.add(reference); }
+        send("EXPANDVARIABLE", linked("ref", Long.toString(reference)));
+    }
 
     /**
      * Sends EVALUATE. The server's RESULT doesn't echo a key, so the caller's
@@ -232,12 +244,26 @@ public class DebuggerBridge {
             }
             case "VARIABLES" -> {
                 List<Variable> vars = collectVariables(msg, "var");
-                String scope = msg.get("scope", inferScopeFromVars(vars));
+                String scope;
+                synchronized (pendingVariableScopes) {
+                    scope = pendingVariableScopes.isEmpty() ? "local" : pendingVariableScopes.poll();
+                }
+                // Server doesn't echo scope; if it ever does, prefer that.
+                String echoed = msg.get("scope");
+                if (echoed != null && !echoed.isEmpty()) scope = echoed;
                 events.fireVariables(new DebuggerEventBus.VariablesEvent(scope, vars));
             }
             case "EXPANDEDVAR" -> {
                 List<Variable> vars = collectVariables(msg, "child");
-                long ref = msg.getLong("ref", 0);
+                long echoed = msg.getLong("ref", 0);
+                long ref = echoed;
+                if (ref == 0) {
+                    synchronized (pendingExpandRefs) {
+                        if (!pendingExpandRefs.isEmpty()) ref = pendingExpandRefs.poll();
+                    }
+                } else {
+                    synchronized (pendingExpandRefs) { pendingExpandRefs.poll(); }
+                }
                 events.fireExpandedVar(new DebuggerEventBus.ExpandedVarEvent(ref, vars));
             }
             case "RESULT" -> {
@@ -255,8 +281,6 @@ public class DebuggerBridge {
             }
         }
     }
-
-    private String inferScopeFromVars(List<Variable> ignored) { return "local"; }
 
     private List<Variable> collectVariables(DebugMessage msg, String prefix) {
         List<Variable> out = new ArrayList<>();
