@@ -13,6 +13,7 @@ import org.eclipse.lsp4j.CallHierarchyItem;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.InlineCssTextArea;
 import org.mtype.editor.app.AppContext;
+import org.mtype.editor.ui.editor.EditorTab;
 
 import java.util.List;
 
@@ -33,9 +34,11 @@ public class OutputPane extends TabPane {
     private final Tab callHierarchyTab;
     private final Tab referencesTab;
     private final Tab problemsTab;
+    private final Tab outlineTab;
     private CallHierarchyPane callHierarchyPane;
     private ReferencesPane referencesPane;
     private TerminalPane terminalPane;
+    private OutlinePanel outlinePanel;
 
     public OutputPane() {
         runArea.setEditable(false);
@@ -122,14 +125,16 @@ public class OutputPane extends TabPane {
         referencesTab.setClosable(false);
         problemsTab = new Tab("Problems");
         problemsTab.setClosable(false);
+        outlineTab = new Tab("Outline");
+        outlineTab.setClosable(false);
 
-        getTabs().addAll(problemsTab, runTab, terminalTab, debugConsoleTab, compileTab, packagesTab, lspTab, gitTab, callHierarchyTab, referencesTab);
+        getTabs().addAll(problemsTab, outlineTab, runTab, terminalTab, debugConsoleTab, compileTab, packagesTab, lspTab, gitTab, callHierarchyTab, referencesTab);
         getStyleClass().add("mt-output-pane");
         setTabClosingPolicy(TabClosingPolicy.UNAVAILABLE);
     }
 
     private List<Tab> canonicalOrder() {
-        return List.of(problemsTab, runTab, terminalTab, debugConsoleTab, compileTab, packagesTab, lspTab, gitTab, callHierarchyTab, referencesTab);
+        return List.of(problemsTab, outlineTab, runTab, terminalTab, debugConsoleTab, compileTab, packagesTab, lspTab, gitTab, callHierarchyTab, referencesTab);
     }
 
     private Tab tabByName(String name) {
@@ -140,7 +145,7 @@ public class OutputPane extends TabPane {
     }
 
     public List<String> tabNames() {
-        return List.of("Problems", "Run", "Terminal", "Debug Console", "Compile", "Packages", "LSP Log", "Git", "Call Hierarchy", "References");
+        return List.of("Problems", "Outline", "Run", "Terminal", "Debug Console", "Compile", "Packages", "LSP Log", "Git", "Call Hierarchy", "References");
     }
 
     public boolean isTabVisible(String name) {
@@ -191,6 +196,15 @@ public class OutputPane extends TabPane {
     public void attachTerminal(AppContext ctx) {
         terminalPane = new TerminalPane(ctx);
         terminalTab.setContent(terminalPane);
+    }
+
+    public void attachOutline(AppContext ctx) {
+        outlinePanel = new OutlinePanel(ctx);
+        outlineTab.setContent(outlinePanel);
+    }
+
+    public void refreshOutlineFor(EditorTab tab) {
+        if (outlinePanel != null) outlinePanel.refreshIfActive(tab);
     }
 
     public void showCallHierarchy(CallHierarchyItem item) {

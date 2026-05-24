@@ -29,6 +29,7 @@ public class LspBridge {
     private MTypeLanguageClient client;
     private boolean ready;
     private long session;
+    private SemanticTokensLegend semanticLegend;
 
     public LspBridge(AppContext ctx) {
         this.ctx = ctx;
@@ -36,6 +37,7 @@ public class LspBridge {
 
     public boolean isReady() { return ready; }
     public synchronized long getSession() { return session; }
+    public synchronized SemanticTokensLegend getSemanticLegend() { return semanticLegend; }
 
     public synchronized void start(Workspace ws) throws IOException {
         stop();
@@ -94,6 +96,23 @@ public class LspBridge {
         td.setCodeLens(new CodeLensCapabilities());
         td.setReferences(new ReferencesCapabilities());
         td.setInlayHint(new InlayHintCapabilities());
+        td.setSignatureHelp(new SignatureHelpCapabilities());
+        td.setDocumentSymbol(new DocumentSymbolCapabilities());
+
+        SemanticTokensCapabilities stCaps = new SemanticTokensCapabilities(false);
+        SemanticTokensClientCapabilitiesRequests stReq =
+                new SemanticTokensClientCapabilitiesRequests(true);
+        stCaps.setRequests(stReq);
+        stCaps.setTokenTypes(List.of(
+                "namespace", "type", "class", "enum", "interface", "struct",
+                "typeParameter", "parameter", "variable", "property", "enumMember",
+                "event", "function", "method", "macro", "keyword", "modifier",
+                "comment", "string", "number", "regexp", "operator", "decorator"));
+        stCaps.setTokenModifiers(List.of(
+                "declaration", "definition", "readonly", "static", "deprecated",
+                "abstract", "async", "modification", "documentation", "defaultLibrary"));
+        stCaps.setFormats(List.of(TokenFormat.Relative));
+        td.setSemanticTokens(stCaps);
 
         RenameCapabilities rename = new RenameCapabilities();
         rename.setPrepareSupport(true);
@@ -106,10 +125,11 @@ public class LspBridge {
         WorkspaceClientCapabilities wc = new WorkspaceClientCapabilities();
         wc.setWorkspaceFolders(true);
         wc.setApplyEdit(true);
+        wc.setSymbol(new SymbolCapabilities());
         caps.setWorkspace(wc);
         init.setCapabilities(caps);
 
-        startedServer.initialize(init).whenComplete((InitializeResult _, Throwable err) -> {
+        startedServer.initialize(init).whenComplete((InitializeResult result, Throwable err) -> {
             synchronized (LspBridge.this) {
                 if (startSession != session || server != startedServer) return;
             }
@@ -124,6 +144,10 @@ public class LspBridge {
             synchronized (LspBridge.this) {
                 if (startSession != session || server != startedServer) return;
                 ready = true;
+                if (result != null && result.getCapabilities() != null
+                        && result.getCapabilities().getSemanticTokensProvider() != null) {
+                    semanticLegend = result.getCapabilities().getSemanticTokensProvider().getLegend();
+                }
             }
             Platform.runLater(() -> {
                 ctx.getStatusBar().setLspState("LSP: ready");
@@ -472,6 +496,79 @@ public class LspBridge {
         return server.getTextDocumentService().codeAction(params)
                 .thenApply(list -> list == null ? Collections.<Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction>>emptyList() : list)
                 .exceptionally(_ -> Collections.emptyList());
+    }
+
+    /* ============================== signature help ============================== */
+
+    public CompletableFuture<SignatureHelp> signatureHelp(Path path, int line, int col, String triggerChar) {
+        if (!ready || server == null) return CompletableFuture.completedFuture(null);
+        SignatureHelpParams params = new SignatureHelpParams(
+                new TextDocumentIdentifier(path.toUri().toString()),
+                new Position(line, col));
+        SignatureHelpContext shCtx = new SignatureHelpContext();
+        if (triggerChar != null && !triggerChar.isEmpty()) {
+            shCtx.setTriggerKind(SignatureHelpTriggerKind.TriggerCharacter);
+            shCtx.setTriggerCharacter(triggerChar);
+        } else {
+            shCtx.setTriggerKind(SignatureHelpTriggerKind.Invoked);
+        }
+        shCtx.setIsRetrigger(false);
+        params.setContext(shCtx);
+        return server.getTextDocumentService().signatureHelp(params)
+                .exceptionally(_ -> null);
+    }
+
+    /* ============================== document symbols ============================== */
+
+    public CompletableFuture<List<Either<SymbolInformation, DocumentSymbol>>> documentSymbol(Path path) {
+        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
+        DocumentSymbolParams params = new DocumentSymbolParams(
+                new TextDocumentIdentifier(path.toUri().toString()));
+        return server.getTextDocumentService().documentSymbol(params)
+                .thenApply(list -> list == null ? Collections.<Either<SymbolInformation, DocumentSymbol>>emptyList() : list)
+                .exceptionally(_ -> Collections.emptyList());
+    }
+
+    /* ============================== workspace symbols ============================== */
+
+    public CompletableFuture<List<SymbolInformation>> workspaceSymbol(String query) {
+        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
+        WorkspaceSymbolParams params = new WorkspaceSymbolParams(query == null ? "" : query);
+        return server.getWorkspaceService().symbol(params).thenApply(either -> {
+            if (either == null) return Collections.<SymbolInformation>emptyList();
+            if (either.isLeft()) {
+                List<? extends SymbolInformation> list = either.getLeft();
+                if (list == null) return Collections.<SymbolInformation>emptyList();
+                List<SymbolInformation> out = new ArrayList<>(list.size());
+                out.addAll(list);
+                return out;
+            }
+            List<? extends WorkspaceSymbol> wsList = either.getRight();
+            if (wsList == null) return Collections.<SymbolInformation>emptyList();
+            List<SymbolInformation> out = new ArrayList<>(wsList.size());
+            for (WorkspaceSymbol ws : wsList) {
+                if (ws == null) continue;
+                SymbolInformation si = new SymbolInformation();
+                si.setName(ws.getName());
+                si.setKind(ws.getKind());
+                si.setContainerName(ws.getContainerName());
+                if (ws.getLocation() != null && ws.getLocation().isLeft()) {
+                    si.setLocation(ws.getLocation().getLeft());
+                }
+                out.add(si);
+            }
+            return out;
+        }).exceptionally(_ -> Collections.emptyList());
+    }
+
+    /* ============================== semantic tokens ============================== */
+
+    public CompletableFuture<SemanticTokens> semanticTokensFull(Path path) {
+        if (!ready || server == null) return CompletableFuture.completedFuture(null);
+        SemanticTokensParams params = new SemanticTokensParams(
+                new TextDocumentIdentifier(path.toUri().toString()));
+        return server.getTextDocumentService().semanticTokensFull(params)
+                .exceptionally(_ -> null);
     }
 
     public void executeCommand(String command, List<Object> args) {

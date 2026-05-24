@@ -23,11 +23,19 @@ import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.ScrollEvent;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import org.eclipse.lsp4j.CodeLens;
 import org.eclipse.lsp4j.Command;
+import org.eclipse.lsp4j.DocumentSymbol;
+import org.eclipse.lsp4j.SemanticTokens;
+import org.eclipse.lsp4j.SemanticTokensLegend;
+import org.eclipse.lsp4j.SignatureHelp;
+import org.eclipse.lsp4j.SymbolInformation;
+import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.fxmisc.richtext.CharacterHit;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionItemKind;
@@ -48,7 +56,9 @@ import org.mtype.editor.debug.DebuggerEventBus;
 import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.lsp.LspEdits;
 import org.mtype.editor.lsp.Positions;
+import org.mtype.editor.lsp.SemanticTokensDecoder;
 import org.mtype.editor.syntax.Tokenizers;
+import org.mtype.editor.ui.output.OutlinePanel;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -89,23 +99,33 @@ public class EditorTab extends Tab {
     private final ContextMenu completionMenu = new ContextMenu();
     private final ContextMenu referencesMenu = new ContextMenu();
     private final HoverPopup hoverPopup = new HoverPopup();
+    private final SignatureHelpPopup signaturePopup = new SignatureHelpPopup();
     private final Pane inlayHintsLayer = new Pane();
     private final InlayHintsController inlayHintsController;
     private final Set<Integer> inlayHintAnchorOffsets = new HashSet<>();
     private final Map<Integer, CodeLensLine> codeLensByParagraph = new HashMap<>();
     private final Set<Integer> codeLensParagraphStyles = new HashSet<>();
     private final Map<Integer, org.eclipse.lsp4j.DiagnosticSeverity> diagnosticsByLine = new HashMap<>();
+    private final HBox breadcrumbBar = new HBox();
     private javafx.scene.control.Menu quickFixMenu;
     private int quickFixRequestSerial;
     private StyleSpans<Collection<String>> lastTokenSpans;
     private StyleSpans<Collection<String>> lastDiagnosticSpans;
+    private StyleSpans<Collection<String>> lastSemanticSpans;
+    private List<DocumentSymbol> lastDocumentSymbols = Collections.emptyList();
     private ScheduledFuture<?> pendingHighlight;
     private ScheduledFuture<?> pendingDidChange;
     private ScheduledFuture<?> pendingCompletion;
     private ScheduledFuture<?> pendingCodeLens;
     private ScheduledFuture<?> pendingInlayHints;
+    private ScheduledFuture<?> pendingSignatureHelp;
+    private ScheduledFuture<?> pendingDocumentSymbol;
+    private ScheduledFuture<?> pendingSemanticTokens;
     private int codeLensRequestSerial;
     private int inlayHintRequestSerial;
+    private int signatureHelpRequestSerial;
+    private int documentSymbolRequestSerial;
+    private int semanticTokensRequestSerial;
     private double pendingScrollX;
     private double pendingScrollY;
     private boolean scrollFlushScheduled;
@@ -129,7 +149,12 @@ public class EditorTab extends Tab {
         VirtualizedScrollPane<CodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
         installScrollSensitivity();
         StackPane editorStack = new StackPane(scroll, inlayHintsLayer);
-        setContent(editorStack);
+        breadcrumbBar.getStyleClass().add("mt-breadcrumb-bar");
+        breadcrumbBar.setVisible(false);
+        breadcrumbBar.setManaged(false);
+        BorderPane wrap = new BorderPane(editorStack);
+        wrap.setTop(breadcrumbBar);
+        setContent(wrap);
         inlayHintsController = new InlayHintsController(codeArea, inlayHintsLayer, this::setInlayHintAnchors);
 
         loadFile();
@@ -141,13 +166,17 @@ public class EditorTab extends Tab {
             scheduleDidChange();
             scheduleCodeLensRefresh();
             scheduleInlayHintsRefresh();
+            scheduleDocumentSymbolRefresh();
+            scheduleSemanticTokensRefresh();
             maybeAutoCompletion(oldText, newText);
+            maybeSignatureHelp(oldText, newText);
         });
 
         codeArea.caretPositionProperty().addListener((obs, o, n) -> {
             int caret = n.intValue();
             TwoDimensional.Position p = codeArea.offsetToPosition(caret, TwoDimensional.Bias.Forward);
             ctx.getStatusBar().setCaret(p.getMajor(), p.getMinor());
+            updateBreadcrumb();
         });
 
         codeArea.addEventFilter(KeyEvent.KEY_PRESSED, this::handleKey);
@@ -251,7 +280,9 @@ public class EditorTab extends Tab {
                 if (edits != null && !edits.isEmpty()) {
                     LspEdits.applyToCodeArea(codeArea, edits);
                     lastDiagnosticSpans = null;
+                    lastSemanticSpans = null;
                     applyHighlightingNow();
+                    scheduleSemanticTokensRefresh();
                 }
                 writeToDisk();
             }, Platform::runLater);
@@ -305,6 +336,10 @@ public class EditorTab extends Tab {
         if (pendingCompletion != null) pendingCompletion.cancel(false);
         if (pendingCodeLens != null) pendingCodeLens.cancel(false);
         if (pendingInlayHints != null) pendingInlayHints.cancel(false);
+        if (pendingSignatureHelp != null) pendingSignatureHelp.cancel(false);
+        if (pendingDocumentSymbol != null) pendingDocumentSymbol.cancel(false);
+        if (pendingSemanticTokens != null) pendingSemanticTokens.cancel(false);
+        signaturePopup.hide();
         inlayHintsController.dispose();
         if (ctx.getLspBridge() != null) {
             try { ctx.getLspBridge().didClose(path); } catch (Exception ignored) {}
@@ -320,6 +355,12 @@ public class EditorTab extends Tab {
         openedLspSession = lspSession;
         scheduleCodeLensRefresh();
         scheduleInlayHintsRefresh();
+        scheduleDocumentSymbolRefresh();
+        scheduleSemanticTokensRefresh();
+    }
+
+    public List<DocumentSymbol> getLastDocumentSymbols() {
+        return lastDocumentSymbols;
     }
 
     /* ----- code lens ----- */
@@ -730,7 +771,9 @@ public class EditorTab extends Tab {
                 if (ca.getEdit() != null) {
                     int files = LspEdits.applyWorkspaceEdit(ctx, ca.getEdit());
                     lastDiagnosticSpans = null;
+                    lastSemanticSpans = null;
                     applyHighlightingNow();
+                    scheduleSemanticTokensRefresh();
                     ctx.getStatusBar().setMessage("Quick fix applied to " + files + " file(s)");
                 }
                 if (ca.getCommand() != null) {
@@ -777,7 +820,9 @@ public class EditorTab extends Tab {
             // RichTextFX clears styles in replaced ranges, and any cached diagnostic spans
             // reference old offsets — so always re-tokenize before showing the result.
             lastDiagnosticSpans = null;
+            lastSemanticSpans = null;
             applyHighlightingNow();
+            scheduleSemanticTokensRefresh();
             ctx.getStatusBar().setMessage(hadChanges
                     ? "Formatted " + path.getFileName()
                     : "No formatting changes");
@@ -908,7 +953,9 @@ public class EditorTab extends Tab {
                 }
                 int files = LspEdits.applyWorkspaceEdit(ctx, edit);
                 lastDiagnosticSpans = null;
+                lastSemanticSpans = null;
                 applyHighlightingNow();
+                scheduleSemanticTokensRefresh();
                 ctx.getStatusBar().setMessage("Renamed in " + files + " file(s)");
             }, Platform::runLater);
         }, Platform::runLater);
@@ -937,6 +984,11 @@ public class EditorTab extends Tab {
                 e.consume();
                 return;
             }
+        }
+        if (e.getCode() == KeyCode.SPACE && e.isControlDown() && e.isShiftDown()) {
+            requestSignatureHelpAtCaret();
+            e.consume();
+            return;
         }
         if (e.getCode() == KeyCode.SPACE && e.isControlDown()) {
             requestCompletionNow();
@@ -1032,6 +1084,11 @@ public class EditorTab extends Tab {
     private void applyCombinedStyles() {
         if (lastTokenSpans == null) return;
         StyleSpans<Collection<String>> combined = lastTokenSpans;
+        if (lastSemanticSpans != null) {
+            try {
+                combined = combined.overlay(lastSemanticSpans, EditorTab::mergeStyles);
+            } catch (Exception ignored) {}
+        }
         if (lastDiagnosticSpans != null) {
             try {
                 combined = combined.overlay(
@@ -1276,7 +1333,9 @@ public class EditorTab extends Tab {
 
         if (additional != null && !additional.isEmpty()) {
             lastDiagnosticSpans = null;
+            lastSemanticSpans = null;
             applyHighlightingNow();
+            scheduleSemanticTokensRefresh();
         }
         completionMenu.hide();
     }
@@ -1362,6 +1421,166 @@ public class EditorTab extends Tab {
             case Text -> "a";
             default -> "·";
         };
+    }
+
+    /* ----- signature help ----- */
+
+    private void maybeSignatureHelp(String oldText, String newText) {
+        int caret = codeArea.getCaretPosition();
+        int delta = newText.length() - oldText.length();
+        if (delta == 1 && caret > 0) {
+            char c = newText.charAt(caret - 1);
+            if (c == '(' || c == ',') {
+                scheduleSignatureHelp(String.valueOf(c));
+                return;
+            }
+            if (c == ')') {
+                signaturePopup.hide();
+                return;
+            }
+        }
+        if (delta == -1 && signaturePopup.isShowing()) {
+            scheduleSignatureHelp(null);
+        }
+    }
+
+    private void scheduleSignatureHelp(String triggerChar) {
+        if (pendingSignatureHelp != null) pendingSignatureHelp.cancel(false);
+        pendingSignatureHelp = BG_EXEC.schedule(
+                () -> Platform.runLater(() -> requestSignatureHelpNow(triggerChar)),
+                150, TimeUnit.MILLISECONDS);
+    }
+
+    public void requestSignatureHelpAtCaret() {
+        requestSignatureHelpNow(null);
+    }
+
+    private void requestSignatureHelpNow(String triggerChar) {
+        LspBridge lsp = ctx.getLspBridge();
+        if (lsp == null || !lsp.isReady()) return;
+        TwoDimensional.Position p = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
+        final int request = ++signatureHelpRequestSerial;
+        lsp.signatureHelp(path, p.getMajor(), p.getMinor(), triggerChar).thenAcceptAsync(help -> {
+            if (request != signatureHelpRequestSerial) return;
+            if (help == null || help.getSignatures() == null || help.getSignatures().isEmpty()) {
+                signaturePopup.hide();
+                return;
+            }
+            Optional<javafx.geometry.Bounds> caretBounds = codeArea.getCaretBounds();
+            if (caretBounds.isEmpty()) return;
+            javafx.geometry.Bounds b = caretBounds.get();
+            signaturePopup.show(codeArea, help, b.getMinX(), b.getMinY() - 6);
+        }, Platform::runLater);
+    }
+
+    /* ----- document symbols + breadcrumb ----- */
+
+    private void scheduleDocumentSymbolRefresh() {
+        if (pendingDocumentSymbol != null) pendingDocumentSymbol.cancel(false);
+        pendingDocumentSymbol = BG_EXEC.schedule(
+                () -> Platform.runLater(this::requestDocumentSymbolNow),
+                350, TimeUnit.MILLISECONDS);
+    }
+
+    private void requestDocumentSymbolNow() {
+        LspBridge lsp = ctx.getLspBridge();
+        if (lsp == null || !lsp.isReady()) return;
+        final int request = ++documentSymbolRequestSerial;
+        lsp.documentSymbol(path).thenAcceptAsync(raw -> {
+            if (request != documentSymbolRequestSerial) return;
+            lastDocumentSymbols = OutlinePanel.flatten(raw);
+            updateBreadcrumb();
+            if (ctx.getOutputPane() != null) ctx.getOutputPane().refreshOutlineFor(this);
+        }, Platform::runLater);
+    }
+
+    private void updateBreadcrumb() {
+        if (lastDocumentSymbols == null || lastDocumentSymbols.isEmpty()) {
+            if (breadcrumbBar.isVisible()) {
+                breadcrumbBar.setVisible(false);
+                breadcrumbBar.setManaged(false);
+            }
+            breadcrumbBar.getChildren().clear();
+            return;
+        }
+        TwoDimensional.Position pos = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
+        int line = pos.getMajor();
+        int col = pos.getMinor();
+        List<DocumentSymbol> chain = new ArrayList<>();
+        collectAncestors(lastDocumentSymbols, line, col, chain);
+        breadcrumbBar.getChildren().clear();
+        if (chain.isEmpty()) {
+            breadcrumbBar.setVisible(false);
+            breadcrumbBar.setManaged(false);
+            return;
+        }
+        for (int i = 0; i < chain.size(); i++) {
+            DocumentSymbol s = chain.get(i);
+            Label name = new Label(s.getName() == null ? "?" : s.getName());
+            name.getStyleClass().add("mt-breadcrumb-item");
+            name.setOnMouseClicked(_ -> {
+                Range r = s.getSelectionRange() != null ? s.getSelectionRange() : s.getRange();
+                if (r != null && r.getStart() != null) revealPosition(r.getStart().getLine(), r.getStart().getCharacter());
+            });
+            breadcrumbBar.getChildren().add(name);
+            if (i < chain.size() - 1) {
+                Label sep = new Label("›");
+                sep.getStyleClass().add("mt-breadcrumb-sep");
+                breadcrumbBar.getChildren().add(sep);
+            }
+        }
+        if (!breadcrumbBar.isVisible()) {
+            breadcrumbBar.setVisible(true);
+            breadcrumbBar.setManaged(true);
+        }
+    }
+
+    private static void collectAncestors(List<DocumentSymbol> symbols, int line, int col, List<DocumentSymbol> out) {
+        if (symbols == null) return;
+        for (DocumentSymbol s : symbols) {
+            Range r = s.getRange();
+            if (r == null || r.getStart() == null || r.getEnd() == null) continue;
+            if (positionInRange(line, col, r)) {
+                out.add(s);
+                collectAncestors(s.getChildren(), line, col, out);
+                return;
+            }
+        }
+    }
+
+    private static boolean positionInRange(int line, int col, Range r) {
+        Position s = r.getStart();
+        Position e = r.getEnd();
+        if (line < s.getLine() || line > e.getLine()) return false;
+        if (line == s.getLine() && col < s.getCharacter()) return false;
+        if (line == e.getLine() && col > e.getCharacter()) return false;
+        return true;
+    }
+
+    /* ----- semantic tokens ----- */
+
+    private void scheduleSemanticTokensRefresh() {
+        if (pendingSemanticTokens != null) pendingSemanticTokens.cancel(false);
+        pendingSemanticTokens = BG_EXEC.schedule(
+                () -> Platform.runLater(this::requestSemanticTokensNow),
+                300, TimeUnit.MILLISECONDS);
+    }
+
+    private void requestSemanticTokensNow() {
+        LspBridge lsp = ctx.getLspBridge();
+        if (lsp == null || !lsp.isReady()) return;
+        final int request = ++semanticTokensRequestSerial;
+        final String snapshot = codeArea.getText();
+        final SemanticTokensLegend legend = lsp.getSemanticLegend();
+        if (legend == null) return;
+        lsp.semanticTokensFull(path).thenAcceptAsync(tokens -> {
+            if (request != semanticTokensRequestSerial) return;
+            if (tokens == null) return;
+            if (!snapshot.equals(codeArea.getText())) return;
+            StyleSpans<Collection<String>> spans = SemanticTokensDecoder.decode(snapshot, tokens, legend);
+            lastSemanticSpans = spans;
+            applyCombinedStyles();
+        }, Platform::runLater);
     }
 
     /* ----- hover ----- */

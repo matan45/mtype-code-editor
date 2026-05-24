@@ -37,6 +37,7 @@ import org.mtype.editor.ui.dialogs.AddPackageDialog;
 import org.mtype.editor.ui.dialogs.Dialogs;
 import org.mtype.editor.ui.dialogs.NewProjectDialog;
 import org.mtype.editor.ui.dialogs.NewWorkspaceDialog;
+import org.mtype.editor.ui.dialogs.WorkspaceSymbolPicker;
 import org.mtype.editor.ui.chrome.WindowMaximizer;
 import org.mtype.editor.ui.chrome.WindowResizer;
 import org.mtype.editor.ui.chrome.WindowTitleBar;
@@ -109,6 +110,7 @@ public class EditorApp extends Application {
         output.attachReferences(ctx);
         output.attachProblems(ctx);
         output.attachTerminal(ctx);
+        output.attachOutline(ctx);
 
         RunController runController = new RunController(ctx);
         ctx.setRunController(runController);
@@ -266,8 +268,13 @@ public class EditorApp extends Application {
                 KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN));
         findInFiles.setOnAction(_ -> openFindInFiles());
 
+        MenuItem gotoSymbol = new MenuItem("Go to Symbol in Workspace...");
+        gotoSymbol.setAccelerator(new KeyCodeCombination(KeyCode.T,
+                KeyCombination.SHORTCUT_DOWN));
+        gotoSymbol.setOnAction(_ -> WorkspaceSymbolPicker.open(ctx, stage));
+
         code.getItems().addAll(format, goToDef, rename, callHierarchy,
-                new SeparatorMenuItem(), findInFiles);
+                new SeparatorMenuItem(), gotoSymbol, findInFiles);
 
         Menu build = new Menu("Build");
         BuildController bc = ctx.getBuildController();

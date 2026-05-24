@@ -1617,3 +1617,167 @@
     -fx-padding: 8 12 8 12;
     -fx-font-size: 13;
 }
+
+/* ===========================================================
+   Breadcrumb bar (above each editor)
+   =========================================================== */
+.mt-breadcrumb-bar {
+    -fx-background-color: #21252b;
+    -fx-border-color: transparent transparent #181a1f transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 3 10 3 10;
+    -fx-spacing: 4;
+    -fx-alignment: center-left;
+}
+.mt-breadcrumb-item {
+    -fx-text-fill: #98a0ad;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 11.5;
+    -fx-cursor: hand;
+    -fx-padding: 1 4 1 4;
+    -fx-background-radius: 3;
+}
+.mt-breadcrumb-item:hover {
+    -fx-text-fill: #ffffff;
+    -fx-background-color: #2c313c;
+}
+.mt-breadcrumb-sep {
+    -fx-text-fill: #636d83;
+    -fx-font-size: 11;
+}
+
+/* ===========================================================
+   Signature help popup
+   =========================================================== */
+.mt-signature-shell {
+    -fx-background-color: #1c1f25;
+    -fx-background-radius: 4;
+    -fx-border-color: #3e4451;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-padding: 8 12 8 12;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.55), 10, 0.25, 0, 3);
+}
+.mt-signature-popup {
+    -fx-spacing: 4;
+}
+.mt-signature-line {
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 12;
+}
+.mt-signature-line .text.mt-signature-text {
+    -fx-fill: #d7dae0;
+}
+.mt-signature-line .text.mt-signature-active-param {
+    -fx-fill: #ffcc66;
+    -fx-font-weight: bold;
+}
+.mt-signature-counter {
+    -fx-fill: #636d83;
+    -fx-font-size: 11;
+}
+.mt-signature-doc {
+    -fx-fill: #98a0ad;
+    -fx-font-size: 11.5;
+    -fx-font-family: "Segoe UI", "Inter", "Arial", sans-serif;
+}
+
+/* ===========================================================
+   Outline panel
+   =========================================================== */
+.mt-outline {
+    -fx-background-color: #282c34;
+}
+.mt-outline-tree {
+    -fx-background-color: #282c34;
+    -fx-control-inner-background: #282c34;
+    -fx-border-color: transparent;
+}
+.mt-outline-tree .tree-cell {
+    -fx-background-color: #282c34;
+    -fx-text-fill: #abb2bf;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    -fx-font-size: 12.5;
+    -fx-padding: 2 8 2 8;
+}
+.mt-outline-tree .tree-cell:filled:hover {
+    -fx-background-color: #2c313c;
+}
+.mt-outline-tree .tree-cell:filled:selected {
+    -fx-background-color: #3e4451;
+    -fx-text-fill: #ffffff;
+}
+
+/* ===========================================================
+   Semantic token colors (overlaid on regex tokenizer)
+   Token type CSS classes follow the standard LSP token names.
+   =========================================================== */
+.styled-text-area .text.mt-sem-namespace,
+.code-area .text.mt-sem-namespace        { -fx-fill: #c5a3ff; }
+
+.styled-text-area .text.mt-sem-type,
+.code-area .text.mt-sem-type,
+.styled-text-area .text.mt-sem-class,
+.code-area .text.mt-sem-class,
+.styled-text-area .text.mt-sem-struct,
+.code-area .text.mt-sem-struct,
+.styled-text-area .text.mt-sem-enum,
+.code-area .text.mt-sem-enum,
+.styled-text-area .text.mt-sem-interface,
+.code-area .text.mt-sem-interface,
+.styled-text-area .text.mt-sem-typeParameter,
+.code-area .text.mt-sem-typeParameter    { -fx-fill: #e5c07b; }
+
+.styled-text-area .text.mt-sem-parameter,
+.code-area .text.mt-sem-parameter        { -fx-fill: #d19a66; -fx-font-style: italic; }
+
+.styled-text-area .text.mt-sem-variable,
+.code-area .text.mt-sem-variable         { -fx-fill: #e06c75; }
+
+.styled-text-area .text.mt-sem-property,
+.code-area .text.mt-sem-property         { -fx-fill: #e06c75; }
+
+.styled-text-area .text.mt-sem-enumMember,
+.code-area .text.mt-sem-enumMember       { -fx-fill: #d19a66; }
+
+.styled-text-area .text.mt-sem-function,
+.code-area .text.mt-sem-function,
+.styled-text-area .text.mt-sem-method,
+.code-area .text.mt-sem-method           { -fx-fill: #61afef; }
+
+.styled-text-area .text.mt-sem-macro,
+.code-area .text.mt-sem-macro            { -fx-fill: #c678dd; }
+
+.styled-text-area .text.mt-sem-keyword,
+.code-area .text.mt-sem-keyword          { -fx-fill: #c678dd; }
+
+.styled-text-area .text.mt-sem-modifier,
+.code-area .text.mt-sem-modifier         { -fx-fill: #c678dd; -fx-font-style: italic; }
+
+.styled-text-area .text.mt-sem-comment,
+.code-area .text.mt-sem-comment          { -fx-fill: #5c6370; -fx-font-style: italic; }
+
+.styled-text-area .text.mt-sem-string,
+.code-area .text.mt-sem-string           { -fx-fill: #98c379; }
+
+.styled-text-area .text.mt-sem-number,
+.code-area .text.mt-sem-number           { -fx-fill: #d19a66; }
+
+.styled-text-area .text.mt-sem-operator,
+.code-area .text.mt-sem-operator         { -fx-fill: #56b6c2; }
+
+.styled-text-area .text.mt-sem-decorator,
+.code-area .text.mt-sem-decorator        { -fx-fill: #e5c07b; -fx-font-weight: bold; }
+
+/* Modifier overlays (apply additional styling on top of the type color) */
+.styled-text-area .text.mt-sem-mod-deprecated,
+.code-area .text.mt-sem-mod-deprecated   { -fx-strikethrough: true; }
+
+.styled-text-area .text.mt-sem-mod-readonly,
+.code-area .text.mt-sem-mod-readonly     { -fx-font-style: italic; }
+
+.styled-text-area .text.mt-sem-mod-defaultLibrary,
+.code-area .text.mt-sem-mod-defaultLibrary { -fx-fill: #d19a66; }
+
+.styled-text-area .text.mt-sem-mod-static,
+.code-area .text.mt-sem-mod-static       { -fx-underline: false; }
