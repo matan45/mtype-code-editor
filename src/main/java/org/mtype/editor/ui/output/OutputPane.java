@@ -18,7 +18,7 @@ import java.util.List;
 
 public class OutputPane extends TabPane {
     private final TextArea runArea = new TextArea();
-    private final TextArea lspArea = new TextArea();
+    private final InlineCssTextArea lspArea = new InlineCssTextArea();
     private final InlineCssTextArea compileArea = new InlineCssTextArea();
     private final InlineCssTextArea packagesArea = new InlineCssTextArea();
     private final InlineCssTextArea gitArea = new InlineCssTextArea();
@@ -61,7 +61,7 @@ public class OutputPane extends TabPane {
         lspToolbar.setAlignment(Pos.CENTER_RIGHT);
         lspToolbar.setPadding(new Insets(4, 6, 4, 6));
         lspToolbar.getStyleClass().add("mt-output-toolbar");
-        BorderPane lspContent = new BorderPane(lspArea);
+        BorderPane lspContent = new BorderPane(new VirtualizedScrollPane<>(lspArea));
         lspContent.setTop(lspToolbar);
         lspTab = new Tab("LSP Log", lspContent);
         lspTab.setClosable(false);
@@ -216,7 +216,22 @@ public class OutputPane extends TabPane {
 
     public void appendLspLog(String line) {
         String text = line + System.lineSeparator();
-        Platform.runLater(() -> lspArea.appendText(text));
+        String style = looksLikeLspError(line) ? "-fx-fill: #e06c75;" : "";
+        Platform.runLater(() -> {
+            int start = lspArea.getLength();
+            lspArea.appendText(text);
+            int end = lspArea.getLength();
+            lspArea.setStyle(start, end, style);
+            lspArea.moveTo(end);
+            lspArea.requestFollowCaret();
+        });
+    }
+
+    private static boolean looksLikeLspError(String line) {
+        if (line == null) return false;
+        if (line.startsWith("[stderr]")) return true;
+        String lower = line.toLowerCase();
+        return lower.contains("error") || lower.contains("failed");
     }
 
     public void appendCompile(String line, boolean stderr) {
