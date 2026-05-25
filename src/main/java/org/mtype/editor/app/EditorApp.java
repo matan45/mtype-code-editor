@@ -218,6 +218,11 @@ public class EditorApp extends Application {
     private MenuBar buildMenuBar() {
         MenuBar mb = new MenuBar();
         Menu file = new Menu("File");
+        MenuItem newWindow = new MenuItem("New Window");
+        newWindow.setAccelerator(new KeyCodeCombination(KeyCode.N,
+                KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN));
+        newWindow.setOnAction(_ -> openNewWindow());
+
         MenuItem openFolder = new MenuItem("Open Folder...");
         openFolder.setAccelerator(new KeyCodeCombination(KeyCode.O,
                 KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN));
@@ -240,7 +245,8 @@ public class EditorApp extends Application {
         MenuItem exit = new MenuItem("Exit");
         exit.setOnAction(_ -> { shutdown(); Platform.exit(); });
 
-        file.getItems().addAll(openFolder, new SeparatorMenuItem(), newProject, newWorkspace,
+        file.getItems().addAll(newWindow, new SeparatorMenuItem(),
+                openFolder, new SeparatorMenuItem(), newProject, newWorkspace,
                 new SeparatorMenuItem(), save, new SeparatorMenuItem(), settings,
                 new SeparatorMenuItem(), exit);
 
@@ -515,6 +521,14 @@ public class EditorApp extends Application {
         Workspace ws = new Workspace(root);
         ctx.openWorkspace(ws);
         stage.setTitle("mType Editor - " + root.getFileName());
+    }
+
+    private void openNewWindow() {
+        try {
+            new EditorApp().start(new Stage());
+        } catch (Exception ex) {
+            ctx.getStatusBar().setMessage("Failed to open new window: " + ex.getMessage());
+        }
     }
 
     private Node buildSidePanel(WorkspaceTreeView tree, GitChangesView gitChanges, DebuggerPanel debuggerPanel) {
