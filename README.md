@@ -21,18 +21,13 @@ mType Editor is a desktop code editor for the mType language. It is built with J
 - Maven
 - mType toolchain
 
-By default the editor looks for the mType toolchain under:
-
-```text
-C:\matan\mType
-```
 
 The default executable paths are:
 
 ```text
-C:\matan\mType\bin\mType\Release\x64\mType.exe
-C:\matan\mType\bin\mtype-language-server\Release\x64\mtype-language-server.exe
-C:\matan\mType\bin\mtpm\Release\x64\mtpm.exe
+mType\bin\mType\Release\x64\mType.exe
+mType\bin\mtype-language-server\Release\x64\mtype-language-server.exe
+mType\bin\mtpm\Release\x64\mtpm.exe
 ```
 
 You can override the base location with `MTYPE_HOME`, or change paths from `File -> Settings...`.
