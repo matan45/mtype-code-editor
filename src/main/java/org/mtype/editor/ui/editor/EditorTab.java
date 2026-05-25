@@ -93,6 +93,7 @@ public class EditorTab extends Tab {
 
     private final AppContext ctx;
     private final Path path;
+    private final boolean lspManaged;
     private final CodeArea codeArea = new CodeArea();
     private final SimpleBooleanProperty dirty = new SimpleBooleanProperty(false);
     private final AtomicInteger version = new AtomicInteger(1);
@@ -138,6 +139,7 @@ public class EditorTab extends Tab {
     public EditorTab(AppContext ctx, Path path) {
         this.ctx = ctx;
         this.path = path;
+        this.lspManaged = Tokenizers.isMTypeFile(path);
         setText(path.getFileName().toString());
 
         codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
@@ -271,7 +273,8 @@ public class EditorTab extends Tab {
     public boolean isDirty() { return dirty.get(); }
 
     public void save() {
-        boolean formatFirst = ctx.getSettings() != null
+        boolean formatFirst = lspManaged
+                && ctx.getSettings() != null
                 && ctx.getSettings().editor != null
                 && ctx.getSettings().editor.formatOnSave;
         LspBridge lsp = ctx.getLspBridge();
@@ -341,12 +344,13 @@ public class EditorTab extends Tab {
         if (pendingSemanticTokens != null) pendingSemanticTokens.cancel(false);
         signaturePopup.hide();
         inlayHintsController.dispose();
-        if (ctx.getLspBridge() != null) {
+        if (lspManaged && ctx.getLspBridge() != null) {
             try { ctx.getLspBridge().didClose(path); } catch (Exception ignored) {}
         }
     }
 
     void onLspReady() {
+        if (!lspManaged) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
         long lspSession = lsp.getSession();
@@ -459,6 +463,7 @@ public class EditorTab extends Tab {
     }
 
     private void scheduleCodeLensRefresh() {
+        if (!lspManaged) return;
         if (pendingCodeLens != null) pendingCodeLens.cancel(false);
         pendingCodeLens = BG_EXEC.schedule(
                 () -> Platform.runLater(this::requestCodeLensNow),
@@ -477,6 +482,7 @@ public class EditorTab extends Tab {
     }
 
     private void scheduleInlayHintsRefresh() {
+        if (!lspManaged) return;
         if (pendingInlayHints != null) pendingInlayHints.cancel(false);
         pendingInlayHints = BG_EXEC.schedule(
                 () -> Platform.runLater(this::requestInlayHintsNow),
@@ -489,6 +495,10 @@ public class EditorTab extends Tab {
     }
 
     private void requestInlayHintsNow() {
+        if (!lspManaged) {
+            inlayHintsController.clear();
+            return;
+        }
         if (ctx.getSettings() == null
                 || ctx.getSettings().editor == null
                 || !ctx.getSettings().editor.inlayHints) {
@@ -702,6 +712,10 @@ public class EditorTab extends Tab {
     }
 
     private void populateQuickFix(javafx.scene.control.Menu quickFix) {
+        if (!lspManaged) {
+            quickFix.getItems().setAll(disabledItem("(not available)"));
+            return;
+        }
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) {
             quickFix.getItems().setAll(disabledItem("LSP not ready"));
@@ -807,6 +821,7 @@ public class EditorTab extends Tab {
     /* ================================ commands ================================ */
 
     public void formatDocument() {
+        if (!lspManaged) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) {
             ctx.getStatusBar().setMessage("LSP not ready");
@@ -830,6 +845,7 @@ public class EditorTab extends Tab {
     }
 
     public void goToDefinitionAtCaret() {
+        if (!lspManaged) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
         TwoDimensional.Position pos = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
@@ -856,6 +872,7 @@ public class EditorTab extends Tab {
     }
 
     public void showCallHierarchyAtCaret() {
+        if (!lspManaged) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) {
             ctx.getStatusBar().setMessage("LSP not ready");
@@ -873,6 +890,7 @@ public class EditorTab extends Tab {
     }
 
     public void findReferencesAtCaret() {
+        if (!lspManaged) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) {
             ctx.getStatusBar().setMessage("LSP not ready");
@@ -912,6 +930,7 @@ public class EditorTab extends Tab {
     }
 
     public void renameAtCaret() {
+        if (!lspManaged) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) {
             ctx.getStatusBar().setMessage("LSP not ready");
@@ -1158,6 +1177,7 @@ public class EditorTab extends Tab {
     /* ----- LSP sync ----- */
 
     private void scheduleDidChange() {
+        if (!lspManaged) return;
         if (pendingDidChange != null) pendingDidChange.cancel(false);
         String snapshot = codeArea.getText();
         int v = version.incrementAndGet();
@@ -1194,6 +1214,7 @@ public class EditorTab extends Tab {
     }
 
     private void scheduleCompletion() {
+        if (!lspManaged) return;
         if (pendingCompletion != null) pendingCompletion.cancel(false);
         pendingCompletion = BG_EXEC.schedule(
                 () -> Platform.runLater(this::requestCompletionNow),
@@ -1201,6 +1222,7 @@ public class EditorTab extends Tab {
     }
 
     private void requestCompletionNow() {
+        if (!lspManaged) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
         int caret = codeArea.getCaretPosition();
@@ -1444,6 +1466,7 @@ public class EditorTab extends Tab {
     }
 
     private void scheduleSignatureHelp(String triggerChar) {
+        if (!lspManaged) return;
         if (pendingSignatureHelp != null) pendingSignatureHelp.cancel(false);
         pendingSignatureHelp = BG_EXEC.schedule(
                 () -> Platform.runLater(() -> requestSignatureHelpNow(triggerChar)),
@@ -1455,6 +1478,7 @@ public class EditorTab extends Tab {
     }
 
     private void requestSignatureHelpNow(String triggerChar) {
+        if (!lspManaged) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
         TwoDimensional.Position p = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
@@ -1475,6 +1499,7 @@ public class EditorTab extends Tab {
     /* ----- document symbols + breadcrumb ----- */
 
     private void scheduleDocumentSymbolRefresh() {
+        if (!lspManaged) return;
         if (pendingDocumentSymbol != null) pendingDocumentSymbol.cancel(false);
         pendingDocumentSymbol = BG_EXEC.schedule(
                 () -> Platform.runLater(this::requestDocumentSymbolNow),
@@ -1482,6 +1507,7 @@ public class EditorTab extends Tab {
     }
 
     private void requestDocumentSymbolNow() {
+        if (!lspManaged) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
         final int request = ++documentSymbolRequestSerial;
@@ -1559,6 +1585,7 @@ public class EditorTab extends Tab {
     /* ----- semantic tokens ----- */
 
     private void scheduleSemanticTokensRefresh() {
+        if (!lspManaged) return;
         if (pendingSemanticTokens != null) pendingSemanticTokens.cancel(false);
         pendingSemanticTokens = BG_EXEC.schedule(
                 () -> Platform.runLater(this::requestSemanticTokensNow),
@@ -1566,6 +1593,7 @@ public class EditorTab extends Tab {
     }
 
     private void requestSemanticTokensNow() {
+        if (!lspManaged) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
         final int request = ++semanticTokensRequestSerial;
@@ -1585,6 +1613,7 @@ public class EditorTab extends Tab {
     /* ----- hover ----- */
 
     private void requestHover(int charIdx, Point2D pos) {
+        if (!lspManaged) return;
         if (ctx.getLspBridge() == null) return;
         TwoDimensional.Position p = codeArea.offsetToPosition(charIdx, TwoDimensional.Bias.Forward);
         ctx.getLspBridge().hover(path, p.getMajor(), p.getMinor()).thenAcceptAsync(content -> {

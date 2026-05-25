@@ -18,4 +18,10 @@ public final class Tokenizers {
         if (name.endsWith(".mtworkspace")) return XmlTokenizer.compute(text);
         return MTypeTokenizer.compute(text);
     }
+
+    public static boolean isMTypeFile(Path path) {
+        if (path == null) return false;
+        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+        return name.endsWith(".mt") || name.endsWith(".mtc");
+    }
 }
