@@ -539,6 +539,70 @@
     -fx-text-fill: #ffffff;
 }
 
+.mt-references {
+    -fx-padding: 5;
+}
+
+.mt-references .menu-item {
+    -fx-padding: 0;
+}
+
+.mt-reference-row {
+    -fx-min-width: 640;
+    -fx-pref-width: 640;
+    -fx-max-width: 640;
+    -fx-padding: 6 9 6 7;
+    -fx-font-family: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12.5;
+}
+
+.mt-reference-icon {
+    -fx-min-width: 13;
+    -fx-pref-width: 13;
+    -fx-max-width: 13;
+    -fx-min-height: 10;
+    -fx-pref-height: 10;
+    -fx-max-height: 10;
+    -fx-background-color: #56b6c2;
+    -fx-background-radius: 2;
+}
+
+.mt-reference-index {
+    -fx-min-width: 34;
+    -fx-pref-width: 34;
+    -fx-max-width: 34;
+    -fx-alignment: center-right;
+    -fx-text-fill: #abb2bf;
+}
+
+.mt-reference-file {
+    -fx-min-width: 92;
+    -fx-pref-width: 92;
+    -fx-max-width: 92;
+    -fx-text-fill: #abb2bf;
+}
+
+.mt-reference-position {
+    -fx-min-width: 48;
+    -fx-pref-width: 48;
+    -fx-max-width: 48;
+    -fx-text-fill: #8b93a7;
+}
+
+.mt-reference-snippet {
+    -fx-min-width: 420;
+    -fx-pref-width: 420;
+    -fx-max-width: 420;
+    -fx-text-fill: #d7dae0;
+}
+
+.mt-references .menu-item:focused .mt-reference-index,
+.mt-references .menu-item:focused .mt-reference-file,
+.mt-references .menu-item:focused .mt-reference-position,
+.mt-references .menu-item:focused .mt-reference-snippet {
+    -fx-text-fill: #ffffff;
+}
+
 /* completion kind badge */
 .mt-completion-kind {
     -fx-text-fill: #ffffff;
@@ -1102,6 +1166,20 @@
 }
 .mt-gutter-execution-arrow {
     -fx-background-color: #ffcc00;
+}
+
+.mt-gutter-fold-arrow {
+    -fx-pref-width: 14;  -fx-min-width: 14;  -fx-max-width: 14;
+    -fx-pref-height: 14; -fx-min-height: 14; -fx-max-height: 14;
+    -fx-text-fill: #636d83;
+    -fx-font-size: 10;
+    -fx-alignment: center;
+    -fx-cursor: hand;
+    -fx-padding: 0 0 0 2;
+}
+.mt-gutter-fold-arrow:hover { -fx-text-fill: #abb2bf; }
+.mt-gutter-fold-spacer {
+    -fx-pref-width: 14; -fx-min-width: 14; -fx-max-width: 14;
 }
 
 /* Current-line highlight — applied via codeArea.setParagraphStyle */

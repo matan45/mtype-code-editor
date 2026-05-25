@@ -5,14 +5,17 @@ import com.google.gson.JsonObject;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.geometry.Point2D;
+import javafx.geometry.Pos;
 import javafx.geometry.Side;
 import javafx.scene.Cursor;
 import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ContextMenu;
+import javafx.scene.control.CustomMenuItem;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.OverrunStyle;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.SeparatorMenuItem;
@@ -26,6 +29,8 @@ import javafx.scene.input.ScrollEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import org.eclipse.lsp4j.CodeLens;
@@ -136,6 +141,13 @@ public class EditorTab extends Tab {
     private SnippetSession activeSnippet;
     private int executionLine = -1;
 
+    private record FoldRegion(int currentSigLine, int openBracePos, int currentEndLine, int currentEndLineLen, int originalSigLine, int originalEndLine) {}
+    private record FoldedRegion(int originalSigLine, int originalEndLine, String stashedText) {}
+    private static final String FOLD_PLACEHOLDER = " … }";
+    private final Map<Integer, FoldRegion> foldableByCurrentLine = new HashMap<>();
+    private final Map<Integer, FoldedRegion> foldedByOriginalLine = new java.util.LinkedHashMap<>();
+    private boolean isInternalEdit = false;
+
     public EditorTab(AppContext ctx, Path path) {
         this.ctx = ctx;
         this.path = path;
@@ -163,6 +175,7 @@ public class EditorTab extends Tab {
         suppressDirty = false;
 
         codeArea.textProperty().addListener((obs, oldText, newText) -> {
+            if (isInternalEdit) return;
             if (!suppressDirty) markDirty();
             scheduleHighlight();
             scheduleDidChange();
@@ -273,6 +286,7 @@ public class EditorTab extends Tab {
     public boolean isDirty() { return dirty.get(); }
 
     public void save() {
+        unfoldAll();
         boolean formatFirst = lspManaged
                 && ctx.getSettings() != null
                 && ctx.getSettings().editor != null
@@ -418,10 +432,31 @@ public class EditorTab extends Tab {
             marker.getStyleClass().add("mt-gutter-execution-arrow");
         }
 
-        javafx.scene.layout.HBox row = new javafx.scene.layout.HBox(breakpoint, marker, label);
+        Node fold = foldGutterNode(paragraphIndex);
+
+        javafx.scene.layout.HBox row = new javafx.scene.layout.HBox(breakpoint, marker, fold, label);
         row.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         row.getStyleClass().add("mt-gutter-row");
         return row;
+    }
+
+    private Node foldGutterNode(int paragraphIndex) {
+        FoldRegion fr = foldableByCurrentLine.get(paragraphIndex);
+        if (fr == null) {
+            javafx.scene.layout.Region spacer = new javafx.scene.layout.Region();
+            spacer.getStyleClass().add("mt-gutter-fold-spacer");
+            return spacer;
+        }
+        boolean folded = foldedByOriginalLine.containsKey(fr.originalSigLine());
+        Label arrow = new Label(folded ? "▶" : "▼");
+        arrow.getStyleClass().add("mt-gutter-fold-arrow");
+        arrow.setOnMouseClicked(e -> {
+            if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY) {
+                toggleFold(fr.originalSigLine());
+                e.consume();
+            }
+        });
+        return arrow;
     }
 
     private static String gutterSeverityClass(org.eclipse.lsp4j.DiagnosticSeverity s) {
@@ -619,9 +654,10 @@ public class EditorTab extends Tab {
     private void showReferencesMenu(Node anchor, List<? extends Location> locations) {
         referencesMenu.hide();
         referencesMenu.getItems().clear();
+        Map<Path, String[]> fileLines = new HashMap<>();
         int index = 1;
         for (Location location : locations) {
-            MenuItem item = new MenuItem(index + ". " + referenceLabel(location));
+            CustomMenuItem item = new CustomMenuItem(referenceRow(index, location, fileLines), true);
             item.setOnAction(e -> openLocation(location, "reference"));
             referencesMenu.getItems().add(item);
             index++;
@@ -629,23 +665,90 @@ public class EditorTab extends Tab {
         referencesMenu.show(anchor, Side.BOTTOM, 0, 2);
     }
 
-    private String referenceLabel(Location location) {
+    private Node referenceRow(int index, Location location, Map<Path, String[]> fileLines) {
+        ReferencePreview preview = referencePreview(location, fileLines);
+
+        Region icon = new Region();
+        icon.getStyleClass().add("mt-reference-icon");
+
+        Label ordinal = new Label(index + ".");
+        ordinal.getStyleClass().add("mt-reference-index");
+        ordinal.setMinWidth(34);
+        ordinal.setPrefWidth(34);
+        ordinal.setMaxWidth(34);
+
+        Label file = new Label(preview.file);
+        file.getStyleClass().add("mt-reference-file");
+        file.setMinWidth(92);
+        file.setPrefWidth(92);
+        file.setMaxWidth(92);
+        file.setTextOverrun(OverrunStyle.LEADING_ELLIPSIS);
+
+        Label position = new Label(preview.position);
+        position.getStyleClass().add("mt-reference-position");
+        position.setMinWidth(48);
+        position.setPrefWidth(48);
+        position.setMaxWidth(48);
+
+        Label snippet = new Label(preview.snippet);
+        snippet.getStyleClass().add("mt-reference-snippet");
+        snippet.setMinWidth(0);
+        snippet.setPrefWidth(420);
+        snippet.setMaxWidth(420);
+        snippet.setTextOverrun(OverrunStyle.ELLIPSIS);
+        HBox.setHgrow(snippet, Priority.NEVER);
+
+        HBox row = new HBox(6, icon, ordinal, file, position, snippet);
+        row.getStyleClass().add("mt-reference-row");
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.setMinWidth(640);
+        row.setPrefWidth(640);
+        row.setMaxWidth(640);
+        return row;
+    }
+
+    private ReferencePreview referencePreview(Location location, Map<Path, String[]> fileLines) {
         if (location == null || location.getUri() == null || location.getRange() == null
                 || location.getRange().getStart() == null) {
-            return "Unknown reference";
+            return new ReferencePreview("Unknown reference", "", "");
         }
+
         Position start = location.getRange().getStart();
+        int line = start.getLine();
+        int character = start.getCharacter();
+        Path refPath = uriToPath(location.getUri());
+        if (refPath == null) {
+            return new ReferencePreview(location.getUri(), (line + 1) + ":" + (character + 1), "");
+        }
+
+        Path name = refPath.getFileName();
+        String file = name == null ? refPath.toString() : name.toString();
+        String snippet = "";
+        String[] lines = fileLines.computeIfAbsent(refPath, this::readFileLines);
+        if (lines != null && line >= 0 && line < lines.length) {
+            snippet = lines[line].strip();
+        }
+        return new ReferencePreview(file, (line + 1) + ":" + (character + 1), snippet);
+    }
+
+    private Path uriToPath(String uri) {
         try {
-            Path refPath = java.nio.file.Paths.get(java.net.URI.create(location.getUri()));
-            Path name = refPath.getFileName();
-            String display = name == null ? refPath.toString() : name.toString();
-            return display + ":" + (start.getLine() + 1) + ":" + (start.getCharacter() + 1);
+            return java.nio.file.Paths.get(java.net.URI.create(uri));
         } catch (Exception ignored) {
-            return location.getUri() + ":" + (start.getLine() + 1) + ":" + (start.getCharacter() + 1);
+            return null;
+        }
+    }
+
+    private String[] readFileLines(Path file) {
+        try {
+            return Files.readString(file, StandardCharsets.UTF_8).split("\\R", -1);
+        } catch (Exception ignored) {
+            return null;
         }
     }
 
     private record CodeLensLine(String title, int line, int character) {}
+    private record ReferencePreview(String file, String position, String snippet) {}
 
     /** Move the caret to a 0-based LSP position and ensure visible. */
     public void revealPosition(int line, int character) {
@@ -1515,6 +1618,7 @@ public class EditorTab extends Tab {
             if (request != documentSymbolRequestSerial) return;
             lastDocumentSymbols = OutlinePanel.flatten(raw);
             updateBreadcrumb();
+            rebuildFoldableRegions();
             if (ctx.getOutputPane() != null) ctx.getOutputPane().refreshOutlineFor(this);
         }, Platform::runLater);
     }
@@ -1620,5 +1724,158 @@ public class EditorTab extends Tab {
             if (content == null || content.isBlank()) { hoverPopup.hide(); return; }
             hoverPopup.show(codeArea, content, pos.getX() + 10, pos.getY() + 10);
         }, Platform::runLater);
+    }
+
+    /* ----- code folding ----- */
+
+    private void rebuildFoldableRegions() {
+        foldableByCurrentLine.clear();
+        if (lastDocumentSymbols == null || lastDocumentSymbols.isEmpty()) {
+            codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
+            return;
+        }
+        List<int[]> raw = new ArrayList<>();
+        collectFoldable(lastDocumentSymbols, raw);
+        if (raw.isEmpty()) {
+            codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
+            return;
+        }
+        // For each currently-folded region, how many lines it absorbed from the original.
+        // Walk in ascending origSigLine order — that's how LinkedHashMap iterates if we
+        // inserted in order, but we re-sort to be safe.
+        List<FoldedRegion> activeFolds = new ArrayList<>(foldedByOriginalLine.values());
+        activeFolds.sort((a, b) -> Integer.compare(a.originalSigLine(), b.originalSigLine()));
+
+        int linesInBuffer = codeArea.getParagraphs().size();
+        for (int[] r : raw) {
+            int origSig = r[0], origEnd = r[1];
+            int absorbedBefore = 0;
+            boolean nestedInsideOuterFold = false;
+            for (FoldedRegion f : activeFolds) {
+                if (f.originalSigLine() == origSig) continue;
+                if (f.originalSigLine() < origSig && f.originalEndLine() >= origSig) {
+                    nestedInsideOuterFold = true; break;
+                }
+                if (f.originalEndLine() < origSig) {
+                    absorbedBefore += f.originalEndLine() - f.originalSigLine();
+                }
+            }
+            if (nestedInsideOuterFold) continue;
+            int currentSig = origSig - absorbedBefore;
+            int currentEnd = foldedByOriginalLine.containsKey(origSig)
+                    ? currentSig          // this region is itself folded — collapses onto signature line
+                    : origEnd - absorbedBefore;
+            if (currentSig < 0 || currentSig >= linesInBuffer) continue;
+            if (currentEnd >= linesInBuffer) continue;
+            String sigText = codeArea.getText(currentSig);
+            int brace = sigText.indexOf('{');
+            if (brace < 0) continue;
+            int endLineLen = codeArea.getText(currentEnd).length();
+            foldableByCurrentLine.put(currentSig,
+                    new FoldRegion(currentSig, brace, currentEnd, endLineLen, origSig, origEnd));
+        }
+        codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
+    }
+
+    private static void collectFoldable(List<DocumentSymbol> symbols, List<int[]> out) {
+        if (symbols == null) return;
+        for (DocumentSymbol s : symbols) {
+            if (s == null) continue;
+            Range r = s.getRange();
+            if (r != null && r.getStart() != null && r.getEnd() != null) {
+                org.eclipse.lsp4j.SymbolKind k = s.getKind();
+                if (k == org.eclipse.lsp4j.SymbolKind.Function
+                        || k == org.eclipse.lsp4j.SymbolKind.Method
+                        || k == org.eclipse.lsp4j.SymbolKind.Constructor) {
+                    int startLine = r.getStart().getLine();
+                    int endLine = r.getEnd().getLine();
+                    if (endLine > startLine) out.add(new int[]{startLine, endLine});
+                }
+            }
+            collectFoldable(s.getChildren(), out);
+        }
+    }
+
+    private void toggleFold(int originalSigLine) {
+        if (foldedByOriginalLine.containsKey(originalSigLine)) unfoldByOriginal(originalSigLine);
+        else foldByOriginal(originalSigLine);
+    }
+
+    private void foldByOriginal(int originalSigLine) {
+        FoldRegion fr = findFoldableByOriginal(originalSigLine);
+        if (fr == null) return;
+        int start = Positions.offset(codeArea.getText(), fr.currentSigLine(), fr.openBracePos() + 1);
+        int end = Positions.offset(codeArea.getText(), fr.currentEndLine(), fr.currentEndLineLen());
+        if (end <= start) return;
+        String stash = codeArea.getText(start, end);
+        // Folding an outer region wipes any inner folds (they're inside the collapsed text).
+        foldedByOriginalLine.keySet().removeIf(o -> o > fr.originalSigLine() && o <= fr.originalEndLine());
+        foldedByOriginalLine.put(originalSigLine, new FoldedRegion(originalSigLine, fr.originalEndLine(), stash));
+        double savedScrollX = codeArea.estimatedScrollXProperty().getValue();
+        double savedScrollY = codeArea.estimatedScrollYProperty().getValue();
+        int savedCaret = codeArea.getCaretPosition();
+        int caretClamped = savedCaret <= start ? savedCaret : (savedCaret >= end ? savedCaret - (end - start) + FOLD_PLACEHOLDER.length() : start);
+        isInternalEdit = true;
+        try {
+            codeArea.replaceText(start, end, FOLD_PLACEHOLDER);
+        } finally {
+            isInternalEdit = false;
+        }
+        lastDiagnosticSpans = null;
+        lastSemanticSpans = null;
+        applyHighlightingNow();
+        rebuildFoldableRegions();
+        codeArea.moveTo(Math.min(caretClamped, codeArea.getLength()));
+        Platform.runLater(() -> {
+            codeArea.scrollXToPixel(savedScrollX);
+            codeArea.scrollYToPixel(savedScrollY);
+        });
+    }
+
+    private void unfoldByOriginal(int originalSigLine) {
+        FoldedRegion folded = foldedByOriginalLine.remove(originalSigLine);
+        if (folded == null) { rebuildFoldableRegions(); return; }
+        FoldRegion fr = findFoldableByOriginal(originalSigLine);
+        if (fr == null) { rebuildFoldableRegions(); return; }
+        int start = Positions.offset(codeArea.getText(), fr.currentSigLine(), fr.openBracePos() + 1);
+        int placeholderEnd = start + FOLD_PLACEHOLDER.length();
+        if (placeholderEnd > codeArea.getLength()) { rebuildFoldableRegions(); return; }
+        double savedScrollX = codeArea.estimatedScrollXProperty().getValue();
+        double savedScrollY = codeArea.estimatedScrollYProperty().getValue();
+        int savedCaret = codeArea.getCaretPosition();
+        int caretClamped = savedCaret <= start ? savedCaret
+                : (savedCaret >= placeholderEnd ? savedCaret + folded.stashedText().length() - FOLD_PLACEHOLDER.length() : start);
+        isInternalEdit = true;
+        try {
+            codeArea.replaceText(start, placeholderEnd, folded.stashedText());
+        } finally {
+            isInternalEdit = false;
+        }
+        lastDiagnosticSpans = null;
+        lastSemanticSpans = null;
+        applyHighlightingNow();
+        rebuildFoldableRegions();
+        codeArea.moveTo(Math.min(caretClamped, codeArea.getLength()));
+        Platform.runLater(() -> {
+            codeArea.scrollXToPixel(savedScrollX);
+            codeArea.scrollYToPixel(savedScrollY);
+        });
+        if (foldedByOriginalLine.isEmpty()) {
+            scheduleSemanticTokensRefresh();
+        }
+    }
+
+    private FoldRegion findFoldableByOriginal(int originalSigLine) {
+        for (FoldRegion fr : foldableByCurrentLine.values()) {
+            if (fr.originalSigLine() == originalSigLine) return fr;
+        }
+        return null;
+    }
+
+    private void unfoldAll() {
+        if (foldedByOriginalLine.isEmpty()) return;
+        List<Integer> keys = new ArrayList<>(foldedByOriginalLine.keySet());
+        keys.sort(java.util.Comparator.reverseOrder());
+        for (Integer k : keys) unfoldByOriginal(k);
     }
 }
