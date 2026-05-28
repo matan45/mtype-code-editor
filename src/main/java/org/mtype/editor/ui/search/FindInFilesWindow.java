@@ -220,6 +220,12 @@ public class FindInFilesWindow {
         stage.hide();
     }
 
+    public void dispose() {
+        debounce.stop();
+        cancelSearch();
+        stage.hide();
+    }
+
     public void cancelSearch() {
         service.cancel();
         progress.setVisible(false);

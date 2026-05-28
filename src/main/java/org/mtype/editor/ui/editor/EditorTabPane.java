@@ -32,13 +32,14 @@ public class EditorTabPane extends TabPane {
     private final Map<Path, EditorTab> open = new HashMap<>();
     private final Map<Path, DiffTab> diffs = new HashMap<>();
     private boolean reordering = false;
+    private boolean closingAll = false;
 
     public EditorTabPane(AppContext ctx) {
         this.ctx = ctx;
         setTabClosingPolicy(TabClosingPolicy.ALL_TABS);
         getTabs().addListener((ListChangeListener<Tab>) c -> {
             while (c.next()) {
-                if (c.wasRemoved() && !reordering) {
+                if (c.wasRemoved() && !reordering && !closingAll) {
                     for (Tab t : c.getRemoved()) {
                         if (t instanceof EditorTab et) {
                             open.remove(et.getPath());
@@ -132,7 +133,12 @@ public class EditorTabPane extends TabPane {
         }
         open.clear();
         diffs.clear();
-        getTabs().clear();
+        closingAll = true;
+        try {
+            getTabs().clear();
+        } finally {
+            closingAll = false;
+        }
     }
 
     private boolean canClose(Tab t) {

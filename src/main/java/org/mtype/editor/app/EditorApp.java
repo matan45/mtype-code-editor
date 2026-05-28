@@ -748,13 +748,16 @@ public class EditorApp extends Application {
     private synchronized void shutdown() {
         if (shutdownStarted) return;
         shutdownStarted = true;
+        if (ctx == null) return;
         try { if (ctx.getDebuggerBridge() != null) ctx.getDebuggerBridge().stop(); } catch (Exception ignored) {}
         try { if (ctx.getRunController() != null) ctx.getRunController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getBuildController() != null) ctx.getBuildController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getPackageController() != null) ctx.getPackageController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getTerminalController() != null) ctx.getTerminalController().shutdownAll(); } catch (Exception ignored) {}
+        try { if (ctx.getTabPane() != null) ctx.getTabPane().closeAll(); } catch (Exception ignored) {}
         try { if (ctx.getLspBridge() != null) ctx.getLspBridge().stop(); } catch (Exception ignored) {}
-        try { if (ctx.getFindInFilesWindow() != null) ctx.getFindInFilesWindow().cancelSearch(); } catch (Exception ignored) {}
+        try { if (ctx.getFindInFilesWindow() != null) ctx.getFindInFilesWindow().dispose(); } catch (Exception ignored) {}
+        try { if (ctx.getGitService() != null) ctx.getGitService().shutdown(); } catch (Exception ignored) {}
     }
 
     private void loadBundledFonts() {

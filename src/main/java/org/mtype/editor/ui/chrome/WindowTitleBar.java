@@ -14,7 +14,6 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
-import javafx.stage.WindowEvent;
 
 import java.io.InputStream;
 
@@ -87,8 +86,7 @@ public class WindowTitleBar extends HBox {
                 () -> stage.setIconified(true));
         StackPane maxBtn = ChromeCircles.maximize("Maximize",
                 () -> WindowMaximizer.toggle(stage));
-        StackPane closeBtn = ChromeCircles.close("Close",
-                () -> stage.fireEvent(new WindowEvent(stage, WindowEvent.WINDOW_CLOSE_REQUEST)));
+        StackPane closeBtn = ChromeCircles.close("Close", stage::close);
 
         // Spacing between traffic-light circles + right margin on the row.
         HBox.setMargin(minBtn, new Insets(0, 6, 0, 0));

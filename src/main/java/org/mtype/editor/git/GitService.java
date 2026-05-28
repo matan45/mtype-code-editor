@@ -30,6 +30,10 @@ public class GitService {
         this.ctx = ctx;
     }
 
+    public void shutdown() {
+        gitExec.shutdownNow();
+    }
+
     public record StatusEntry(String code, Path path, String group, String label) {}
     public record AheadBehind(int ahead, int behind, boolean hasUpstream) {}
     public record DiffPair(String oldContent, String newContent, boolean binary) {}
