@@ -12,13 +12,17 @@ import org.eclipse.lsp4j.InlayHintKind;
 import org.eclipse.lsp4j.InlayHintLabelPart;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
+import org.fxmisc.richtext.CharacterHit;
 import org.fxmisc.richtext.CodeArea;
+import org.fxmisc.richtext.model.TwoDimensional;
 import org.mtype.editor.lsp.Positions;
 import org.reactfx.Subscription;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -31,6 +35,7 @@ final class InlayHintsController {
     private final List<RenderedHint> rendered = new ArrayList<>();
     private final Subscription viewportSubscription;
     private boolean layoutScheduled;
+    private Map<Integer, List<LineGap>> gapsByLine = Collections.emptyMap();
 
     InlayHintsController(CodeArea area, Pane layer, Consumer<List<Position>> anchorListener) {
         this.area = area;
@@ -74,7 +79,36 @@ final class InlayHintsController {
     void clear() {
         rendered.clear();
         layer.getChildren().clear();
+        gapsByLine = Collections.emptyMap();
         publishAnchors();
+    }
+
+    /**
+     * Convert a click point inside the {@link CodeArea} to a {@link CharacterHit}, accounting for
+     * the cumulative horizontal {@code translateX} that {@link #applyInlineGaps} applies to glyph
+     * runs sitting after one or more inlay-hint labels. RichTextFX's own {@code hit(x, y)} ignores
+     * the transform and would otherwise map a click on visually-shifted text to the wrong source
+     * offset.
+     */
+    CharacterHit correctedHit(double xInArea, double yInArea) {
+        CharacterHit raw = area.hit(xInArea, yInArea);
+        if (gapsByLine.isEmpty()) return raw;
+
+        double correctedX = xInArea;
+        double lastShift = -1.0;
+        for (int i = 0; i < 8; i++) {
+            CharacterHit hit = area.hit(correctedX, yInArea);
+            int offset = hit.getInsertionIndex();
+            TwoDimensional.Position pos =
+                    area.offsetToPosition(offset, TwoDimensional.Bias.Forward);
+            List<LineGap> lineGaps = gapsByLine.get(pos.getMajor());
+            double shift = lineGaps == null ? 0.0 : shiftAt(pos.getMinor(), lineGaps);
+            if (shift == lastShift) return hit;
+            lastShift = shift;
+            correctedX = xInArea - shift;
+            if (i == 7) return hit;
+        }
+        return raw;
     }
 
     void dispose() {
@@ -98,6 +132,7 @@ final class InlayHintsController {
     private void layoutHints() {
         List<Node> paragraphTexts = paragraphTextNodes();
         resetInlineGaps(paragraphTexts);
+        gapsByLine = Collections.emptyMap();
         if (rendered.isEmpty() || layer.getScene() == null) return;
 
         VisibleLines visibleLines = visibleLines(paragraphTexts);
@@ -155,6 +190,9 @@ final class InlayHintsController {
             currentLineShift += width;
         }
 
+        gapsByLine = gaps.isEmpty()
+                ? Collections.emptyMap()
+                : gaps.stream().collect(Collectors.groupingBy(LineGap::line));
         applyInlineGaps(paragraphTexts, gaps);
     }
 
@@ -195,18 +233,17 @@ final class InlayHintsController {
                 int length = text.getText() == null ? 0 : text.getText().length();
                 if (length == 0) continue;
                 int end = start + length;
-                double shift = shiftForSegment(start, lineGaps);
+                double shift = shiftAt(start, lineGaps);
                 child.setTranslateX(shift);
                 start = end;
             }
         }
     }
 
-    private double shiftForSegment(int start, List<LineGap> gaps) {
+    private static double shiftAt(int character, List<LineGap> gaps) {
         double shift = 0.0;
         for (LineGap gap : gaps) {
-            int ch = gap.character();
-            if (ch <= start) {
+            if (gap.character() <= character) {
                 shift += gap.width();
             }
         }

@@ -453,6 +453,9 @@
 .code-area .text.mt-inlay-hint-anchor {
 }
 
+.styled-text-area .text.mt-link-hover,
+.code-area .text.mt-link-hover { -fx-underline: true; }
+
 /* ===========================================================
    Token colors (Atom One Dark)
    Selectors are intentionally high-specificity so they beat

@@ -109,6 +109,12 @@ public class EditorTab extends Tab {
     private final Pane inlayHintsLayer = new Pane();
     private final InlayHintsController inlayHintsController;
     private final Set<Integer> inlayHintAnchorOffsets = new HashSet<>();
+    private StyleSpans<Collection<String>> lastLinkHoverSpans;
+    private int linkHoverStart = -1;
+    private int linkHoverEnd = -1;
+    private double lastMouseX = -1;
+    private double lastMouseY = -1;
+    private boolean ctrlDown;
     private final Map<Integer, CodeLensLine> codeLensByParagraph = new HashMap<>();
     private final Set<Integer> codeLensParagraphStyles = new HashSet<>();
     private final Map<Integer, org.eclipse.lsp4j.DiagnosticSeverity> diagnosticsByLine = new HashMap<>();
@@ -199,33 +205,86 @@ public class EditorTab extends Tab {
         // Hover
         codeArea.setMouseOverTextDelay(Duration.ofMillis(500));
         codeArea.addEventHandler(MouseOverTextEvent.MOUSE_OVER_TEXT_BEGIN, e -> {
-            int charIdx = e.getCharacterIndex();
-            Point2D pos = e.getScreenPosition();
-            requestHover(charIdx, pos);
+            Point2D screen = e.getScreenPosition();
+            Point2D local = codeArea.screenToLocal(screen);
+            int charIdx = local == null
+                    ? e.getCharacterIndex()
+                    : inlayHintsController.correctedHit(local.getX(), local.getY()).getInsertionIndex();
+            requestHover(charIdx, screen);
         });
         codeArea.addEventHandler(MouseOverTextEvent.MOUSE_OVER_TEXT_END, e -> hoverPopup.hide());
 
-        // Ctrl+Click → go to definition
-        codeArea.setOnMouseClicked(e -> {
+        // Ctrl+Click -> go to definition. Filter (not handler) so we run before
+        // RichTextFX's default caret placement, which uses raw hit() and lands
+        // on the wrong source offset on lines shifted by inlay-hint overlays.
+        codeArea.addEventFilter(MouseEvent.MOUSE_PRESSED, e -> {
             if (e.getButton() == MouseButton.PRIMARY && e.isControlDown()) {
+                CharacterHit hit = inlayHintsController.correctedHit(e.getX(), e.getY());
+                codeArea.moveTo(hit.getInsertionIndex());
                 goToDefinitionAtCaret();
                 e.consume();
             }
         });
 
-        // Right-click → position caret, kick off the code-action request so the
+        // Right-click -> position caret, kick off the code-action request so the
         // submenu is already populated by the time the user hovers it.
+        // Plain left-click -> let RichTextFX run, then snap caret to the
+        // inlay-hint-corrected offset so the caret lands where the user clicked
+        // visually (RichTextFX's raw hit() ignores the translateX shifts).
         codeArea.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
             if (e.getButton() == MouseButton.SECONDARY) {
-                CharacterHit hit = codeArea.hit(e.getX(), e.getY());
+                CharacterHit hit = inlayHintsController.correctedHit(e.getX(), e.getY());
                 int clickedOffset = hit.getInsertionIndex();
                 if (!isOffsetInsideSelection(clickedOffset)) {
                     codeArea.moveTo(clickedOffset);
                 }
                 if (quickFixMenu != null) populateQuickFix(quickFixMenu, clickedOffset);
+            } else if (e.getButton() == MouseButton.PRIMARY
+                    && !e.isControlDown() && !e.isShiftDown() && !e.isAltDown()
+                    && e.getClickCount() == 1) {
+                double x = e.getX();
+                double y = e.getY();
+                Platform.runLater(() -> {
+                    CharacterHit hit = inlayHintsController.correctedHit(x, y);
+                    codeArea.moveTo(hit.getInsertionIndex());
+                });
             }
             if (completionMenu.isShowing()) completionMenu.hide();
         });
+        codeArea.addEventHandler(MouseEvent.MOUSE_DRAGGED, e -> {
+            if (e.getButton() != MouseButton.PRIMARY) return;
+            double x = e.getX();
+            double y = e.getY();
+            Platform.runLater(() -> {
+                CharacterHit hit = inlayHintsController.correctedHit(x, y);
+                codeArea.selectRange(codeArea.getAnchor(), hit.getInsertionIndex());
+            });
+        });
+
+        // Ctrl+hover hyperlink underline.
+        codeArea.addEventFilter(MouseEvent.MOUSE_MOVED, e -> {
+            lastMouseX = e.getX();
+            lastMouseY = e.getY();
+            updateLinkHover();
+        });
+        codeArea.addEventFilter(MouseEvent.MOUSE_EXITED, e -> {
+            lastMouseX = -1;
+            lastMouseY = -1;
+            clearLinkHover();
+        });
+        codeArea.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
+            if (e.getCode() == KeyCode.CONTROL) {
+                ctrlDown = true;
+                updateLinkHover();
+            }
+        });
+        codeArea.addEventFilter(KeyEvent.KEY_RELEASED, e -> {
+            if (e.getCode() == KeyCode.CONTROL) {
+                ctrlDown = false;
+                clearLinkHover();
+            }
+        });
+
         codeArea.setContextMenu(buildCodeContextMenu());
 
         setOnCloseRequest(ev -> {
@@ -1245,7 +1304,68 @@ public class EditorTab extends Tab {
                 combined = combined.overlay(inlayAnchors, EditorTab::mergeStyles);
             } catch (Exception ignored) {}
         }
+        if (lastLinkHoverSpans != null) {
+            try {
+                combined = combined.overlay(lastLinkHoverSpans, EditorTab::mergeStyles);
+            } catch (Exception ignored) {}
+        }
         codeArea.setStyleSpans(0, combined);
+    }
+
+    private void updateLinkHover() {
+        if (!ctrlDown || lastMouseX < 0 || lastMouseY < 0) {
+            clearLinkHover();
+            return;
+        }
+        CharacterHit hit = inlayHintsController.correctedHit(lastMouseX, lastMouseY);
+        int[] range = identifierRangeAt(hit.getInsertionIndex());
+        if (range == null) {
+            clearLinkHover();
+            return;
+        }
+        if (range[0] == linkHoverStart && range[1] == linkHoverEnd) return;
+        linkHoverStart = range[0];
+        linkHoverEnd = range[1];
+        lastLinkHoverSpans = buildLinkHoverSpans(range[0], range[1]);
+        codeArea.setCursor(Cursor.HAND);
+        applyCombinedStyles();
+    }
+
+    private void clearLinkHover() {
+        if (linkHoverStart < 0 && lastLinkHoverSpans == null) return;
+        linkHoverStart = -1;
+        linkHoverEnd = -1;
+        lastLinkHoverSpans = null;
+        codeArea.setCursor(null);
+        applyCombinedStyles();
+    }
+
+    private int[] identifierRangeAt(int offset) {
+        String text = codeArea.getText();
+        int length = text.length();
+        if (offset < 0 || offset > length) return null;
+        int start = offset;
+        while (start > 0 && isIdentifierChar(text.charAt(start - 1))) start--;
+        int end = offset;
+        while (end < length && isIdentifierChar(text.charAt(end))) end++;
+        if (start == end) return null;
+        char first = text.charAt(start);
+        if (!Character.isLetter(first) && first != '_') return null;
+        return new int[]{start, end};
+    }
+
+    private static boolean isIdentifierChar(char c) {
+        return Character.isLetterOrDigit(c) || c == '_';
+    }
+
+    private StyleSpans<Collection<String>> buildLinkHoverSpans(int start, int end) {
+        int length = codeArea.getLength();
+        if (start < 0 || end > length || start >= end) return null;
+        StyleSpansBuilder<Collection<String>> b = new StyleSpansBuilder<>();
+        if (start > 0) b.add(Collections.emptyList(), start);
+        b.add(Collections.singleton("mt-link-hover"), end - start);
+        if (end < length) b.add(Collections.emptyList(), length - end);
+        return b.create();
     }
 
     private void setInlayHintAnchors(List<Position> positions) {
