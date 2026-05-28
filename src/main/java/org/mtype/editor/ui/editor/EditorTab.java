@@ -218,8 +218,11 @@ public class EditorTab extends Tab {
         codeArea.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
             if (e.getButton() == MouseButton.SECONDARY) {
                 CharacterHit hit = codeArea.hit(e.getX(), e.getY());
-                codeArea.moveTo(hit.getInsertionIndex());
-                if (quickFixMenu != null) populateQuickFix(quickFixMenu);
+                int clickedOffset = hit.getInsertionIndex();
+                if (!isOffsetInsideSelection(clickedOffset)) {
+                    codeArea.moveTo(clickedOffset);
+                }
+                if (quickFixMenu != null) populateQuickFix(quickFixMenu, clickedOffset);
             }
             if (completionMenu.isShowing()) completionMenu.hide();
         });
@@ -758,6 +761,13 @@ public class EditorTab extends Tab {
         codeArea.requestFocus();
     }
 
+    private boolean isOffsetInsideSelection(int offset) {
+        javafx.scene.control.IndexRange selection = codeArea.getSelection();
+        return selection.getLength() > 0
+                && offset >= selection.getStart()
+                && offset <= selection.getEnd();
+    }
+
     private ContextMenu buildCodeContextMenu() {
         ContextMenu menu = new ContextMenu();
         menu.getStyleClass().add("mt-code-context");
@@ -803,6 +813,12 @@ public class EditorTab extends Tab {
         paste.setAccelerator(new KeyCodeCombination(KeyCode.V, KeyCombination.SHORTCUT_DOWN));
         paste.setOnAction(e -> codeArea.paste());
 
+        menu.setOnShowing(e -> {
+            boolean hasSelection = codeArea.getSelection().getLength() > 0;
+            cut.setDisable(!hasSelection);
+            copy.setDisable(!hasSelection);
+        });
+
         menu.getItems().addAll(
                 quickFix,
                 new SeparatorMenuItem(),
@@ -815,6 +831,10 @@ public class EditorTab extends Tab {
     }
 
     private void populateQuickFix(javafx.scene.control.Menu quickFix) {
+        populateQuickFix(quickFix, codeArea.getCaretPosition());
+    }
+
+    private void populateQuickFix(javafx.scene.control.Menu quickFix, int offset) {
         if (!lspManaged) {
             quickFix.getItems().setAll(disabledItem("(not available)"));
             return;
@@ -824,7 +844,8 @@ public class EditorTab extends Tab {
             quickFix.getItems().setAll(disabledItem("LSP not ready"));
             return;
         }
-        TwoDimensional.Position caret = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
+        int clampedOffset = Math.max(0, Math.min(offset, codeArea.getLength()));
+        TwoDimensional.Position caret = codeArea.offsetToPosition(clampedOffset, TwoDimensional.Bias.Forward);
         Position pos = new Position(caret.getMajor(), caret.getMinor());
         Range range = new Range(pos, pos);
         List<org.eclipse.lsp4j.Diagnostic> here = diagnosticsContainingLine(caret.getMajor());
