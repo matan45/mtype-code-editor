@@ -9,59 +9,19 @@ import javafx.geometry.Pos;
 import javafx.geometry.Side;
 import javafx.scene.Cursor;
 import javafx.scene.Node;
-import javafx.scene.control.Alert;
-import javafx.scene.control.ButtonType;
-import javafx.scene.control.ContextMenu;
-import javafx.scene.control.CustomMenuItem;
-import javafx.scene.control.Label;
-import javafx.scene.control.MenuItem;
-import javafx.scene.control.OverrunStyle;
-import javafx.scene.control.Tab;
-import javafx.scene.control.TextInputDialog;
-import javafx.scene.control.SeparatorMenuItem;
-import javafx.scene.input.KeyCode;
-import javafx.scene.input.KeyCodeCombination;
-import javafx.scene.input.KeyCombination;
-import javafx.scene.input.KeyEvent;
-import javafx.scene.input.MouseButton;
-import javafx.scene.input.MouseEvent;
-import javafx.scene.input.ScrollEvent;
-import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.Pane;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
-import javafx.scene.layout.StackPane;
-import javafx.scene.layout.VBox;
-import org.eclipse.lsp4j.CodeLens;
-import org.eclipse.lsp4j.Command;
-import org.eclipse.lsp4j.DocumentSymbol;
-import org.eclipse.lsp4j.SemanticTokens;
-import org.eclipse.lsp4j.SemanticTokensLegend;
-import org.eclipse.lsp4j.SignatureHelp;
-import org.eclipse.lsp4j.SymbolInformation;
-import org.eclipse.lsp4j.jsonrpc.messages.Either;
-import org.fxmisc.richtext.CharacterHit;
-import org.eclipse.lsp4j.CompletionItem;
-import org.eclipse.lsp4j.CompletionItemKind;
-import org.eclipse.lsp4j.InsertTextFormat;
-import org.eclipse.lsp4j.Location;
-import org.eclipse.lsp4j.Position;
-import org.eclipse.lsp4j.Range;
-import org.eclipse.lsp4j.TextEdit;
+import javafx.scene.control.*;
+import javafx.scene.input.*;
+import javafx.scene.layout.*;
+import org.eclipse.lsp4j.*;
 import org.fxmisc.flowless.VirtualizedScrollPane;
+import org.fxmisc.richtext.CharacterHit;
 import org.fxmisc.richtext.event.MouseOverTextEvent;
 import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
-import org.fxmisc.richtext.model.TwoDimensional;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.debug.BreakpointService;
 import org.mtype.editor.debug.DebuggerEventBus;
-import org.mtype.editor.lsp.DiagnosticsRenderer;
-import org.mtype.editor.lsp.LspBridge;
-import org.mtype.editor.lsp.LspEdits;
-import org.mtype.editor.lsp.Positions;
-import org.mtype.editor.lsp.SemanticTokensDecoder;
+import org.mtype.editor.lsp.*;
 import org.mtype.editor.syntax.Tokenizers;
 import org.mtype.editor.ui.output.OutlinePanel;
 
@@ -69,16 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.TreeSet;
+import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -106,7 +57,6 @@ public class EditorTab extends Tab {
     private final HoverPopup hoverPopup = new HoverPopup();
     private final SignatureHelpPopup signaturePopup = new SignatureHelpPopup();
     private final InlayHintsController inlayHintsController;
-    private final Pane currentLineLayer = new Pane();
     private final CurrentLineHighlighter currentLineHighlighter;
     private StyleSpans<Collection<String>> lastLinkHoverSpans;
     private int linkHoverStart = -1;
@@ -143,12 +93,11 @@ public class EditorTab extends Tab {
     private boolean scrollFlushScheduled;
     private long openedLspSession = -1;
     private boolean suppressDirty = true;
-    private List<CompletionItem> currentCompletionItems = Collections.emptyList();
     private SnippetSession activeSnippet;
     private int executionLine = -1;
 
-    private record FoldRegion(int currentSigLine, int openBracePos, int currentEndLine, int currentEndLineLen, int originalSigLine, int originalEndLine) {}
-    private record FoldedRegion(int originalSigLine, int originalEndLine,
+    private record FoldRegion(int currentSigLine, int currentOpenBraceLine, int openBracePos, int currentEndLine, int currentEndLineLen, int originalSigLine, int originalOpenBraceLine, int originalEndLine) {}
+    private record FoldedRegion(int originalSigLine, int originalOpenBraceLine, int originalEndLine,
                                 org.fxmisc.richtext.model.StyledDocument<java.util.Collection<String>,
                                         org.reactfx.util.Either<String, InlayHintSeg>,
                                         java.util.Collection<String>> stashedDoc) {}
@@ -176,6 +125,7 @@ public class EditorTab extends Tab {
         VirtualizedScrollPane<MTypeCodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
         scroll.getStyleClass().add("mt-main-editor-scroll");
         installScrollSensitivity();
+        Pane currentLineLayer = new Pane();
         StackPane editorStack = new StackPane(currentLineLayer, scroll);
         editorStack.getStyleClass().add("mt-editor-stack");
         breadcrumbBar.getStyleClass().add("mt-breadcrumb-bar");
@@ -204,7 +154,7 @@ public class EditorTab extends Tab {
         });
 
         codeArea.caretPositionProperty().addListener((obs, o, n) -> {
-            int caret = n.intValue();
+            int caret = n;
             int[] lc = codeArea.displayToSourceLineChar(caret);
             ctx.getStatusBar().setCaret(lc[0], lc[1]);
             updateBreadcrumb();
@@ -1516,6 +1466,7 @@ public class EditorTab extends Tab {
     }
 
     private void populateCompletionMenu(List<CompletionItem> items) {
+        List<CompletionItem> currentCompletionItems = Collections.emptyList();
         if (items == null || items.isEmpty()) {
             completionMenu.hide();
             currentCompletionItems = Collections.emptyList();
@@ -1917,7 +1868,7 @@ public class EditorTab extends Tab {
         // Walk in ascending origSigLine order — that's how LinkedHashMap iterates if we
         // inserted in order, but we re-sort to be safe.
         List<FoldedRegion> activeFolds = new ArrayList<>(foldedByOriginalLine.values());
-        activeFolds.sort((a, b) -> Integer.compare(a.originalSigLine(), b.originalSigLine()));
+        activeFolds.sort(Comparator.comparingInt(FoldedRegion::originalSigLine));
 
         int linesInBuffer = codeArea.getParagraphs().size();
         for (int[] r : raw) {
@@ -1930,22 +1881,34 @@ public class EditorTab extends Tab {
                     nestedInsideOuterFold = true; break;
                 }
                 if (f.originalEndLine() < origSig) {
-                    absorbedBefore += f.originalEndLine() - f.originalSigLine();
+                    absorbedBefore += f.originalEndLine() - f.originalOpenBraceLine();
                 }
             }
             if (nestedInsideOuterFold) continue;
             int currentSig = origSig - absorbedBefore;
-            int currentEnd = foldedByOriginalLine.containsKey(origSig)
+            FoldedRegion folded = foldedByOriginalLine.get(origSig);
+            int currentEnd = folded != null
                     ? currentSig          // this region is itself folded — collapses onto signature line
                     : origEnd - absorbedBefore;
+            int currentVisibleEnd = folded != null
+                    ? folded.originalOpenBraceLine() - absorbedBefore
+                    : currentEnd;
             if (currentSig < 0 || currentSig >= linesInBuffer) continue;
-            if (currentEnd >= linesInBuffer) continue;
-            String sigText = codeArea.getText(currentSig);
-            int brace = sigText.indexOf('{');
-            if (brace < 0) continue;
-            int endLineLen = codeArea.getText(currentEnd).length();
+            if (currentVisibleEnd >= linesInBuffer) continue;
+            int braceLine = -1;
+            int brace = -1;
+            for (int line = currentSig; line <= currentVisibleEnd; line++) {
+                brace = codeArea.getText(line).indexOf('{');
+                if (brace >= 0) {
+                    braceLine = line;
+                    break;
+                }
+            }
+            if (braceLine < 0) continue;
+            int originalBraceLine = folded != null ? folded.originalOpenBraceLine() : braceLine + absorbedBefore;
+            int endLineLen = codeArea.getText(currentVisibleEnd).length();
             foldableByCurrentLine.put(currentSig,
-                    new FoldRegion(currentSig, brace, currentEnd, endLineLen, origSig, origEnd));
+                    new FoldRegion(currentSig, braceLine, brace, currentVisibleEnd, endLineLen, origSig, originalBraceLine, origEnd));
         }
         codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
     }
@@ -1977,7 +1940,7 @@ public class EditorTab extends Tab {
     private void foldByOriginal(int originalSigLine) {
         FoldRegion fr = findFoldableByOriginal(originalSigLine);
         if (fr == null) return;
-        int start = Positions.offset(codeArea.getText(), fr.currentSigLine(), fr.openBracePos() + 1);
+        int start = Positions.offset(codeArea.getText(), fr.currentOpenBraceLine(), fr.openBracePos() + 1);
         int end = Positions.offset(codeArea.getText(), fr.currentEndLine(), fr.currentEndLineLen());
         if (end <= start) return;
         // Stash the rich sub-document (not plain text) so embedded inlay-hint segments survive the
@@ -1985,7 +1948,7 @@ public class EditorTab extends Tab {
         var stash = codeArea.subDocument(start, end);
         // Folding an outer region wipes any inner folds (they're inside the collapsed text).
         foldedByOriginalLine.keySet().removeIf(o -> o > fr.originalSigLine() && o <= fr.originalEndLine());
-        foldedByOriginalLine.put(originalSigLine, new FoldedRegion(originalSigLine, fr.originalEndLine(), stash));
+        foldedByOriginalLine.put(originalSigLine, new FoldedRegion(originalSigLine, fr.originalOpenBraceLine(), fr.originalEndLine(), stash));
         double savedScrollX = codeArea.estimatedScrollXProperty().getValue();
         double savedScrollY = codeArea.estimatedScrollYProperty().getValue();
         int savedCaret = codeArea.getCaretPosition();
@@ -1999,6 +1962,7 @@ public class EditorTab extends Tab {
         lastDiagnosticSpans = null;
         lastSemanticSpans = null;
         applyHighlightingNow();
+        scheduleSemanticTokensRefresh();
         rebuildFoldableRegions();
         codeArea.moveTo(Math.min(caretClamped, codeArea.getLength()));
         Platform.runLater(() -> {
@@ -2012,7 +1976,7 @@ public class EditorTab extends Tab {
         if (folded == null) { rebuildFoldableRegions(); return; }
         FoldRegion fr = findFoldableByOriginal(originalSigLine);
         if (fr == null) { rebuildFoldableRegions(); return; }
-        int start = Positions.offset(codeArea.getText(), fr.currentSigLine(), fr.openBracePos() + 1);
+        int start = Positions.offset(codeArea.getText(), fr.currentOpenBraceLine(), fr.openBracePos() + 1);
         int placeholderEnd = start + FOLD_PLACEHOLDER.length();
         if (placeholderEnd > codeArea.getLength()) { rebuildFoldableRegions(); return; }
         double savedScrollX = codeArea.estimatedScrollXProperty().getValue();
@@ -2029,15 +1993,13 @@ public class EditorTab extends Tab {
         lastDiagnosticSpans = null;
         lastSemanticSpans = null;
         applyHighlightingNow();
+        scheduleSemanticTokensRefresh();
         rebuildFoldableRegions();
         codeArea.moveTo(Math.min(caretClamped, codeArea.getLength()));
         Platform.runLater(() -> {
             codeArea.scrollXToPixel(savedScrollX);
             codeArea.scrollYToPixel(savedScrollY);
         });
-        if (foldedByOriginalLine.isEmpty()) {
-            scheduleSemanticTokensRefresh();
-        }
     }
 
     private FoldRegion findFoldableByOriginal(int originalSigLine) {
