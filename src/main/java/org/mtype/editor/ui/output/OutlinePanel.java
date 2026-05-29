@@ -24,18 +24,16 @@ import java.util.Collections;
 import java.util.List;
 
 public class OutlinePanel extends BorderPane {
-    private final AppContext ctx;
     private final TreeView<DocumentSymbol> tree = new TreeView<>();
     private final Label empty = new Label("No symbols");
     private EditorTab activeTab;
 
     public OutlinePanel(AppContext ctx) {
-        this.ctx = ctx;
         getStyleClass().add("mt-outline");
         tree.setShowRoot(false);
         tree.getStyleClass().add("mt-outline-tree");
         tree.getSelectionModel().setSelectionMode(SelectionMode.SINGLE);
-        tree.setCellFactory(view -> new SymbolCell());
+        tree.setCellFactory(_ -> new SymbolCell());
         tree.setOnMouseClicked(e -> {
             if (e.getButton() == MouseButton.PRIMARY) openSelected();
         });
@@ -46,9 +44,7 @@ public class OutlinePanel extends BorderPane {
         setCenter(empty);
 
         if (ctx.getTabPane() != null) {
-            ctx.getTabPane().getSelectionModel().selectedItemProperty().addListener((obs, oldT, newT) -> {
-                bindTo(newT instanceof EditorTab et ? et : null);
-            });
+            ctx.getTabPane().getSelectionModel().selectedItemProperty().addListener((_, _, newT) -> bindTo(newT instanceof EditorTab et ? et : null));
             Tab current = ctx.getTabPane().getSelectionModel().getSelectedItem();
             if (current instanceof EditorTab et) bindTo(et);
         }
@@ -104,16 +100,26 @@ public class OutlinePanel extends BorderPane {
         activeTab.revealPosition(start.getLine(), start.getCharacter());
     }
 
-    /** Convert a flat SymbolInformation[] to a hierarchical DocumentSymbol[] by containment. */
+    /**
+     * Convert a flat SymbolInformation[] to a hierarchical DocumentSymbol[] by containment.
+     * lsp4j's {@code textDocument/documentSymbol} return type forces the deprecated
+     * {@link SymbolInformation} on the left branch — it is the legacy form mandated by the LSP
+     * spec, so the getter calls in the fallback below are unavoidably deprecated.
+     */
+    @SuppressWarnings("deprecation")
     public static List<DocumentSymbol> flatten(List<Either<SymbolInformation, DocumentSymbol>> raw) {
         if (raw == null || raw.isEmpty()) return Collections.emptyList();
-        if (raw.get(0).isRight()) {
+        if (raw.getFirst().isRight()) {
             List<DocumentSymbol> out = new ArrayList<>(raw.size());
             for (Either<SymbolInformation, DocumentSymbol> e : raw) {
                 if (e != null && e.isRight() && e.getRight() != null) out.add(e.getRight());
             }
             return out;
         }
+        return getDocumentSymbols(raw);
+    }
+
+    private static List<DocumentSymbol> getDocumentSymbols(List<Either<SymbolInformation, DocumentSymbol>> raw) {
         List<DocumentSymbol> out = new ArrayList<>(raw.size());
         for (Either<SymbolInformation, DocumentSymbol> e : raw) {
             if (e == null || !e.isLeft() || e.getLeft() == null) continue;

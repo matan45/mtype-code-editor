@@ -283,7 +283,7 @@ public class DebuggerPanel extends VBox {
             item.getChildren().add(new TreeItem<>(VarNode.label("Loading...")));
             item.expandedProperty().addListener((_, _, expanded) -> {
                 if (expanded && item.getChildren().size() == 1
-                        && item.getChildren().get(0).getValue().placeholder()) {
+                        && item.getChildren().getFirst().getValue().placeholder()) {
                     pendingExpansions.put(v.reference(), item);
                     bridge.expandVariable(v.reference());
                 }
@@ -335,7 +335,7 @@ public class DebuggerPanel extends VBox {
         if (inFlightWatch != null) return;
         if (evalQueue.isEmpty()) {
             // After a stop, re-evaluate all known watches once
-            for (WatchEntry w : new ArrayList<>(watchList.getItems())) evalQueue.add(w);
+            evalQueue.addAll(new ArrayList<>(watchList.getItems()));
             if (evalQueue.isEmpty()) return;
         }
         WatchEntry next = evalQueue.poll();
@@ -394,7 +394,7 @@ public class DebuggerPanel extends VBox {
 
     private record BreakpointEntry(Path file, int line0) {}
 
-    private final class VarCell extends TreeCell<VarNode> {
+    private static final class VarCell extends TreeCell<VarNode> {
         @Override protected void updateItem(VarNode item, boolean empty) {
             super.updateItem(item, empty);
             if (empty || item == null) { setText(null); setGraphic(null); return; }

@@ -1,6 +1,5 @@
 package org.mtype.editor.debug;
 
-import javafx.application.Platform;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.process.StreamPump;
 import org.mtype.editor.workspace.Workspace;
@@ -11,18 +10,13 @@ import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 /**
  * Owns the mType debug interpreter child process and translates the line-based
  * text protocol into typed events on {@link DebuggerEventBus}.
- *
+ * <p>
  * Lifecycle, session counter, and FX-thread dispatch follow the LspBridge pattern.
  */
 public class DebuggerBridge {
@@ -45,10 +39,17 @@ public class DebuggerBridge {
         this.breakpoints = breakpoints;
     }
 
-    public synchronized boolean isRunning() { return running; }
-    public synchronized long getSession() { return session; }
-    public synchronized Path getLastFile() { return lastFile; }
-    public synchronized DebuggerEventBus.State getState() { return state; }
+    public synchronized boolean isRunning() {
+        return running;
+    }
+
+    public synchronized Path getLastFile() {
+        return lastFile;
+    }
+
+    public synchronized DebuggerEventBus.State getState() {
+        return state;
+    }
 
     /* ============================== lifecycle ============================== */
 
@@ -77,7 +78,7 @@ public class DebuggerBridge {
                 line -> handleStderrLine(startSession, line),
                 "mtype-dbg-stderr").start();
 
-        process.onExit().thenAccept(p -> {
+        process.onExit().thenAccept(_ -> {
             synchronized (DebuggerBridge.this) {
                 if (startSession != session) return;
                 running = false;
@@ -92,15 +93,25 @@ public class DebuggerBridge {
     public synchronized void stop() {
         session++;
         running = false;
-        synchronized (pendingVariableScopes) { pendingVariableScopes.clear(); }
-        synchronized (pendingExpandRefs) { pendingExpandRefs.clear(); }
+        synchronized (pendingVariableScopes) {
+            pendingVariableScopes.clear();
+        }
+        synchronized (pendingExpandRefs) {
+            pendingExpandRefs.clear();
+        }
         Process p = process;
         BufferedWriter w = writer;
         process = null;
         writer = null;
         if (w != null) {
-            try { writeRaw(w, "STOP"); } catch (Exception ignored) {}
-            try { w.close(); } catch (Exception ignored) {}
+            try {
+                writeRaw(w, "STOP");
+            } catch (Exception ignored) {
+            }
+            try {
+                w.close();
+            } catch (Exception ignored) {
+            }
         }
         if (p != null) {
             try {
@@ -120,10 +131,21 @@ public class DebuggerBridge {
 
     /* ============================== commands ============================== */
 
-    public void cont() { sendAndResume("CONTINUE", Map.of()); }
-    public void stepOver() { sendAndResume("STEPOVER", Map.of()); }
-    public void stepInto() { sendAndResume("STEPINTO", Map.of()); }
-    public void stepOut() { sendAndResume("STEPOUT", Map.of()); }
+    public void cont() {
+        sendAndResume("CONTINUE", Map.of());
+    }
+
+    public void stepOver() {
+        sendAndResume("STEPOVER", Map.of());
+    }
+
+    public void stepInto() {
+        sendAndResume("STEPINTO", Map.of());
+    }
+
+    public void stepOut() {
+        sendAndResume("STEPOUT", Map.of());
+    }
 
     public void setBreakpoint(Path file, int line1) {
         send("SETBREAKPOINT", linked("file", file.toString(), "line", Integer.toString(line1)));
@@ -133,17 +155,25 @@ public class DebuggerBridge {
         send("CLEARBREAKPOINT", linked("file", file.toString(), "line", Integer.toString(line1)));
     }
 
-    public void clearAllBreakpoints() { send("CLEARALL", Map.of()); }
+    public void clearAllBreakpoints() {
+        send("CLEARALL", Map.of());
+    }
 
-    public void getStackTrace() { send("GETSTACKTRACE", Map.of()); }
+    public void getStackTrace() {
+        send("GETSTACKTRACE", Map.of());
+    }
 
     public void getVariables(String scope) {
-        synchronized (pendingVariableScopes) { pendingVariableScopes.add(scope); }
+        synchronized (pendingVariableScopes) {
+            pendingVariableScopes.add(scope);
+        }
         send("GETVARIABLES", linked("scope", scope));
     }
 
     public void expandVariable(long reference) {
-        synchronized (pendingExpandRefs) { pendingExpandRefs.add(reference); }
+        synchronized (pendingExpandRefs) {
+            pendingExpandRefs.add(reference);
+        }
         send("EXPANDVARIABLE", linked("ref", Long.toString(reference)));
     }
 
@@ -167,7 +197,8 @@ public class DebuggerBridge {
         if (w == null) return;
         try {
             writeRaw(w, DebugProtocolCodec.encode(cmd, params));
-        } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+        }
     }
 
     private synchronized void sendAndResume(String cmd, Map<String, String> params) {
@@ -177,7 +208,8 @@ public class DebuggerBridge {
             writeRaw(w, DebugProtocolCodec.encode(cmd, params));
             setState(DebuggerEventBus.State.RUNNING);
             events.fireResumed();
-        } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+        }
     }
 
     private void writeRaw(BufferedWriter w, String line) throws IOException {
@@ -210,7 +242,9 @@ public class DebuggerBridge {
         switch (cmd) {
             case "STARTED" -> {
                 Path file = pathOrNull(msg.get("file"));
-                synchronized (this) { setState(DebuggerEventBus.State.RUNNING); }
+                synchronized (this) {
+                    setState(DebuggerEventBus.State.RUNNING);
+                }
                 events.fireStarted(new DebuggerEventBus.StartedEvent(file));
             }
             case "STOPPED" -> {
@@ -218,14 +252,18 @@ public class DebuggerBridge {
                 int line1 = msg.getInt("line", 0);
                 String reason = msg.get("reason", "unknown");
                 String message = msg.get("message", "");
-                synchronized (this) { setState(DebuggerEventBus.State.PAUSED); }
+                synchronized (this) {
+                    setState(DebuggerEventBus.State.PAUSED);
+                }
                 events.fireStopped(new DebuggerEventBus.StoppedEvent(file, line1 - 1, reason, message));
                 getStackTrace();
                 getVariables("local");
                 getVariables("global");
             }
             case "TERMINATED" -> {
-                synchronized (this) { setState(DebuggerEventBus.State.TERMINATED); }
+                synchronized (this) {
+                    setState(DebuggerEventBus.State.TERMINATED);
+                }
                 events.fireTerminated();
             }
             case "OUTPUT" -> {
@@ -255,14 +293,15 @@ public class DebuggerBridge {
             }
             case "EXPANDEDVAR" -> {
                 List<Variable> vars = collectVariables(msg, "child");
-                long echoed = msg.getLong("ref", 0);
-                long ref = echoed;
+                long ref = msg.getLong("ref", 0);
                 if (ref == 0) {
                     synchronized (pendingExpandRefs) {
                         if (!pendingExpandRefs.isEmpty()) ref = pendingExpandRefs.poll();
                     }
                 } else {
-                    synchronized (pendingExpandRefs) { pendingExpandRefs.poll(); }
+                    synchronized (pendingExpandRefs) {
+                        pendingExpandRefs.poll();
+                    }
                 }
                 events.fireExpandedVar(new DebuggerEventBus.ExpandedVarEvent(ref, vars));
             }
@@ -276,9 +315,7 @@ public class DebuggerBridge {
             }
             case "ERROR" -> events.fireError(new DebuggerEventBus.ErrorEvent(msg.get("message", "unknown")));
             case "OK" -> { /* generic ack — nothing to do today */ }
-            default -> { /* unknown message — log to console for diagnostics */
-                ctx.getOutputPane().appendDebugConsole("[unhandled] " + line, "console");
-            }
+            default -> /* unknown message — log to console for diagnostics */ ctx.getOutputPane().appendDebugConsole("[unhandled] " + line, "console");
         }
     }
 
@@ -309,7 +346,10 @@ public class DebuggerBridge {
         int lastColon = rest.lastIndexOf(':');
         if (lastColon < 0) return new Variable(name, rest, "", 0);
         long ref = 0;
-        try { ref = Long.parseLong(rest.substring(lastColon + 1)); } catch (NumberFormatException ignored) {}
+        try {
+            ref = Long.parseLong(rest.substring(lastColon + 1));
+        } catch (NumberFormatException ignored) {
+        }
         String beforeRef = rest.substring(0, lastColon);
         int typeColon = beforeRef.lastIndexOf(':');
         if (typeColon < 0) return new Variable(name, beforeRef, "", ref);
@@ -320,7 +360,11 @@ public class DebuggerBridge {
 
     private static Path pathOrNull(String s) {
         if (s == null || s.isEmpty()) return null;
-        try { return Path.of(s); } catch (Exception e) { return null; }
+        try {
+            return Path.of(s);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void setState(DebuggerEventBus.State next) {

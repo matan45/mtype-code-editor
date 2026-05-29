@@ -380,22 +380,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
             dlg.showAndWait().ifPresent(spec -> runMtpmFromTree(pc -> pc.add(mtproj, spec)));
         });
 
-        MenuItem pkgRemove = new MenuItem("Remove Package...");
-        pkgRemove.setOnAction(_ -> {
-            Path mtproj = selectedPath();
-            if (mtproj == null) return;
-            var prompt = Dialogs.prompt(ownerWindow(), "Remove Package",
-                    "Remove package from " + mtproj.getFileName(),
-                    "Package name:", "");
-            prompt.showAndWait().map(String::trim).filter(s -> !s.isEmpty()).ifPresent(name -> {
-                var confirm = Dialogs.confirm(ownerWindow(), "Remove " + name + "?",
-                        "Remove " + name + " from " + mtproj.getFileName() + " and clean mt_modules?");
-                var result = confirm.showAndWait();
-                if (result.isPresent() && result.get() == ButtonType.OK) {
-                    runMtpmFromTree(pc -> pc.remove(mtproj, name));
-                }
-            });
-        });
+        MenuItem pkgRemove = getMenuItem();
 
         MenuItem pkgList = new MenuItem("List Packages");
         pkgList.setOnAction(_ -> runMtpmFromTree(pc -> pc.list(selectedPath())));
@@ -439,6 +424,26 @@ public class WorkspaceTreeView extends TreeView<Path> {
         return menu;
     }
 
+    private MenuItem getMenuItem() {
+        MenuItem pkgRemove = new MenuItem("Remove Package...");
+        pkgRemove.setOnAction(_ -> {
+            Path mtproj = selectedPath();
+            if (mtproj == null) return;
+            var prompt = Dialogs.prompt(ownerWindow(), "Remove Package",
+                    "Remove package from " + mtproj.getFileName(),
+                    "Package name:", "");
+            prompt.showAndWait().map(String::trim).filter(s -> !s.isEmpty()).ifPresent(name -> {
+                var confirm = Dialogs.confirm(ownerWindow(), "Remove " + name + "?",
+                        "Remove " + name + " from " + mtproj.getFileName() + " and clean mt_modules?");
+                var result = confirm.showAndWait();
+                if (result.isPresent() && result.get() == ButtonType.OK) {
+                    runMtpmFromTree(pc -> pc.remove(mtproj, name));
+                }
+            });
+        });
+        return pkgRemove;
+    }
+
     private void runMtpmFromTree(java.util.function.Consumer<PackageController> action) {
         PackageController pc = ctx.getPackageController();
         if (pc == null) return;
@@ -467,7 +472,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
     private List<Path> topLevelPaths(List<Path> paths, boolean excludeRoot) {
         Path rootPath = getRoot() == null ? null : getRoot().getValue();
         List<Path> unique = new ArrayList<>(new LinkedHashSet<>(paths));
-        unique.removeIf(p -> p == null || (excludeRoot && rootPath != null && p.equals(rootPath)));
+        unique.removeIf(p -> p == null || (excludeRoot && p.equals(rootPath)));
         unique.sort(Comparator.comparingInt(Path::getNameCount));
 
         List<Path> topLevel = new ArrayList<>();
@@ -590,7 +595,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
             }
         } catch (IOException ex) { errorAlert("Delete failed", ex); return; }
         if (clipboardPaths.stream().anyMatch(source ->
-                selected.stream().anyMatch(deleted -> source.startsWith(deleted)))) {
+                selected.stream().anyMatch(source::startsWith))) {
             clipboardPaths = List.of();
             clipboardOp = null;
         }
@@ -663,7 +668,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
     private List<Path> dragSourcePaths(Path draggedPath) {
         if (draggedPath == null) return List.of();
         Path rootPath = getRoot() == null ? null : getRoot().getValue();
-        if (rootPath != null && draggedPath.equals(rootPath)) return List.of();
+        if (draggedPath.equals(rootPath)) return List.of();
 
         List<Path> selected = selectedPaths();
         if (selected.contains(draggedPath)) {
@@ -710,7 +715,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
 
         if (moved.isEmpty()) return false;
         if (clipboardPaths.stream().anyMatch(source ->
-                moved.stream().anyMatch(movedPath -> source.startsWith(movedPath)))) {
+                moved.stream().anyMatch(source::startsWith))) {
             clipboardPaths = List.of();
             clipboardOp = null;
         }
@@ -770,14 +775,14 @@ public class WorkspaceTreeView extends TreeView<Path> {
 
     private String deleteConfirmationText(List<Path> paths) {
         if (paths.size() == 1) {
-            return "Delete " + paths.get(0).getFileName() + "? This cannot be undone.";
+            return "Delete " + paths.getFirst().getFileName() + "? This cannot be undone.";
         }
         return "Delete " + paths.size() + " selected items? This cannot be undone.";
     }
 
     private String describePaths(List<Path> paths) {
         if (paths.size() == 1) {
-            return paths.get(0).getFileName().toString();
+            return paths.getFirst().getFileName().toString();
         }
         return paths.size() + " items";
     }

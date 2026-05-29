@@ -17,18 +17,12 @@ import java.util.function.Function;
 
 public class QuickPickDialog<T> {
     /**
-     * Sentinel class marking header rows in the internal model.
-     */
-    private static final class Header {
-        final String text;
-
-        Header(String text) {
-            this.text = text;
-        }
+         * Sentinel class marking header rows in the internal model.
+         */
+        private record Header(String text) {
     }
 
     private final Dialog<T> dialog = new Dialog<>();
-    private final TextField filter = new TextField();
     private final ListView<Object> listView = new ListView<>();
     private final ObservableList<Object> backing;
     private final FilteredList<Object> filtered;
@@ -60,11 +54,11 @@ public class QuickPickDialog<T> {
         dialog.setHeaderText(null);
 
         backing = FXCollections.observableArrayList(buildModel(items, groupFn));
-        filtered = new FilteredList<>(backing, o -> true);
+        filtered = new FilteredList<>(backing, _ -> true);
         listView.setItems(filtered);
         listView.setPrefHeight(320);
         listView.setMinWidth(360);
-        listView.setCellFactory(lv -> new ListCell<>() {
+        listView.setCellFactory(_ -> new ListCell<>() {
             @Override
             @SuppressWarnings("unchecked")
             protected void updateItem(Object item, boolean empty) {
@@ -76,11 +70,11 @@ public class QuickPickDialog<T> {
                     setMouseTransparent(false);
                     return;
                 }
-                if (item instanceof Header h) {
-                    boolean collapsed = collapsedGroups.contains(h.text);
+                if (item instanceof Header(String text)) {
+                    boolean collapsed = collapsedGroups.contains(text);
                     Label chevron = new Label(collapsed ? "▶" : "▼");
                     chevron.getStyleClass().add("mt-quickpick-chevron");
-                    Label header = new Label(h.text);
+                    Label header = new Label(text);
                     header.getStyleClass().add("mt-quickpick-header");
                     HBox row = new HBox(chevron, header);
                     row.setSpacing(6);
@@ -90,8 +84,8 @@ public class QuickPickDialog<T> {
                     getStyleClass().add("mt-quickpick-header-cell");
                     setMouseTransparent(false);
                     setOnMouseClicked(ev -> {
-                        if (collapsedGroups.contains(h.text)) collapsedGroups.remove(h.text);
-                        else collapsedGroups.add(h.text);
+                        if (collapsedGroups.contains(text)) collapsedGroups.remove(text);
+                        else collapsedGroups.add(text);
                         refilter();
                         ev.consume();
                     });
@@ -118,8 +112,9 @@ public class QuickPickDialog<T> {
             }
         });
 
+        TextField filter = new TextField();
         filter.setPromptText("Type to filter…");
-        filter.textProperty().addListener((obs, oldV, newV) -> {
+        filter.textProperty().addListener((_, _, newV) -> {
             currentQuery = newV == null ? "" : newV.toLowerCase();
             refilter();
             int first = firstSelectableIndex(0, 1);
@@ -190,7 +185,7 @@ public class QuickPickDialog<T> {
         for (T item : items) {
             String g = groupFn.apply(item);
             if (g == null) g = "";
-            byGroup.computeIfAbsent(g, k -> new ArrayList<>()).add(item);
+            byGroup.computeIfAbsent(g, _ -> new ArrayList<>()).add(item);
         }
         for (Map.Entry<String, List<T>> entry : byGroup.entrySet()) {
             model.add(new Header(entry.getKey()));
@@ -208,7 +203,7 @@ public class QuickPickDialog<T> {
         int idx = backing.indexOf(item);
         for (int i = idx - 1; i >= 0; i--) {
             Object o = backing.get(i);
-            if (o instanceof Header h) return h.text;
+            if (o instanceof Header(String text)) return text;
         }
         return null;
     }

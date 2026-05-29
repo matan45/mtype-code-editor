@@ -80,21 +80,6 @@ public final class Dialogs {
         }
     }
 
-    /** Same as theme(), but for callers that hold the DialogPane directly. */
-    public static DialogPane themePane(DialogPane pane) {
-        if (!pane.getStyleClass().contains("mt-dialog")) {
-            pane.getStyleClass().add("mt-dialog");
-        }
-        var cssUrl = Dialogs.class.getResource("/css/mtype-dark.css");
-        if (cssUrl != null) {
-            String url = cssUrl.toExternalForm();
-            if (!pane.getStylesheets().contains(url)) {
-                pane.getStylesheets().add(url);
-            }
-        }
-        return pane;
-    }
-
     /**
      * Inject a sibling Node (anything created outside the DialogPane) into the .mt-dialog scope so its CSS rules win.
      */

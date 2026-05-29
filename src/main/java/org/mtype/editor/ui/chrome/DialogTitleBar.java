@@ -18,9 +18,6 @@ import javafx.stage.WindowEvent;
  * Custom title bar for an undecorated {@link Dialog}: a title label bound
  * to the dialog's title, the same three traffic-light circles as the main
  * window (— □ ×), and drag-to-move on the empty surface.
- *
- * Install via {@link #install(Dialog)} which sets it as the
- * DialogPane's header.
  */
 public final class DialogTitleBar extends HBox {
     private double dragOffsetX;
@@ -69,11 +66,6 @@ public final class DialogTitleBar extends HBox {
         getChildren().addAll(title, spacer, minBtn, maxBtn, closeBtn);
 
         installDrag();
-    }
-
-    public static void install(Dialog<?> dialog) {
-        DialogTitleBar bar = new DialogTitleBar(dialog);
-        dialog.getDialogPane().setHeader(bar);
     }
 
     private void installDrag() {

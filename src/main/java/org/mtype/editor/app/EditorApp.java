@@ -27,7 +27,6 @@ import org.mtype.editor.debug.DebuggerBridge;
 import org.mtype.editor.debug.DebuggerEventBus;
 import org.mtype.editor.git.GitService;
 import org.mtype.editor.lsp.LspBridge;
-import org.mtype.editor.process.AddPackageSpec;
 import org.mtype.editor.process.BuildController;
 import org.mtype.editor.process.PackageController;
 import org.mtype.editor.process.RunController;
@@ -105,7 +104,7 @@ public class EditorApp extends Application {
         ctx.setDebuggerBridge(debugger);
         breakpoints.attachBridge(debugger);
         DebuggerPanel debuggerPanel = new DebuggerPanel(ctx);
-        ctx.setDebuggerPanel(debuggerPanel);
+        ctx.setDebuggerPanel();
 
         output.attachCallHierarchy(ctx);
         output.attachReferences(ctx);

@@ -1,50 +1,59 @@
 package org.mtype.editor.ui.editor;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleBooleanProperty;
-import javafx.geometry.Point2D;
-import javafx.geometry.Pos;
-import javafx.geometry.Side;
-import javafx.scene.Cursor;
-import javafx.scene.Node;
-import javafx.scene.control.*;
-import javafx.scene.input.*;
-import javafx.scene.layout.*;
-import org.eclipse.lsp4j.*;
+import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.Tab;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
+import javafx.scene.input.MouseButton;
+import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Pane;
+import javafx.scene.layout.StackPane;
+import org.eclipse.lsp4j.DocumentSymbol;
+import org.eclipse.lsp4j.Position;
+import org.eclipse.lsp4j.Range;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.CharacterHit;
-import org.fxmisc.richtext.event.MouseOverTextEvent;
-import org.fxmisc.richtext.model.StyleSpans;
-import org.fxmisc.richtext.model.StyleSpansBuilder;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.debug.BreakpointService;
 import org.mtype.editor.debug.DebuggerEventBus;
-import org.mtype.editor.lsp.*;
+import org.mtype.editor.lsp.LspBridge;
+import org.mtype.editor.lsp.LspEdits;
 import org.mtype.editor.syntax.Tokenizers;
-import org.mtype.editor.ui.output.OutlinePanel;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * A single open document. {@code EditorTab} owns the {@link MTypeCodeArea} and wires up a set of
+ * focused collaborators — one per editor feature — passing them the code area and the shared
+ * {@link StyleCompositor}. It keeps only the cross-cutting concerns: document lifecycle (open/save/
+ * close), the LSP document session, dirty/version bookkeeping, debugger hooks, inlay-hint scheduling,
+ * event routing to the collaborators, and the public API other UI components call.
+ *
+ * @see StyleCompositor for the shared highlight composition the collaborators push into
+ */
 public class EditorTab extends Tab {
-    private static final ScheduledExecutorService BG_EXEC =
+    static final ScheduledExecutorService BG_EXEC =
             Executors.newScheduledThreadPool(2, r -> {
                 Thread t = new Thread(r, "mtype-tab-bg");
                 t.setDaemon(true);
                 return t;
             });
-    private static final double CODE_LENS_LABEL_X = 65;
-    private static final double EDITOR_SCROLL_SENSITIVITY = 1.8;
 
     private final AppContext ctx;
     private final Path path;
@@ -52,59 +61,33 @@ public class EditorTab extends Tab {
     private final MTypeCodeArea codeArea = new MTypeCodeArea();
     private final SimpleBooleanProperty dirty = new SimpleBooleanProperty(false);
     private final AtomicInteger version = new AtomicInteger(1);
-    private final ContextMenu completionMenu = new ContextMenu();
-    private final ContextMenu referencesMenu = new ContextMenu();
-    private final HoverPopup hoverPopup = new HoverPopup();
-    private final SignatureHelpPopup signaturePopup = new SignatureHelpPopup();
+    private final HBox breadcrumbBar = new HBox();
+
+    // Feature collaborators.
+    private final StyleCompositor compositor;
+    private final DiagnosticsController diagnostics;
+    private final SemanticTokensController semanticTokens;
+    private final CompletionController completion;
+    private final SignatureHelpController signatureHelp;
+    private final HoverController hover;
+    private final CodeLensController codeLens;
+    private final CodeFoldingController folding;
+    private final DocumentSymbolController documentSymbols;
+    private final EditorCommands commands;
+    private final GutterFactory gutter;
     private final InlayHintsController inlayHintsController;
     private final CurrentLineHighlighter currentLineHighlighter;
-    private StyleSpans<Collection<String>> lastLinkHoverSpans;
-    private int linkHoverStart = -1;
-    private int linkHoverEnd = -1;
-    private double lastMouseX = -1;
-    private double lastMouseY = -1;
-    private boolean ctrlDown;
-    private final Map<Integer, CodeLensLine> codeLensByParagraph = new HashMap<>();
-    private final Set<Integer> codeLensParagraphStyles = new HashSet<>();
-    private final Map<Integer, org.eclipse.lsp4j.DiagnosticSeverity> diagnosticsByLine = new HashMap<>();
-    private final HBox breadcrumbBar = new HBox();
-    private javafx.scene.control.Menu quickFixMenu;
-    private int quickFixRequestSerial;
-    private StyleSpans<Collection<String>> lastTokenSpans;
-    private StyleSpans<Collection<String>> lastDiagnosticSpans;
-    private StyleSpans<Collection<String>> lastSemanticSpans;
-    private List<org.eclipse.lsp4j.Diagnostic> lastDiagnostics = Collections.emptyList();
-    private List<DocumentSymbol> lastDocumentSymbols = Collections.emptyList();
-    private ScheduledFuture<?> pendingHighlight;
-    private ScheduledFuture<?> pendingDidChange;
-    private ScheduledFuture<?> pendingCompletion;
-    private ScheduledFuture<?> pendingCodeLens;
-    private ScheduledFuture<?> pendingInlayHints;
-    private ScheduledFuture<?> pendingSignatureHelp;
-    private ScheduledFuture<?> pendingDocumentSymbol;
-    private ScheduledFuture<?> pendingSemanticTokens;
-    private int codeLensRequestSerial;
-    private int inlayHintRequestSerial;
-    private int signatureHelpRequestSerial;
-    private int documentSymbolRequestSerial;
-    private int semanticTokensRequestSerial;
-    private double pendingScrollX;
-    private double pendingScrollY;
-    private boolean scrollFlushScheduled;
+
+    // Cross-cutting state.
     private long openedLspSession = -1;
     private boolean suppressDirty = true;
-    private SnippetSession activeSnippet;
+    private boolean isInternalEdit = false;
     private int executionLine = -1;
 
-    private record FoldRegion(int currentSigLine, int currentOpenBraceLine, int openBracePos, int currentEndLine, int currentEndLineLen, int originalSigLine, int originalOpenBraceLine, int originalEndLine) {}
-    private record FoldedRegion(int originalSigLine, int originalOpenBraceLine, int originalEndLine,
-                                org.fxmisc.richtext.model.StyledDocument<java.util.Collection<String>,
-                                        org.reactfx.util.Either<String, InlayHintSeg>,
-                                        java.util.Collection<String>> stashedDoc) {}
-    private static final String FOLD_PLACEHOLDER = " … }";
-    private final Map<Integer, FoldRegion> foldableByCurrentLine = new HashMap<>();
-    private final Map<Integer, FoldedRegion> foldedByOriginalLine = new java.util.LinkedHashMap<>();
-    private boolean isInternalEdit = false;
+    // Schedulers kept on the tab: LSP document sync and inlay-hint requests.
+    private ScheduledFuture<?> pendingDidChange;
+    private ScheduledFuture<?> pendingInlayHints;
+    private int inlayHintRequestSerial;
 
     public EditorTab(AppContext ctx, Path path) {
         this.ctx = ctx;
@@ -112,15 +95,12 @@ public class EditorTab extends Tab {
         this.lspManaged = Tokenizers.isMTypeFile(path);
         setText(path.getFileName().toString());
 
-        codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
         codeArea.getStyleClass().add("code-area");
         // VS-Code-style current-line highlight: the band is painted in currentLineLayer BEHIND a
         // transparent CodeArea (mt-main-editor) so the text stays crisp on top of it. The editor
         // background is painted by the StackPane (mt-editor-stack) instead of the area itself.
         codeArea.getStyleClass().add("mt-main-editor");
         applyFontFromSettings();
-        completionMenu.getStyleClass().add("mt-completion");
-        referencesMenu.getStyleClass().add("mt-references");
 
         VirtualizedScrollPane<MTypeCodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
         scroll.getStyleClass().add("mt-main-editor-scroll");
@@ -134,45 +114,48 @@ public class EditorTab extends Tab {
         BorderPane wrap = new BorderPane(editorStack);
         wrap.setTop(breadcrumbBar);
         setContent(wrap);
+
+        // Build the collaborators in dependency order. The gutter is consulted live by several of
+        // them via the gutterRefresh hook (which re-sets the paragraph graphic factory).
+        compositor = new StyleCompositor(codeArea, path);
+        diagnostics = new DiagnosticsController(codeArea, compositor, this::refreshGutter);
+        semanticTokens = new SemanticTokensController(codeArea, path, ctx, compositor, lspManaged);
+        completion = new CompletionController(codeArea, path, ctx, compositor, semanticTokens, lspManaged);
+        signatureHelp = new SignatureHelpController(codeArea, path, ctx, lspManaged);
+        hover = new HoverController(codeArea, path, ctx, lspManaged, compositor);
+        codeLens = new CodeLensController(codeArea, path, ctx, lspManaged, this::refreshGutter);
+        folding = new CodeFoldingController(codeArea, this, compositor, semanticTokens, this::refreshGutter);
+        documentSymbols = new DocumentSymbolController(codeArea, path, ctx, lspManaged, breadcrumbBar, folding, this);
+        commands = new EditorCommands(codeArea, path, ctx, lspManaged, compositor, semanticTokens);
+        gutter = new GutterFactory(codeArea, path, ctx, diagnostics, codeLens, folding, () -> executionLine);
         inlayHintsController = new InlayHintsController(codeArea, this);
         currentLineHighlighter = new CurrentLineHighlighter(codeArea, currentLineLayer);
+
+        codeArea.setParagraphGraphicFactory(gutter::paragraphGraphic);
 
         loadFile();
         suppressDirty = false;
 
-        codeArea.textProperty().addListener((obs, oldText, newText) -> {
+        codeArea.textProperty().addListener((_, oldText, newText) -> {
             if (isInternalEdit) return;
             if (!suppressDirty) markDirty();
-            scheduleHighlight();
+            compositor.scheduleHighlight();
             scheduleDidChange();
-            scheduleCodeLensRefresh();
+            codeLens.schedule();
             scheduleInlayHintsRefresh();
-            scheduleDocumentSymbolRefresh();
-            scheduleSemanticTokensRefresh();
-            maybeAutoCompletion(oldText, newText);
-            maybeSignatureHelp(oldText, newText);
+            documentSymbols.schedule();
+            semanticTokens.schedule();
+            completion.maybeAutoCompletion(oldText, newText);
+            signatureHelp.maybeSignatureHelp(oldText, newText);
         });
 
-        codeArea.caretPositionProperty().addListener((obs, o, n) -> {
-            int caret = n;
-            int[] lc = codeArea.displayToSourceLineChar(caret);
+        codeArea.caretPositionProperty().addListener((_, _, n) -> {
+            int[] lc = codeArea.displayToSourceLineChar(n);
             ctx.getStatusBar().setCaret(lc[0], lc[1]);
-            updateBreadcrumb();
+            documentSymbols.updateBreadcrumb();
         });
 
         codeArea.addEventFilter(KeyEvent.KEY_PRESSED, this::handleKey);
-
-        // Hover
-        codeArea.setMouseOverTextDelay(Duration.ofMillis(500));
-        codeArea.addEventHandler(MouseOverTextEvent.MOUSE_OVER_TEXT_BEGIN, e -> {
-            Point2D screen = e.getScreenPosition();
-            Point2D local = codeArea.screenToLocal(screen);
-            int charIdx = local == null
-                    ? e.getCharacterIndex()
-                    : codeArea.hit(local.getX(), local.getY()).getInsertionIndex();
-            requestHover(charIdx, screen);
-        });
-        codeArea.addEventHandler(MouseOverTextEvent.MOUSE_OVER_TEXT_END, e -> hoverPopup.hide());
 
         // Ctrl+Click -> go to definition. Filter (not handler) so we run before
         // RichTextFX's default caret placement, which uses raw hit() and lands
@@ -181,7 +164,7 @@ public class EditorTab extends Tab {
             if (e.getButton() == MouseButton.PRIMARY && e.isControlDown()) {
                 CharacterHit hit = codeArea.hit(e.getX(), e.getY());
                 codeArea.moveTo(hit.getInsertionIndex());
-                goToDefinitionAtCaret();
+                commands.goToDefinitionAtCaret();
                 e.consume();
             }
         });
@@ -198,52 +181,35 @@ public class EditorTab extends Tab {
                 if (!isOffsetInsideSelection(clickedOffset)) {
                     codeArea.moveTo(clickedOffset);
                 }
-                if (quickFixMenu != null) populateQuickFix(quickFixMenu, clickedOffset);
+                commands.requestQuickFix(clickedOffset);
             }
-            if (completionMenu.isShowing()) completionMenu.hide();
+            if (completion.isMenuShowing()) completion.hideMenu();
         });
 
-        // Ctrl+hover hyperlink underline.
-        codeArea.addEventFilter(MouseEvent.MOUSE_MOVED, e -> {
-            lastMouseX = e.getX();
-            lastMouseY = e.getY();
-            updateLinkHover();
-        });
-        codeArea.addEventFilter(MouseEvent.MOUSE_EXITED, e -> {
-            lastMouseX = -1;
-            lastMouseY = -1;
-            clearLinkHover();
-        });
-        codeArea.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
-            if (e.getCode() == KeyCode.CONTROL) {
-                ctrlDown = true;
-                updateLinkHover();
-            }
-        });
-        codeArea.addEventFilter(KeyEvent.KEY_RELEASED, e -> {
-            if (e.getCode() == KeyCode.CONTROL) {
-                ctrlDown = false;
-                clearLinkHover();
-            }
-        });
-
-        codeArea.setContextMenu(buildCodeContextMenu());
+        codeArea.setContextMenu(commands.buildCodeContextMenu());
 
         setOnCloseRequest(ev -> {
             if (!confirmDiscardIfDirty()) ev.consume();
         });
 
-        Platform.runLater(this::applyHighlightingNow);
+        Platform.runLater(compositor::applyHighlightingNow);
         onLspReady();
         wireDebuggerHooks();
     }
+
+    /** Re-render the gutter by re-setting the paragraph graphic factory (the shared refresh hook). */
+    private void refreshGutter() {
+        codeArea.setParagraphGraphicFactory(gutter::paragraphGraphic);
+    }
+
+    /* ----- debugger integration ----- */
 
     private void wireDebuggerHooks() {
         BreakpointService bs = ctx.getBreakpointService();
         if (bs != null) {
             bs.addListener((p, _) -> {
                 if (p == null || !p.equals(path)) return;
-                Platform.runLater(() -> codeArea.setParagraphGraphicFactory(this::paragraphGraphic));
+                Platform.runLater(this::refreshGutter);
             });
         }
         DebuggerEventBus bus = ctx.getDebuggerEventBus();
@@ -271,26 +237,31 @@ public class EditorTab extends Tab {
         int paragraphCount = codeArea.getParagraphs().size();
         if (old >= 0 && old < paragraphCount && old != newLine) {
             codeArea.setParagraphStyle(old,
-                    codeLensParagraphStyles.contains(old)
+                    codeLens.isCodeLensParagraph(old)
                             ? Collections.singletonList("mt-code-lens-paragraph")
                             : Collections.emptyList());
         }
         if (newLine >= 0 && newLine < paragraphCount) {
             List<String> classes = new ArrayList<>(2);
             classes.add("mt-execution-line");
-            if (codeLensParagraphStyles.contains(newLine)) classes.add("mt-code-lens-paragraph");
+            if (codeLens.isCodeLensParagraph(newLine)) classes.add("mt-code-lens-paragraph");
             codeArea.setParagraphStyle(newLine, classes);
         }
-        codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
+        refreshGutter();
     }
+
+    /* ----- accessors ----- */
 
     public Path getPath() { return path; }
     public MTypeCodeArea getCodeArea() { return codeArea; }
     public int getVersion() { return version.get(); }
     public boolean isDirty() { return dirty.get(); }
+    public List<DocumentSymbol> getLastDocumentSymbols() { return documentSymbols.getLastDocumentSymbols(); }
+
+    /* ----- file I/O ----- */
 
     public void save() {
-        unfoldAll();
+        folding.unfoldAll();
         boolean formatFirst = lspManaged
                 && ctx.getSettings() != null
                 && ctx.getSettings().editor != null
@@ -300,10 +271,9 @@ public class EditorTab extends Tab {
             lsp.format(path, 4, true).thenAcceptAsync(edits -> {
                 if (edits != null && !edits.isEmpty()) {
                     LspEdits.applyToCodeArea(codeArea, edits);
-                    lastDiagnosticSpans = null;
-                    lastSemanticSpans = null;
-                    applyHighlightingNow();
-                    scheduleSemanticTokensRefresh();
+                    compositor.invalidateOverlays();
+                    compositor.applyHighlightingNow();
+                    semanticTokens.schedule();
                 }
                 writeToDisk();
             }, Platform::runLater);
@@ -323,7 +293,7 @@ public class EditorTab extends Tab {
         if (prefs.fontSize > 0) {
             sb.append("-fx-font-size: ").append(prefs.fontSize).append("; ");
         }
-        if (sb.length() > 0) codeArea.setStyle(sb.toString());
+        if (!sb.isEmpty()) codeArea.setStyle(sb.toString());
     }
 
     private void writeToDisk() {
@@ -338,87 +308,32 @@ public class EditorTab extends Tab {
         }
     }
 
-    /** Store the latest raw diagnostics and (re)build display-mapped spans + gutter markers. */
+    private void loadFile() {
+        try {
+            String text = Files.readString(path, StandardCharsets.UTF_8);
+            codeArea.replaceText(text);
+            codeArea.moveTo(0);
+        } catch (Exception ex) {
+            codeArea.replaceText("");
+            ctx.getStatusBar().setMessage("Open failed: " + ex.getMessage());
+        }
+        codeArea.getUndoManager().forgetHistory();
+    }
+
+    private void markDirty() {
+        if (!dirty.get()) {
+            dirty.set(true);
+            setText("*" + path.getFileName().toString());
+        }
+    }
+
+    /* ----- diagnostics push (from DiagnosticsRenderer) ----- */
+
     public void applyDiagnostics(List<org.eclipse.lsp4j.Diagnostic> diags) {
-        lastDiagnostics = diags == null ? Collections.emptyList() : new ArrayList<>(diags);
-        rebuildDiagnosticStyles();
+        diagnostics.applyDiagnostics(diags);
     }
 
-    /**
-     * Rebuild diagnostic spans from {@link #lastDiagnostics}, mapping LSP source ranges to current
-     * display offsets. Called on each server push and again after inlay-hint segments shift offsets.
-     */
-    private void rebuildDiagnosticStyles() {
-        String source = codeArea.getSourceText();
-        int len = codeArea.getLength(); // display length (spans overlay the hint-augmented document)
-        List<org.eclipse.lsp4j.Diagnostic> diags = new ArrayList<>(lastDiagnostics);
-        if (len == 0 || diags.isEmpty()) {
-            StyleSpansBuilder<Collection<String>> empty = new StyleSpansBuilder<>();
-            empty.add(Collections.emptyList(), Math.max(len, 1));
-            applyDiagnosticSpans(empty.create());
-            applyDiagnosticLines(Collections.emptyMap());
-            return;
-        }
-        diags.sort(java.util.Comparator
-                .comparingInt((org.eclipse.lsp4j.Diagnostic d) -> d.getRange().getStart().getLine())
-                .thenComparingInt(d -> d.getRange().getStart().getCharacter()));
-        StyleSpansBuilder<Collection<String>> b = new StyleSpansBuilder<>();
-        int cursor = 0;
-        Map<Integer, org.eclipse.lsp4j.DiagnosticSeverity> linesBySeverity = new HashMap<>();
-        for (org.eclipse.lsp4j.Diagnostic d : diags) {
-            int start = codeArea.sourceToDisplay(Positions.offset(source,
-                    d.getRange().getStart().getLine(), d.getRange().getStart().getCharacter()));
-            int end = codeArea.sourceToDisplay(Positions.offset(source,
-                    d.getRange().getEnd().getLine(), d.getRange().getEnd().getCharacter()));
-            if (end <= start) end = Math.min(start + 1, len);
-            start = Math.max(0, Math.min(start, len));
-            end = Math.max(start, Math.min(end, len));
-            int startLine = d.getRange().getStart().getLine();
-            int endLine = d.getRange().getEnd().getLine();
-            org.eclipse.lsp4j.DiagnosticSeverity sev = d.getSeverity() == null
-                    ? org.eclipse.lsp4j.DiagnosticSeverity.Error : d.getSeverity();
-            for (int line = startLine; line <= endLine; line++) {
-                linesBySeverity.merge(line, sev, DiagnosticsRenderer::worse);
-            }
-            if (start < cursor) continue; // skip overlapping spans (overlay can't handle them)
-            b.add(Collections.emptyList(), start - cursor);
-            b.add(Collections.singleton(DiagnosticsRenderer.styleFor(sev)), end - start);
-            cursor = end;
-        }
-        b.add(Collections.emptyList(), len - cursor);
-        applyDiagnosticSpans(b.create());
-        applyDiagnosticLines(linesBySeverity);
-    }
-
-    public void applyDiagnosticSpans(StyleSpans<Collection<String>> diagSpans) {
-        this.lastDiagnosticSpans = diagSpans;
-        applyCombinedStyles();
-    }
-
-    public void applyDiagnosticLines(Map<Integer, org.eclipse.lsp4j.DiagnosticSeverity> nextLines) {
-        if (nextLines == null) nextLines = Collections.emptyMap();
-        if (nextLines.equals(diagnosticsByLine)) return;
-        diagnosticsByLine.clear();
-        diagnosticsByLine.putAll(nextLines);
-        codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
-    }
-
-    void onClosed() {
-        if (pendingHighlight != null) pendingHighlight.cancel(false);
-        if (pendingDidChange != null) pendingDidChange.cancel(false);
-        if (pendingCompletion != null) pendingCompletion.cancel(false);
-        if (pendingCodeLens != null) pendingCodeLens.cancel(false);
-        if (pendingInlayHints != null) pendingInlayHints.cancel(false);
-        if (pendingSignatureHelp != null) pendingSignatureHelp.cancel(false);
-        if (pendingDocumentSymbol != null) pendingDocumentSymbol.cancel(false);
-        if (pendingSemanticTokens != null) pendingSemanticTokens.cancel(false);
-        signaturePopup.hide();
-        inlayHintsController.dispose();
-        currentLineHighlighter.dispose();
-        if (lspManaged && ctx.getLspBridge() != null) {
-            try { ctx.getLspBridge().didClose(path); } catch (Exception ignored) {}
-        }
-    }
+    /* ----- LSP document lifecycle ----- */
 
     void onLspReady() {
         if (!lspManaged) return;
@@ -428,150 +343,40 @@ public class EditorTab extends Tab {
         if (openedLspSession == lspSession) return;
         lsp.didOpen(path, codeArea.getSourceText(), version.get());
         openedLspSession = lspSession;
-        scheduleCodeLensRefresh();
+        codeLens.schedule();
         scheduleInlayHintsRefresh();
-        scheduleDocumentSymbolRefresh();
-        scheduleSemanticTokensRefresh();
+        documentSymbols.schedule();
+        semanticTokens.schedule();
     }
 
-    public List<DocumentSymbol> getLastDocumentSymbols() {
-        return lastDocumentSymbols;
-    }
-
-    /* ----- code lens ----- */
-
-    private Node paragraphGraphic(int paragraphIndex) {
-        Node lineNumber = lineNumber(paragraphIndex);
-        CodeLensLine lens = codeLensByParagraph.get(paragraphIndex);
-        if (lens == null) return lineNumber;
-
-        Label title = new Label(lens.title);
-        title.getStyleClass().add("mt-code-lens");
-        title.setCursor(Cursor.HAND);
-        title.setTranslateX(CODE_LENS_LABEL_X);
-        title.setOnMouseClicked(e -> {
-            showCodeLensReferences(lens, title);
-            e.consume();
-        });
-
-        Pane lensRow = new Pane(title);
-        lensRow.getStyleClass().add("mt-code-lens-row");
-        lensRow.setPickOnBounds(false);
-
-        VBox block = new VBox(lensRow, lineNumber);
-        block.getStyleClass().add("mt-code-lens-block");
-        return block;
-    }
-
-    private Node lineNumber(int paragraphIndex) {
-        Label label = new Label(Integer.toString(paragraphIndex + 1));
-        label.getStyleClass().add("lineno");
-
-        javafx.scene.layout.Region breakpoint = new javafx.scene.layout.Region();
-        breakpoint.getStyleClass().add("mt-gutter-breakpoint");
-        BreakpointService bs = ctx.getBreakpointService();
-        boolean isBreakpointOn = bs != null && bs.breakpointsIn(path).contains(paragraphIndex);
-        if (isBreakpointOn) breakpoint.getStyleClass().add("mt-gutter-breakpoint-on");
-        breakpoint.setOnMouseClicked(e -> {
-            if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY && bs != null) {
-                bs.toggle(path, paragraphIndex);
-                e.consume();
-            }
-        });
-
-        javafx.scene.layout.Region marker = new javafx.scene.layout.Region();
-        marker.getStyleClass().add("mt-gutter-marker");
-        org.eclipse.lsp4j.DiagnosticSeverity sev = diagnosticsByLine.get(paragraphIndex);
-        if (sev != null) {
-            marker.getStyleClass().add("mt-gutter-" + gutterSeverityClass(sev));
+    void onClosed() {
+        if (pendingDidChange != null) pendingDidChange.cancel(false);
+        if (pendingInlayHints != null) pendingInlayHints.cancel(false);
+        compositor.dispose();
+        completion.dispose();
+        signatureHelp.dispose();
+        hover.dispose();
+        codeLens.dispose();
+        semanticTokens.dispose();
+        documentSymbols.dispose();
+        inlayHintsController.dispose();
+        currentLineHighlighter.dispose();
+        if (lspManaged && ctx.getLspBridge() != null) {
+            try { ctx.getLspBridge().didClose(path); } catch (Exception ignored) {}
         }
-        if (paragraphIndex == executionLine) {
-            marker.getStyleClass().add("mt-gutter-execution-arrow");
-        }
-
-        Node fold = foldGutterNode(paragraphIndex);
-
-        javafx.scene.layout.HBox row = new javafx.scene.layout.HBox(breakpoint, marker, fold, label);
-        row.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
-        row.getStyleClass().add("mt-gutter-row");
-        return row;
     }
 
-    private Node foldGutterNode(int paragraphIndex) {
-        FoldRegion fr = foldableByCurrentLine.get(paragraphIndex);
-        if (fr == null) {
-            javafx.scene.layout.Region spacer = new javafx.scene.layout.Region();
-            spacer.getStyleClass().add("mt-gutter-fold-spacer");
-            return spacer;
-        }
-        boolean folded = foldedByOriginalLine.containsKey(fr.originalSigLine());
-        Label arrow = new Label(folded ? "▶" : "▼");
-        arrow.getStyleClass().add("mt-gutter-fold-arrow");
-        arrow.setOnMouseClicked(e -> {
-            if (e.getButton() == javafx.scene.input.MouseButton.PRIMARY) {
-                toggleFold(fr.originalSigLine());
-                e.consume();
-            }
-        });
-        return arrow;
-    }
-
-    private static String gutterSeverityClass(org.eclipse.lsp4j.DiagnosticSeverity s) {
-        return switch (s) {
-            case Error -> "error";
-            case Warning -> "warning";
-            case Information -> "info";
-            case Hint -> "hint";
-        };
-    }
-
-    private void installScrollSensitivity() {
-        codeArea.addEventFilter(ScrollEvent.SCROLL, event -> {
-            if (event.isShortcutDown() || event.isInertia()) return;
-
-            double deltaY = event.getDeltaY();
-            double deltaX = event.getDeltaX();
-            if (deltaY == 0 && deltaX == 0) return;
-
-            pendingScrollY -= deltaY * EDITOR_SCROLL_SENSITIVITY;
-            pendingScrollX -= deltaX * EDITOR_SCROLL_SENSITIVITY;
-            scheduleScrollFlush();
-            event.consume();
-        });
-    }
-
-    private void scheduleScrollFlush() {
-        if (scrollFlushScheduled) return;
-        scrollFlushScheduled = true;
-        Platform.runLater(() -> {
-            scrollFlushScheduled = false;
-            double y = pendingScrollY;
-            double x = pendingScrollX;
-            pendingScrollY = 0;
-            pendingScrollX = 0;
-            if (y != 0) codeArea.scrollYBy(y);
-            if (x != 0) codeArea.scrollXBy(x);
-        });
-    }
-
-    private void scheduleCodeLensRefresh() {
+    private void scheduleDidChange() {
         if (!lspManaged) return;
-        if (pendingCodeLens != null) pendingCodeLens.cancel(false);
-        pendingCodeLens = BG_EXEC.schedule(
-                () -> Platform.runLater(this::requestCodeLensNow),
-                450,
-                TimeUnit.MILLISECONDS);
+        if (pendingDidChange != null) pendingDidChange.cancel(false);
+        String snapshot = codeArea.getSourceText();
+        int v = version.incrementAndGet();
+        pendingDidChange = BG_EXEC.schedule(() -> {
+            if (ctx.getLspBridge() != null) ctx.getLspBridge().didChange(path, snapshot, v);
+        }, 200, TimeUnit.MILLISECONDS);
     }
 
-    private void requestCodeLensNow() {
-        LspBridge lsp = ctx.getLspBridge();
-        if (lsp == null || !lsp.isReady()) return;
-        int request = ++codeLensRequestSerial;
-        lsp.codeLens(path).thenAcceptAsync(lenses -> {
-            if (request != codeLensRequestSerial) return;
-            applyCodeLenses(lenses);
-        }, Platform::runLater);
-    }
+    /* ----- inlay hints (request scheduling; rendering lives in InlayHintsController) ----- */
 
     private void scheduleInlayHintsRefresh() {
         if (!lspManaged) return;
@@ -621,748 +426,6 @@ public class EditorTab extends Tab {
         return new Range(new Position(0, 0), new Position(lastLine, lastCharacter));
     }
 
-    private void applyCodeLenses(List<? extends CodeLens> lenses) {
-        Map<Integer, CodeLensLine> next = new HashMap<>();
-        if (lenses != null) {
-            for (CodeLens lens : lenses) {
-                if (lens == null || lens.getRange() == null || lens.getRange().getStart() == null) continue;
-                Command command = lens.getCommand();
-                String title = command == null ? null : command.getTitle();
-                if (title == null || title.isBlank()) continue;
-                int line = lens.getRange().getStart().getLine();
-                if (line < 0 || line >= codeArea.getParagraphs().size()) continue;
-                next.putIfAbsent(line, codeLensLine(lens, title));
-            }
-        }
-        if (next.equals(codeLensByParagraph)) return;
-        updateCodeLensParagraphStyles(next.keySet());
-        codeLensByParagraph.clear();
-        codeLensByParagraph.putAll(next);
-        codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
-    }
-
-    private void updateCodeLensParagraphStyles(Set<Integer> nextLines) {
-        for (Integer line : new HashSet<>(codeLensParagraphStyles)) {
-            if (!nextLines.contains(line) && line >= 0 && line < codeArea.getParagraphs().size()) {
-                codeArea.setParagraphStyle(line, Collections.emptyList());
-                codeLensParagraphStyles.remove(line);
-            }
-        }
-        for (Integer line : nextLines) {
-            if (line >= 0 && line < codeArea.getParagraphs().size() && codeLensParagraphStyles.add(line)) {
-                codeArea.setParagraphStyle(line, Collections.singletonList("mt-code-lens-paragraph"));
-            }
-        }
-    }
-
-    private CodeLensLine codeLensLine(CodeLens lens, String title) {
-        Position start = lens.getRange().getStart();
-        int symbolLine = start.getLine();
-        int symbolCharacter = start.getCharacter();
-        Command command = lens.getCommand();
-        if (command != null && command.getArguments() != null && command.getArguments().size() > 1) {
-            Position commandPosition = positionArgument(command.getArguments().get(1));
-            if (commandPosition != null) {
-                symbolLine = commandPosition.getLine();
-                symbolCharacter = commandPosition.getCharacter();
-            }
-        }
-        return new CodeLensLine(title, symbolLine, symbolCharacter);
-    }
-
-    private Position positionArgument(Object value) {
-        if (value instanceof JsonObject json) {
-            JsonElement line = json.get("line");
-            JsonElement character = json.get("character");
-            if (line != null && character != null) {
-                return new Position(line.getAsInt(), character.getAsInt());
-            }
-        }
-        if (value instanceof Map<?, ?> map) {
-            Integer line = intValue(map.get("line"));
-            Integer character = intValue(map.get("character"));
-            if (line != null && character != null) return new Position(line, character);
-        }
-        return null;
-    }
-
-    private Integer intValue(Object value) {
-        if (value instanceof Number number) return number.intValue();
-        if (value instanceof JsonElement json && json.isJsonPrimitive() && json.getAsJsonPrimitive().isNumber()) {
-            return json.getAsInt();
-        }
-        return null;
-    }
-
-    private void showCodeLensReferences(CodeLensLine lens, Node anchor) {
-        LspBridge lsp = ctx.getLspBridge();
-        if (lsp == null || !lsp.isReady()) {
-            ctx.getStatusBar().setMessage("LSP not ready");
-            return;
-        }
-        lsp.references(path, lens.line, lens.character, false).thenAcceptAsync(locations -> {
-            if (locations == null || locations.isEmpty()) {
-                ctx.getStatusBar().setMessage("No references");
-                return;
-            }
-            ctx.getStatusBar().setMessage(lens.title);
-            showReferencesMenu(anchor, locations);
-        }, Platform::runLater);
-    }
-
-    private void showReferencesMenu(Node anchor, List<? extends Location> locations) {
-        referencesMenu.hide();
-        referencesMenu.getItems().clear();
-        Map<Path, String[]> fileLines = new HashMap<>();
-        int index = 1;
-        for (Location location : locations) {
-            CustomMenuItem item = new CustomMenuItem(referenceRow(index, location, fileLines), true);
-            item.setOnAction(e -> openLocation(location, "reference"));
-            referencesMenu.getItems().add(item);
-            index++;
-        }
-        referencesMenu.show(anchor, Side.BOTTOM, 0, 2);
-    }
-
-    private Node referenceRow(int index, Location location, Map<Path, String[]> fileLines) {
-        ReferencePreview preview = referencePreview(location, fileLines);
-
-        Region icon = new Region();
-        icon.getStyleClass().add("mt-reference-icon");
-
-        Label ordinal = new Label(index + ".");
-        ordinal.getStyleClass().add("mt-reference-index");
-        ordinal.setMinWidth(34);
-        ordinal.setPrefWidth(34);
-        ordinal.setMaxWidth(34);
-
-        Label file = new Label(preview.file);
-        file.getStyleClass().add("mt-reference-file");
-        file.setMinWidth(92);
-        file.setPrefWidth(92);
-        file.setMaxWidth(92);
-        file.setTextOverrun(OverrunStyle.LEADING_ELLIPSIS);
-
-        Label position = new Label(preview.position);
-        position.getStyleClass().add("mt-reference-position");
-        position.setMinWidth(48);
-        position.setPrefWidth(48);
-        position.setMaxWidth(48);
-
-        Label snippet = new Label(preview.snippet);
-        snippet.getStyleClass().add("mt-reference-snippet");
-        snippet.setMinWidth(0);
-        snippet.setPrefWidth(420);
-        snippet.setMaxWidth(420);
-        snippet.setTextOverrun(OverrunStyle.ELLIPSIS);
-        HBox.setHgrow(snippet, Priority.NEVER);
-
-        HBox row = new HBox(6, icon, ordinal, file, position, snippet);
-        row.getStyleClass().add("mt-reference-row");
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.setMinWidth(640);
-        row.setPrefWidth(640);
-        row.setMaxWidth(640);
-        return row;
-    }
-
-    private ReferencePreview referencePreview(Location location, Map<Path, String[]> fileLines) {
-        if (location == null || location.getUri() == null || location.getRange() == null
-                || location.getRange().getStart() == null) {
-            return new ReferencePreview("Unknown reference", "", "");
-        }
-
-        Position start = location.getRange().getStart();
-        int line = start.getLine();
-        int character = start.getCharacter();
-        Path refPath = uriToPath(location.getUri());
-        if (refPath == null) {
-            return new ReferencePreview(location.getUri(), (line + 1) + ":" + (character + 1), "");
-        }
-
-        Path name = refPath.getFileName();
-        String file = name == null ? refPath.toString() : name.toString();
-        String snippet = "";
-        String[] lines = fileLines.computeIfAbsent(refPath, this::readFileLines);
-        if (lines != null && line >= 0 && line < lines.length) {
-            snippet = lines[line].strip();
-        }
-        return new ReferencePreview(file, (line + 1) + ":" + (character + 1), snippet);
-    }
-
-    private Path uriToPath(String uri) {
-        try {
-            return java.nio.file.Paths.get(java.net.URI.create(uri));
-        } catch (Exception ignored) {
-            return null;
-        }
-    }
-
-    private String[] readFileLines(Path file) {
-        try {
-            return Files.readString(file, StandardCharsets.UTF_8).split("\\R", -1);
-        } catch (Exception ignored) {
-            return null;
-        }
-    }
-
-    private record CodeLensLine(String title, int line, int character) {}
-    private record ReferencePreview(String file, String position, String snippet) {}
-
-    /** Move the caret to a 0-based LSP position and ensure visible. */
-    public void revealPosition(int line, int character) {
-        int offset = codeArea.sourceLineCharToDisplay(line, character);
-        codeArea.moveTo(offset);
-        codeArea.requestFollowCaret();
-        codeArea.requestFocus();
-    }
-
-    private boolean isOffsetInsideSelection(int offset) {
-        javafx.scene.control.IndexRange selection = codeArea.getSelection();
-        return selection.getLength() > 0
-                && offset >= selection.getStart()
-                && offset <= selection.getEnd();
-    }
-
-    private ContextMenu buildCodeContextMenu() {
-        ContextMenu menu = new ContextMenu();
-        menu.getStyleClass().add("mt-code-context");
-
-        javafx.scene.control.Menu quickFix = new javafx.scene.control.Menu("Quick Fix...");
-        this.quickFixMenu = quickFix;
-        // Populated on right-click (see MOUSE_PRESSED handler). No setOnShowing —
-        // that would overwrite the freshly-fetched actions with a new "Loading..."
-        // every time the user hovers the submenu.
-        quickFix.getItems().add(disabledItem("(right-click on a diagnostic)"));
-
-        MenuItem goToDef = new MenuItem("Go to Definition");
-        goToDef.setAccelerator(new KeyCodeCombination(KeyCode.F12));
-        goToDef.setOnAction(e -> goToDefinitionAtCaret());
-
-        MenuItem rename = new MenuItem("Rename Symbol");
-        rename.setAccelerator(new KeyCodeCombination(KeyCode.F2));
-        rename.setOnAction(e -> renameAtCaret());
-
-        MenuItem callHier = new MenuItem("Show Call Hierarchy");
-        callHier.setAccelerator(new KeyCodeCombination(KeyCode.H,
-                KeyCombination.CONTROL_DOWN, KeyCombination.ALT_DOWN));
-        callHier.setOnAction(e -> showCallHierarchyAtCaret());
-
-        MenuItem findRefs = new MenuItem("Find All References");
-        findRefs.setAccelerator(new KeyCodeCombination(KeyCode.F12, KeyCombination.SHIFT_DOWN));
-        findRefs.setOnAction(e -> findReferencesAtCaret());
-
-        MenuItem format = new MenuItem("Format Document");
-        format.setAccelerator(new KeyCodeCombination(KeyCode.F,
-                KeyCombination.SHIFT_DOWN, KeyCombination.ALT_DOWN));
-        format.setOnAction(e -> formatDocument());
-
-        MenuItem cut = new MenuItem("Cut");
-        cut.setAccelerator(new KeyCodeCombination(KeyCode.X, KeyCombination.SHORTCUT_DOWN));
-        cut.setOnAction(e -> codeArea.cut());
-
-        MenuItem copy = new MenuItem("Copy");
-        copy.setAccelerator(new KeyCodeCombination(KeyCode.C, KeyCombination.SHORTCUT_DOWN));
-        copy.setOnAction(e -> codeArea.copy());
-
-        MenuItem paste = new MenuItem("Paste");
-        paste.setAccelerator(new KeyCodeCombination(KeyCode.V, KeyCombination.SHORTCUT_DOWN));
-        paste.setOnAction(e -> codeArea.paste());
-
-        menu.setOnShowing(e -> {
-            boolean hasSelection = codeArea.getSelection().getLength() > 0;
-            cut.setDisable(!hasSelection);
-            copy.setDisable(!hasSelection);
-        });
-
-        menu.getItems().addAll(
-                quickFix,
-                new SeparatorMenuItem(),
-                goToDef, rename, callHier, findRefs,
-                new SeparatorMenuItem(),
-                format,
-                new SeparatorMenuItem(),
-                cut, copy, paste);
-        return menu;
-    }
-
-    private void populateQuickFix(javafx.scene.control.Menu quickFix) {
-        populateQuickFix(quickFix, codeArea.getCaretPosition());
-    }
-
-    private void populateQuickFix(javafx.scene.control.Menu quickFix, int offset) {
-        if (!lspManaged) {
-            quickFix.getItems().setAll(disabledItem("(not available)"));
-            return;
-        }
-        LspBridge lsp = ctx.getLspBridge();
-        if (lsp == null || !lsp.isReady()) {
-            quickFix.getItems().setAll(disabledItem("LSP not ready"));
-            return;
-        }
-        int clampedOffset = Math.max(0, Math.min(offset, codeArea.getLength()));
-        int[] lc = codeArea.displayToSourceLineChar(clampedOffset);
-        Position pos = new Position(lc[0], lc[1]);
-        Range range = new Range(pos, pos);
-        List<org.eclipse.lsp4j.Diagnostic> here = diagnosticsContainingLine(lc[0]);
-
-        final int serial = ++quickFixRequestSerial;
-        quickFix.getItems().setAll(disabledItem("Loading..."));
-        ctx.getOutputPane().appendLspLog("[codeAction] " + (lc[0] + 1) + ":" + (lc[1] + 1)
-                + " diagnostics=" + here.size());
-
-        lsp.codeAction(path, range, here).thenAcceptAsync(actions -> {
-            if (serial != quickFixRequestSerial) return; // a newer request has superseded
-            int count = actions == null ? 0 : actions.size();
-            ctx.getOutputPane().appendLspLog("[codeAction] returned " + count + " action(s)");
-            if (count == 0) {
-                replaceQuickFixItems(quickFix, java.util.List.of(disabledItem("(no actions)")));
-                return;
-            }
-            java.util.List<MenuItem> next = new java.util.ArrayList<>();
-            for (var either : actions) {
-                MenuItem mi = quickFixMenuItem(either);
-                if (mi != null) next.add(mi);
-            }
-            if (next.isEmpty()) {
-                replaceQuickFixItems(quickFix, java.util.List.of(disabledItem("(no actions)")));
-            } else {
-                replaceQuickFixItems(quickFix, next);
-            }
-        }, Platform::runLater).exceptionally(t -> {
-            Platform.runLater(() -> {
-                ctx.getOutputPane().appendLspLog("[codeAction error] " + t.getMessage());
-                replaceQuickFixItems(quickFix, java.util.List.of(disabledItem("(error: " + t.getMessage() + ")")));
-            });
-            return null;
-        });
-    }
-
-    /** Replace submenu items. If it's already shown, force JavaFX to re-layout it. */
-    private void replaceQuickFixItems(javafx.scene.control.Menu quickFix, java.util.List<MenuItem> next) {
-        boolean wasShowing = quickFix.isShowing();
-        quickFix.getItems().setAll(next);
-        if (wasShowing) {
-            quickFix.hide();
-            Platform.runLater(quickFix::show);
-        }
-    }
-
-    private MenuItem quickFixMenuItem(org.eclipse.lsp4j.jsonrpc.messages.Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction> either) {
-        if (either == null) return null;
-        String title;
-        Runnable action;
-        if (either.isLeft()) {
-            org.eclipse.lsp4j.Command cmd = either.getLeft();
-            if (cmd == null) return null;
-            title = cmd.getTitle();
-            action = () -> ctx.getLspBridge().executeCommand(cmd.getCommand(), cmd.getArguments());
-        } else {
-            org.eclipse.lsp4j.CodeAction ca = either.getRight();
-            if (ca == null) return null;
-            title = ca.getTitle();
-            action = () -> {
-                if (ca.getEdit() != null) {
-                    int files = LspEdits.applyWorkspaceEdit(ctx, ca.getEdit());
-                    lastDiagnosticSpans = null;
-                    lastSemanticSpans = null;
-                    applyHighlightingNow();
-                    scheduleSemanticTokensRefresh();
-                    ctx.getStatusBar().setMessage("Quick fix applied to " + files + " file(s)");
-                }
-                if (ca.getCommand() != null) {
-                    ctx.getLspBridge().executeCommand(ca.getCommand().getCommand(), ca.getCommand().getArguments());
-                }
-            };
-        }
-        if (title == null || title.isBlank()) return null;
-        MenuItem mi = new MenuItem(title);
-        mi.setOnAction(e -> action.run());
-        return mi;
-    }
-
-    private List<org.eclipse.lsp4j.Diagnostic> diagnosticsContainingLine(int line) {
-        List<org.eclipse.lsp4j.Diagnostic> all = ctx.getDiagnosticsBus().forUri(path.toUri().toString());
-        List<org.eclipse.lsp4j.Diagnostic> here = new java.util.ArrayList<>();
-        for (org.eclipse.lsp4j.Diagnostic d : all) {
-            int s = d.getRange().getStart().getLine();
-            int e = d.getRange().getEnd().getLine();
-            if (line >= s && line <= e) here.add(d);
-        }
-        return here;
-    }
-
-    private static MenuItem disabledItem(String text) {
-        MenuItem mi = new MenuItem(text);
-        mi.setDisable(true);
-        return mi;
-    }
-
-    /* ================================ commands ================================ */
-
-    public void formatDocument() {
-        if (!lspManaged) return;
-        LspBridge lsp = ctx.getLspBridge();
-        if (lsp == null || !lsp.isReady()) {
-            ctx.getStatusBar().setMessage("LSP not ready");
-            return;
-        }
-        lsp.format(path, 4, true).thenAcceptAsync(edits -> {
-            boolean hadChanges = edits != null && !edits.isEmpty();
-            if (hadChanges) {
-                LspEdits.applyToCodeArea(codeArea, edits);
-            }
-            // RichTextFX clears styles in replaced ranges, and any cached diagnostic spans
-            // reference old offsets — so always re-tokenize before showing the result.
-            lastDiagnosticSpans = null;
-            lastSemanticSpans = null;
-            applyHighlightingNow();
-            scheduleSemanticTokensRefresh();
-            ctx.getStatusBar().setMessage(hadChanges
-                    ? "Formatted " + path.getFileName()
-                    : "No formatting changes");
-        }, Platform::runLater);
-    }
-
-    public void goToDefinitionAtCaret() {
-        if (!lspManaged) return;
-        LspBridge lsp = ctx.getLspBridge();
-        if (lsp == null || !lsp.isReady()) return;
-        int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
-        lsp.definition(path, lc[0], lc[1]).thenAcceptAsync(loc -> {
-            if (loc == null) {
-                ctx.getStatusBar().setMessage("No definition");
-                return;
-            }
-            openLocation(loc, "definition");
-        }, Platform::runLater);
-    }
-
-    private void openLocation(Location loc, String label) {
-        if (loc == null || loc.getUri() == null || loc.getRange() == null || loc.getRange().getStart() == null) {
-            ctx.getStatusBar().setMessage("Bad " + label + " location");
-            return;
-        }
-        try {
-            Path targetPath = java.nio.file.Paths.get(java.net.URI.create(loc.getUri()));
-            ctx.getTabPane().openAt(targetPath, loc.getRange().getStart().getLine(), loc.getRange().getStart().getCharacter());
-        } catch (Exception ex) {
-            ctx.getStatusBar().setMessage("Bad " + label + " URI: " + loc.getUri());
-        }
-    }
-
-    public void showCallHierarchyAtCaret() {
-        if (!lspManaged) return;
-        LspBridge lsp = ctx.getLspBridge();
-        if (lsp == null || !lsp.isReady()) {
-            ctx.getStatusBar().setMessage("LSP not ready");
-            return;
-        }
-        int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
-        lsp.prepareCallHierarchy(path, lc[0], lc[1])
-                .thenAcceptAsync(items -> {
-                    if (items == null || items.isEmpty()) {
-                        ctx.getStatusBar().setMessage("No callable here");
-                        return;
-                    }
-                    ctx.getOutputPane().showCallHierarchy(items.get(0));
-                }, Platform::runLater);
-    }
-
-    public void findReferencesAtCaret() {
-        if (!lspManaged) return;
-        LspBridge lsp = ctx.getLspBridge();
-        if (lsp == null || !lsp.isReady()) {
-            ctx.getStatusBar().setMessage("LSP not ready");
-            return;
-        }
-        int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
-        int line = lc[0];
-        int col = lc[1];
-        String word = wordAt(line, col);
-        String label = word.isEmpty() ? "References" : word;
-        lsp.references(path, line, col, true).thenAcceptAsync(locations -> {
-            if (locations == null || locations.isEmpty()) {
-                ctx.getStatusBar().setMessage("No references for " + label);
-                ctx.getOutputPane().showReferences(label, java.util.Collections.emptyList());
-                return;
-            }
-            ctx.getOutputPane().showReferences(label, locations);
-        }, Platform::runLater);
-    }
-
-    private String wordAt(int line, int col) {
-        try {
-            String text = codeArea.getSourceText();
-            int offset = Positions.offset(text, line, col);
-            int start = offset;
-            while (start > 0 && isIdentChar(text.charAt(start - 1))) start--;
-            int end = offset;
-            while (end < text.length() && isIdentChar(text.charAt(end))) end++;
-            return text.substring(start, end);
-        } catch (Exception ignored) {
-            return "";
-        }
-    }
-
-    private static boolean isIdentChar(char c) {
-        return Character.isLetterOrDigit(c) || c == '_';
-    }
-
-    public void renameAtCaret() {
-        if (!lspManaged) return;
-        LspBridge lsp = ctx.getLspBridge();
-        if (lsp == null || !lsp.isReady()) {
-            ctx.getStatusBar().setMessage("LSP not ready");
-            return;
-        }
-        int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
-        int line = lc[0];
-        int col = lc[1];
-
-        lsp.prepareRename(path, line, col).thenAcceptAsync(info -> {
-            String placeholder = info != null && info.placeholder() != null
-                    ? info.placeholder() : wordAroundCaret();
-            if (placeholder == null || placeholder.isBlank()) {
-                ctx.getStatusBar().setMessage("Can't rename here");
-                return;
-            }
-            TextInputDialog dlg = new TextInputDialog(placeholder);
-            dlg.initOwner(codeArea.getScene() != null ? codeArea.getScene().getWindow() : null);
-            dlg.setTitle("Rename Symbol");
-            dlg.setHeaderText("Rename '" + placeholder + "'");
-            dlg.setContentText("New name");
-            org.mtype.editor.ui.dialogs.Dialogs.theme(dlg);
-            javafx.scene.control.DialogPane pane = dlg.getDialogPane();
-            javafx.scene.control.TextField field = dlg.getEditor();
-            field.getStyleClass().add("mt-rename-field");
-            javafx.application.Platform.runLater(() -> {
-                field.selectAll();
-                field.requestFocus();
-            });
-            Optional<String> result = dlg.showAndWait();
-            if (result.isEmpty()) return;
-            String newName = result.get().trim();
-            if (newName.isEmpty() || newName.equals(placeholder)) return;
-
-            lsp.rename(path, line, col, newName).thenAcceptAsync(edit -> {
-                if (edit == null) {
-                    ctx.getStatusBar().setMessage("Rename returned no edit");
-                    return;
-                }
-                int files = LspEdits.applyWorkspaceEdit(ctx, edit);
-                lastDiagnosticSpans = null;
-                lastSemanticSpans = null;
-                applyHighlightingNow();
-                scheduleSemanticTokensRefresh();
-                ctx.getStatusBar().setMessage("Renamed in " + files + " file(s)");
-            }, Platform::runLater);
-        }, Platform::runLater);
-    }
-
-    /* ================================ internals ================================ */
-
-    private void handleKey(KeyEvent e) {
-        if (completionMenu.isShowing()) {
-            if (e.getCode() == KeyCode.ESCAPE) {
-                completionMenu.hide();
-                e.consume();
-                return;
-            }
-            if (e.getCode() == KeyCode.ENTER || e.getCode() == KeyCode.TAB) {
-                MenuItem item = focusedMenuItem();
-                if (item != null) {
-                    item.fire();
-                    e.consume();
-                    return;
-                }
-            }
-        }
-        if (e.getCode() == KeyCode.TAB && activeSnippet != null) {
-            if (advanceSnippet()) {
-                e.consume();
-                return;
-            }
-        }
-        if (e.getCode() == KeyCode.SPACE && e.isControlDown() && e.isShiftDown()) {
-            requestSignatureHelpAtCaret();
-            e.consume();
-            return;
-        }
-        if (e.getCode() == KeyCode.SPACE && e.isControlDown()) {
-            requestCompletionNow();
-            e.consume();
-            return;
-        }
-        if (e.getCode() == KeyCode.F12) {
-            goToDefinitionAtCaret();
-            e.consume();
-            return;
-        }
-        if (e.getCode() == KeyCode.F2) {
-            renameAtCaret();
-            e.consume();
-            return;
-        }
-        if (e.getCode() == KeyCode.F && e.isShiftDown() && e.isAltDown()) {
-            formatDocument();
-            e.consume();
-            return;
-        }
-        if (e.getCode() == KeyCode.H && e.isControlDown() && e.isAltDown()) {
-            showCallHierarchyAtCaret();
-            e.consume();
-            return;
-        }
-        if (e.getCode() == KeyCode.F12 && e.isShiftDown()) {
-            findReferencesAtCaret();
-            e.consume();
-        }
-    }
-
-    private MenuItem focusedMenuItem() {
-        for (MenuItem mi : completionMenu.getItems()) {
-            if (mi.getStyleableNode() != null && mi.getStyleableNode().isFocused()) return mi;
-        }
-        return completionMenu.getItems().isEmpty() ? null : completionMenu.getItems().get(0);
-    }
-
-    public boolean canClose() {
-        return confirmDiscardIfDirty();
-    }
-
-    private boolean confirmDiscardIfDirty() {
-        if (!dirty.get()) return true;
-        Alert a = new Alert(Alert.AlertType.CONFIRMATION,
-                "Discard unsaved changes to " + path.getFileName() + "?",
-                ButtonType.YES, ButtonType.NO);
-        a.setHeaderText(null);
-        Optional<ButtonType> r = a.showAndWait();
-        return r.isPresent() && r.get() == ButtonType.YES;
-    }
-
-    private void loadFile() {
-        try {
-            String text = Files.readString(path, StandardCharsets.UTF_8);
-            codeArea.replaceText(text);
-            codeArea.moveTo(0);
-        } catch (Exception ex) {
-            codeArea.replaceText("");
-            ctx.getStatusBar().setMessage("Open failed: " + ex.getMessage());
-        }
-        codeArea.getUndoManager().forgetHistory();
-    }
-
-    private void markDirty() {
-        if (!dirty.get()) {
-            dirty.set(true);
-            setText("*" + path.getFileName().toString());
-        }
-    }
-
-    /* ----- highlighting ----- */
-
-    private void scheduleHighlight() {
-        if (pendingHighlight != null) pendingHighlight.cancel(false);
-        String snapshot = codeArea.getText();
-        pendingHighlight = BG_EXEC.schedule(() -> {
-            StyleSpans<Collection<String>> spans = Tokenizers.computeFor(path, snapshot);
-            Platform.runLater(() -> {
-                // Skip if the display text changed since the snapshot (e.g. inlay-hint segments were
-                // inserted/removed) — applying stale-length spans would fail the setStyleSpans length
-                // check. A fresh highlight pass (or runHintMutation) will re-apply correct spans.
-                if (!snapshot.equals(codeArea.getText())) return;
-                lastTokenSpans = spans;
-                applyCombinedStyles();
-            });
-        }, 120, TimeUnit.MILLISECONDS);
-    }
-
-    private void applyHighlightingNow() {
-        StyleSpans<Collection<String>> spans = Tokenizers.computeFor(path, codeArea.getText());
-        lastTokenSpans = spans;
-        applyCombinedStyles();
-    }
-
-    private void applyCombinedStyles() {
-        if (lastTokenSpans == null) return;
-        StyleSpans<Collection<String>> combined = lastTokenSpans;
-        if (lastSemanticSpans != null) {
-            try {
-                combined = combined.overlay(lastSemanticSpans, EditorTab::mergeStyles);
-            } catch (Exception ignored) {}
-        }
-        if (lastDiagnosticSpans != null) {
-            try {
-                combined = combined.overlay(
-                        lastDiagnosticSpans,
-                        EditorTab::mergeStyles);
-            } catch (Exception ignored) {}
-        }
-        if (lastLinkHoverSpans != null) {
-            try {
-                combined = combined.overlay(lastLinkHoverSpans, EditorTab::mergeStyles);
-            } catch (Exception ignored) {}
-        }
-        codeArea.setStyleSpans(0, combined);
-    }
-
-    private void updateLinkHover() {
-        if (!ctrlDown || lastMouseX < 0 || lastMouseY < 0) {
-            clearLinkHover();
-            return;
-        }
-        CharacterHit hit = codeArea.hit(lastMouseX, lastMouseY);
-        int[] range = identifierRangeAt(hit.getInsertionIndex());
-        if (range == null) {
-            clearLinkHover();
-            return;
-        }
-        if (range[0] == linkHoverStart && range[1] == linkHoverEnd) return;
-        linkHoverStart = range[0];
-        linkHoverEnd = range[1];
-        lastLinkHoverSpans = buildLinkHoverSpans(range[0], range[1]);
-        codeArea.setCursor(Cursor.HAND);
-        applyCombinedStyles();
-    }
-
-    private void clearLinkHover() {
-        if (linkHoverStart < 0 && lastLinkHoverSpans == null) return;
-        linkHoverStart = -1;
-        linkHoverEnd = -1;
-        lastLinkHoverSpans = null;
-        codeArea.setCursor(null);
-        applyCombinedStyles();
-    }
-
-    private int[] identifierRangeAt(int offset) {
-        String text = codeArea.getText();
-        int length = text.length();
-        if (offset < 0 || offset > length) return null;
-        int start = offset;
-        while (start > 0 && isIdentifierChar(text.charAt(start - 1))) start--;
-        int end = offset;
-        while (end < length && isIdentifierChar(text.charAt(end))) end++;
-        if (start == end) return null;
-        char first = text.charAt(start);
-        if (!Character.isLetter(first) && first != '_') return null;
-        return new int[]{start, end};
-    }
-
-    private static boolean isIdentifierChar(char c) {
-        return Character.isLetterOrDigit(c) || c == '_';
-    }
-
-    private StyleSpans<Collection<String>> buildLinkHoverSpans(int start, int end) {
-        int length = codeArea.getLength();
-        if (start < 0 || end > length || start >= end) return null;
-        StyleSpansBuilder<Collection<String>> b = new StyleSpansBuilder<>();
-        if (start > 0) b.add(Collections.emptyList(), start);
-        b.add(Collections.singleton("mt-link-hover"), end - start);
-        if (end < length) b.add(Collections.emptyList(), length - end);
-        return b.create();
-    }
-
     /**
      * Run an inlay-hint segment mutation (insert/remove {@code ￼} segments) while suppressing the
      * normal text-change reactions (LSP didChange, dirty flag, debounced refreshes). Preserves the
@@ -1382,637 +445,153 @@ public class EditorTab extends Tab {
         }
         int newCaret = Math.min(codeArea.sourceToDisplay(sourceCaret), codeArea.getLength());
         codeArea.moveTo(newCaret);
-        lastDiagnosticSpans = null;
-        lastSemanticSpans = null;
-        applyHighlightingNow();      // re-tokenize over the new display text (length matches spans)
-        rebuildDiagnosticStyles();   // re-map stored diagnostics to the new display offsets
-        scheduleSemanticTokensRefresh();
+        compositor.invalidateOverlays();
+        compositor.applyHighlightingNow();   // re-tokenize over the new display text (length matches spans)
+        diagnostics.rebuildDiagnosticStyles(); // re-map stored diagnostics to the new display offsets
+        semanticTokens.schedule();
         Platform.runLater(() -> {
             codeArea.scrollXToPixel(sx);
             codeArea.scrollYToPixel(sy);
         });
     }
 
-    private static Collection<String> mergeStyles(Collection<String> a, Collection<String> b) {
-        java.util.Set<String> merged = new java.util.LinkedHashSet<>(a);
-        merged.addAll(b);
-        return merged;
-    }
-
-    /* ----- LSP sync ----- */
-
-    private void scheduleDidChange() {
-        if (!lspManaged) return;
-        if (pendingDidChange != null) pendingDidChange.cancel(false);
-        String snapshot = codeArea.getSourceText();
-        int v = version.incrementAndGet();
-        pendingDidChange = BG_EXEC.schedule(() -> {
-            if (ctx.getLspBridge() != null) ctx.getLspBridge().didChange(path, snapshot, v);
-        }, 200, TimeUnit.MILLISECONDS);
-    }
-
-    /* ----- completion ----- */
-
-    private void maybeAutoCompletion(String oldText, String newText) {
-        if (activeSnippet != null) {
-            completionMenu.hide();
-            return;
+    /** Run a document edit with text-change reactions (dirty/LSP/refreshes) suppressed. */
+    void runInternalEdit(Runnable edit) {
+        boolean prev = isInternalEdit;
+        isInternalEdit = true;
+        try {
+            edit.run();
+        } finally {
+            isInternalEdit = prev;
         }
-        int caret = codeArea.getCaretPosition();
-        int delta = newText.length() - oldText.length();
-        if (delta != 1) {
-            if (completionMenu.isShowing() && delta == -1) {
-                // user deleted a char while popup open — refresh
-                scheduleCompletion();
-            } else if (completionMenu.isShowing()) {
-                completionMenu.hide();
+    }
+
+    /* ----- navigation (public API; also reachable via context menu + keys) ----- */
+
+    public void formatDocument() { commands.formatDocument(); }
+    public void goToDefinitionAtCaret() { commands.goToDefinitionAtCaret(); }
+    public void findReferencesAtCaret() { commands.findReferencesAtCaret(); }
+    public void renameAtCaret() { commands.renameAtCaret(); }
+    public void showCallHierarchyAtCaret() { commands.showCallHierarchyAtCaret(); }
+    public void requestSignatureHelpAtCaret() { signatureHelp.requestSignatureHelpAtCaret(); }
+
+    /** Move the caret to a 0-based LSP position and ensure visible. */
+    public void revealPosition(int line, int character) {
+        int offset = codeArea.sourceLineCharToDisplay(line, character);
+        codeArea.moveTo(offset);
+        codeArea.requestFollowCaret();
+        codeArea.requestFocus();
+    }
+
+    /* ----- key + mouse helpers ----- */
+
+    private void handleKey(KeyEvent e) {
+        if (completion.isMenuShowing()) {
+            if (e.getCode() == KeyCode.ESCAPE) {
+                completion.hideMenu();
+                e.consume();
+                return;
             }
-            return;
-        }
-        if (caret == 0) return;
-        char c = newText.charAt(caret - 1);
-        if (Character.isLetterOrDigit(c) || c == '_' || c == '.') {
-            scheduleCompletion();
-        } else {
-            completionMenu.hide();
-        }
-    }
-
-    private void scheduleCompletion() {
-        if (!lspManaged) return;
-        if (pendingCompletion != null) pendingCompletion.cancel(false);
-        pendingCompletion = BG_EXEC.schedule(
-                () -> Platform.runLater(this::requestCompletionNow),
-                180, TimeUnit.MILLISECONDS);
-    }
-
-    private void requestCompletionNow() {
-        if (!lspManaged) return;
-        LspBridge lsp = ctx.getLspBridge();
-        if (lsp == null || !lsp.isReady()) return;
-        int caret = codeArea.getCaretPosition();
-        int[] lc = codeArea.displayToSourceLineChar(caret);
-        String trigger = null;
-        String text = codeArea.getText();
-        int scan = caret - 1;
-        while (scan >= 0 && isWordChar(text.charAt(scan))) scan--;
-        if (scan >= 0) {
-            char prior = text.charAt(scan);
-            if (prior == '.' || prior == ':') trigger = String.valueOf(prior);
-        }
-        lsp.completion(path, lc[0], lc[1], trigger).thenAcceptAsync(items -> {
-            populateCompletionMenu(items);
-        }, Platform::runLater);
-    }
-
-    private void populateCompletionMenu(List<CompletionItem> items) {
-        List<CompletionItem> currentCompletionItems = Collections.emptyList();
-        if (items == null || items.isEmpty()) {
-            completionMenu.hide();
-            currentCompletionItems = Collections.emptyList();
-            return;
-        }
-        String prefix = currentWordPrefix();
-        java.util.List<CompletionItem> filtered = filter(items, prefix);
-        if (filtered.isEmpty()) {
-            completionMenu.hide();
-            return;
-        }
-        currentCompletionItems = filtered;
-        completionMenu.getItems().clear();
-        int shown = 0;
-        for (CompletionItem ci : filtered) {
-            MenuItem mi = buildCompletionItem(ci);
-            completionMenu.getItems().add(mi);
-            if (++shown >= 30) break;
-        }
-        if (!completionMenu.isShowing()) {
-            Optional<javafx.geometry.Bounds> caretBounds = codeArea.getCaretBounds();
-            if (caretBounds.isPresent()) {
-                javafx.geometry.Bounds b = caretBounds.get();
-                completionMenu.show(codeArea, b.getMinX(), b.getMaxY());
-            }
-        }
-    }
-
-    private MenuItem buildCompletionItem(CompletionItem ci) {
-        String label = ci.getLabel() == null ? "" : ci.getLabel();
-        String detail = ci.getDetail();
-        Label kindBadge = new Label(kindShort(ci.getKind()));
-        kindBadge.getStyleClass().add("mt-completion-kind");
-        kindBadge.getStyleClass().add("mt-completion-kind-" + (ci.getKind() == null ? "Other" : ci.getKind().name()));
-
-        MenuItem mi = new MenuItem(detail == null || detail.isBlank() ? label : (label + "   " + detail));
-        mi.setGraphic(kindBadge);
-        mi.setOnAction(ev -> applyCompletion(ci));
-        return mi;
-    }
-
-    private void applyCompletion(CompletionItem ci) {
-        if (ci == null) { completionMenu.hide(); return; }
-        boolean hasExtras = (ci.getAdditionalTextEdits() != null && !ci.getAdditionalTextEdits().isEmpty())
-                || ci.getCommand() != null;
-        if (hasExtras) {
-            applyResolvedCompletion(ci);
-            return;
-        }
-        ctx.getLspBridge().resolveCompletion(ci)
-                .thenAcceptAsync(resolved -> applyResolvedCompletion(resolved == null ? ci : resolved),
-                        Platform::runLater);
-    }
-
-    private void applyResolvedCompletion(CompletionItem ci) {
-        // The mType server sometimes returns a textEdit range narrower than the typed
-        // prefix (e.g. only the last char), so we widen the replacement to the union of
-        // the server's range and the word currently under the caret.
-        TextEdit te = ci.getTextEdit() != null && ci.getTextEdit().isLeft()
-                ? ci.getTextEdit().getLeft() : null;
-        String newText;
-        int serverStart = -1, serverEnd = -1;
-        String text = codeArea.getText();          // display text (used for the word scan below)
-        String source = codeArea.getSourceText();  // for mapping LSP (source) ranges to display
-        if (te != null) {
-            newText = te.getNewText();
-            serverStart = codeArea.sourceToDisplay(Positions.offset(source, te.getRange().getStart()));
-            serverEnd = codeArea.sourceToDisplay(Positions.offset(source, te.getRange().getEnd()));
-            if (serverStart > serverEnd) { int t = serverStart; serverStart = serverEnd; serverEnd = t; }
-        } else {
-            newText = ci.getInsertText() != null ? ci.getInsertText() : ci.getLabel();
-        }
-        if (newText == null) { completionMenu.hide(); return; }
-
-        int caret = codeArea.getCaretPosition();
-        int wordStart = caret;
-        while (wordStart > 0 && isWordChar(text.charAt(wordStart - 1))) wordStart--;
-        int start = serverStart >= 0 ? Math.min(serverStart, wordStart) : wordStart;
-        int end = serverEnd >= 0 ? Math.max(serverEnd, caret) : caret;
-
-        // Apply additionalTextEdits (typically import statements above the caret) BEFORE
-        // the main edit so snippet placeholder offsets land correctly. Shift start/end by
-        // the net length delta of additional edits that fall above the main edit range.
-        List<TextEdit> additional = ci.getAdditionalTextEdits();
-        int delta = 0;
-        if (additional != null && !additional.isEmpty()) {
-            for (TextEdit aedit : additional) {
-                int aEnd = codeArea.sourceToDisplay(Positions.offset(source, aedit.getRange().getEnd()));
-                if (aEnd <= start) {
-                    int aStart = codeArea.sourceToDisplay(Positions.offset(source, aedit.getRange().getStart()));
-                    String anew = aedit.getNewText() == null ? "" : aedit.getNewText();
-                    delta += anew.length() - (aEnd - aStart);
+            if (e.getCode() == KeyCode.ENTER || e.getCode() == KeyCode.TAB) {
+                if (completion.fireFocusedItem()) {
+                    e.consume();
+                    return;
                 }
             }
-            LspEdits.applyToCodeArea(codeArea, additional);
         }
-        start += delta;
-        end += delta;
-
-        activeSnippet = null;
-        if (ci.getInsertTextFormat() == InsertTextFormat.Snippet) {
-            SnippetSession snippet = SnippetSession.parse(newText, start);
-            codeArea.replaceText(start, end, snippet.text());
-            activeSnippet = snippet;
-            applySnippetSelection(snippet.firstSelection());
-        } else {
-            codeArea.replaceText(start, end, newText);
+        if (e.getCode() == KeyCode.TAB && completion.hasActiveSnippet()) {
+            if (completion.advanceSnippet()) {
+                e.consume();
+                return;
+            }
         }
-
-        if (ci.getCommand() != null) {
-            ctx.getLspBridge().executeCommand(ci.getCommand().getCommand(), ci.getCommand().getArguments());
+        if (e.getCode() == KeyCode.SPACE && e.isControlDown() && e.isShiftDown()) {
+            signatureHelp.requestSignatureHelpAtCaret();
+            e.consume();
+            return;
         }
-
-        if (additional != null && !additional.isEmpty()) {
-            lastDiagnosticSpans = null;
-            lastSemanticSpans = null;
-            applyHighlightingNow();
-            scheduleSemanticTokensRefresh();
+        if (e.getCode() == KeyCode.SPACE && e.isControlDown()) {
+            completion.requestCompletionNow();
+            e.consume();
+            return;
         }
-        completionMenu.hide();
+        if (e.getCode() == KeyCode.F12) {
+            commands.goToDefinitionAtCaret();
+            e.consume();
+            return;
+        }
+        if (e.getCode() == KeyCode.F2) {
+            commands.renameAtCaret();
+            e.consume();
+            return;
+        }
+        if (e.getCode() == KeyCode.F && e.isShiftDown() && e.isAltDown()) {
+            commands.formatDocument();
+            e.consume();
+            return;
+        }
+        if (e.getCode() == KeyCode.H && e.isControlDown() && e.isAltDown()) {
+            commands.showCallHierarchyAtCaret();
+            e.consume();
+        }
     }
 
-    private boolean advanceSnippet() {
+    private boolean isOffsetInsideSelection(int offset) {
         javafx.scene.control.IndexRange selection = codeArea.getSelection();
-        SnippetSession.Selection next = activeSnippet.advance(
-                codeArea.getCaretPosition(),
-                selection.getStart(),
-                selection.getEnd());
-        if (next == null) {
-            activeSnippet = null;
-            return false;
-        }
-        applySnippetSelection(next);
-        return true;
+        return selection.getLength() > 0
+                && offset >= selection.getStart()
+                && offset <= selection.getEnd();
     }
 
-    private void applySnippetSelection(SnippetSession.Selection selection) {
-        int length = codeArea.getLength();
-        int start = Math.max(0, Math.min(selection.start(), length));
-        int end = Math.max(0, Math.min(selection.end(), length));
-        codeArea.selectRange(start, end);
-        if (selection.finalCaret()) {
-            activeSnippet = null;
-        }
-    }
+    /* ----- scroll sensitivity ----- */
 
-    private String currentWordPrefix() {
-        int caret = codeArea.getCaretPosition();
-        String text = codeArea.getText();
-        int start = caret;
-        while (start > 0 && isWordChar(text.charAt(start - 1))) start--;
-        return text.substring(start, caret);
-    }
+    private double pendingScrollX;
+    private double pendingScrollY;
+    private boolean scrollFlushScheduled;
 
-    private String wordAroundCaret() {
-        int caret = codeArea.getCaretPosition();
-        String text = codeArea.getText();
-        int start = caret;
-        int end = caret;
-        while (start > 0 && isWordChar(text.charAt(start - 1))) start--;
-        while (end < text.length() && isWordChar(text.charAt(end))) end++;
-        if (start == end) return null;
-        return text.substring(start, end);
-    }
+    private void installScrollSensitivity() {
+        final double sensitivity = 1.8;
+        codeArea.addEventFilter(javafx.scene.input.ScrollEvent.SCROLL, event -> {
+            if (event.isShortcutDown() || event.isInertia()) return;
 
-    private static List<CompletionItem> filter(List<CompletionItem> items, String prefix) {
-        if (prefix == null || prefix.isEmpty()) return items;
-        String low = prefix.toLowerCase();
-        java.util.List<CompletionItem> out = new java.util.ArrayList<>();
-        for (CompletionItem ci : items) {
-            String key = ci.getFilterText() != null ? ci.getFilterText()
-                    : (ci.getLabel() != null ? ci.getLabel() : "");
-            if (key.toLowerCase().contains(low)) out.add(ci);
-        }
-        return out.isEmpty() ? items : out;
-    }
+            double deltaY = event.getDeltaY();
+            double deltaX = event.getDeltaX();
+            if (deltaY == 0 && deltaX == 0) return;
 
-    private static boolean isWordChar(char c) {
-        return Character.isLetterOrDigit(c) || c == '_';
-    }
-
-    private static String kindShort(CompletionItemKind k) {
-        if (k == null) return "·";
-        return switch (k) {
-            case Class -> "C";
-            case Interface -> "I";
-            case Struct -> "S";
-            case Enum -> "E";
-            case EnumMember -> "e";
-            case Method, Function, Constructor -> "ƒ";
-            case Property -> "p";
-            case Field, Variable -> "v";
-            case Constant -> "c";
-            case Keyword -> "k";
-            case Module -> "m";
-            case Snippet -> "»";
-            case File -> "□";
-            case Folder -> "▥";
-            case TypeParameter -> "T";
-            case Text -> "a";
-            default -> "·";
-        };
-    }
-
-    /* ----- signature help ----- */
-
-    private void maybeSignatureHelp(String oldText, String newText) {
-        int caret = codeArea.getCaretPosition();
-        int delta = newText.length() - oldText.length();
-        if (delta == 1 && caret > 0) {
-            char c = newText.charAt(caret - 1);
-            if (c == '(' || c == ',') {
-                scheduleSignatureHelp(String.valueOf(c));
-                return;
-            }
-            if (c == ')') {
-                signaturePopup.hide();
-                return;
-            }
-        }
-        if (delta == -1 && signaturePopup.isShowing()) {
-            scheduleSignatureHelp(null);
-        }
-    }
-
-    private void scheduleSignatureHelp(String triggerChar) {
-        if (!lspManaged) return;
-        if (pendingSignatureHelp != null) pendingSignatureHelp.cancel(false);
-        pendingSignatureHelp = BG_EXEC.schedule(
-                () -> Platform.runLater(() -> requestSignatureHelpNow(triggerChar)),
-                150, TimeUnit.MILLISECONDS);
-    }
-
-    public void requestSignatureHelpAtCaret() {
-        requestSignatureHelpNow(null);
-    }
-
-    private void requestSignatureHelpNow(String triggerChar) {
-        if (!lspManaged) return;
-        LspBridge lsp = ctx.getLspBridge();
-        if (lsp == null || !lsp.isReady()) return;
-        int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
-        final int request = ++signatureHelpRequestSerial;
-        lsp.signatureHelp(path, lc[0], lc[1], triggerChar).thenAcceptAsync(help -> {
-            if (request != signatureHelpRequestSerial) return;
-            if (help == null || help.getSignatures() == null || help.getSignatures().isEmpty()) {
-                signaturePopup.hide();
-                return;
-            }
-            Optional<javafx.geometry.Bounds> caretBounds = codeArea.getCaretBounds();
-            if (caretBounds.isEmpty()) return;
-            javafx.geometry.Bounds b = caretBounds.get();
-            signaturePopup.show(codeArea, help, b.getMinX(), b.getMinY() - 6);
-        }, Platform::runLater);
-    }
-
-    /* ----- document symbols + breadcrumb ----- */
-
-    private void scheduleDocumentSymbolRefresh() {
-        if (!lspManaged) return;
-        if (pendingDocumentSymbol != null) pendingDocumentSymbol.cancel(false);
-        pendingDocumentSymbol = BG_EXEC.schedule(
-                () -> Platform.runLater(this::requestDocumentSymbolNow),
-                350, TimeUnit.MILLISECONDS);
-    }
-
-    private void requestDocumentSymbolNow() {
-        if (!lspManaged) return;
-        LspBridge lsp = ctx.getLspBridge();
-        if (lsp == null || !lsp.isReady()) return;
-        final int request = ++documentSymbolRequestSerial;
-        lsp.documentSymbol(path).thenAcceptAsync(raw -> {
-            if (request != documentSymbolRequestSerial) return;
-            lastDocumentSymbols = OutlinePanel.flatten(raw);
-            updateBreadcrumb();
-            rebuildFoldableRegions();
-            if (ctx.getOutputPane() != null) ctx.getOutputPane().refreshOutlineFor(this);
-        }, Platform::runLater);
-    }
-
-    private void updateBreadcrumb() {
-        if (lastDocumentSymbols == null || lastDocumentSymbols.isEmpty()) {
-            if (breadcrumbBar.isVisible()) {
-                breadcrumbBar.setVisible(false);
-                breadcrumbBar.setManaged(false);
-            }
-            breadcrumbBar.getChildren().clear();
-            return;
-        }
-        int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
-        int line = lc[0];
-        int col = lc[1];
-        List<DocumentSymbol> chain = new ArrayList<>();
-        collectAncestors(lastDocumentSymbols, line, col, chain);
-        breadcrumbBar.getChildren().clear();
-        if (chain.isEmpty()) {
-            breadcrumbBar.setVisible(false);
-            breadcrumbBar.setManaged(false);
-            return;
-        }
-        for (int i = 0; i < chain.size(); i++) {
-            DocumentSymbol s = chain.get(i);
-            Label name = new Label(s.getName() == null ? "?" : s.getName());
-            name.getStyleClass().add("mt-breadcrumb-item");
-            name.setOnMouseClicked(_ -> {
-                Range r = s.getSelectionRange() != null ? s.getSelectionRange() : s.getRange();
-                if (r != null && r.getStart() != null) revealPosition(r.getStart().getLine(), r.getStart().getCharacter());
-            });
-            breadcrumbBar.getChildren().add(name);
-            if (i < chain.size() - 1) {
-                Label sep = new Label("›");
-                sep.getStyleClass().add("mt-breadcrumb-sep");
-                breadcrumbBar.getChildren().add(sep);
-            }
-        }
-        if (!breadcrumbBar.isVisible()) {
-            breadcrumbBar.setVisible(true);
-            breadcrumbBar.setManaged(true);
-        }
-    }
-
-    private static void collectAncestors(List<DocumentSymbol> symbols, int line, int col, List<DocumentSymbol> out) {
-        if (symbols == null) return;
-        for (DocumentSymbol s : symbols) {
-            Range r = s.getRange();
-            if (r == null || r.getStart() == null || r.getEnd() == null) continue;
-            if (positionInRange(line, col, r)) {
-                out.add(s);
-                collectAncestors(s.getChildren(), line, col, out);
-                return;
-            }
-        }
-    }
-
-    private static boolean positionInRange(int line, int col, Range r) {
-        Position s = r.getStart();
-        Position e = r.getEnd();
-        if (line < s.getLine() || line > e.getLine()) return false;
-        if (line == s.getLine() && col < s.getCharacter()) return false;
-        if (line == e.getLine() && col > e.getCharacter()) return false;
-        return true;
-    }
-
-    /* ----- semantic tokens ----- */
-
-    private void scheduleSemanticTokensRefresh() {
-        if (!lspManaged) return;
-        if (pendingSemanticTokens != null) pendingSemanticTokens.cancel(false);
-        pendingSemanticTokens = BG_EXEC.schedule(
-                () -> Platform.runLater(this::requestSemanticTokensNow),
-                300, TimeUnit.MILLISECONDS);
-    }
-
-    private void requestSemanticTokensNow() {
-        if (!lspManaged) return;
-        LspBridge lsp = ctx.getLspBridge();
-        if (lsp == null || !lsp.isReady()) return;
-        final int request = ++semanticTokensRequestSerial;
-        final String snapshot = codeArea.getSourceText();
-        final SemanticTokensLegend legend = lsp.getSemanticLegend();
-        if (legend == null) return;
-        lsp.semanticTokensFull(path).thenAcceptAsync(tokens -> {
-            if (request != semanticTokensRequestSerial) return;
-            if (tokens == null) return;
-            if (!snapshot.equals(codeArea.getSourceText())) return;
-            StyleSpans<Collection<String>> spans = SemanticTokensDecoder.decode(snapshot, tokens, legend, codeArea);
-            lastSemanticSpans = spans;
-            applyCombinedStyles();
-        }, Platform::runLater);
-    }
-
-    /* ----- hover ----- */
-
-    private void requestHover(int charIdx, Point2D pos) {
-        if (!lspManaged) return;
-        if (ctx.getLspBridge() == null) return;
-        int[] lc = codeArea.displayToSourceLineChar(charIdx);
-        ctx.getLspBridge().hover(path, lc[0], lc[1]).thenAcceptAsync(content -> {
-            if (content == null || content.isBlank()) { hoverPopup.hide(); return; }
-            hoverPopup.show(codeArea, content, pos.getX() + 10, pos.getY() + 10);
-        }, Platform::runLater);
-    }
-
-    /* ----- code folding ----- */
-
-    private void rebuildFoldableRegions() {
-        foldableByCurrentLine.clear();
-        if (lastDocumentSymbols == null || lastDocumentSymbols.isEmpty()) {
-            codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
-            return;
-        }
-        List<int[]> raw = new ArrayList<>();
-        collectFoldable(lastDocumentSymbols, raw);
-        if (raw.isEmpty()) {
-            codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
-            return;
-        }
-        // For each currently-folded region, how many lines it absorbed from the original.
-        // Walk in ascending origSigLine order — that's how LinkedHashMap iterates if we
-        // inserted in order, but we re-sort to be safe.
-        List<FoldedRegion> activeFolds = new ArrayList<>(foldedByOriginalLine.values());
-        activeFolds.sort(Comparator.comparingInt(FoldedRegion::originalSigLine));
-
-        int linesInBuffer = codeArea.getParagraphs().size();
-        for (int[] r : raw) {
-            int origSig = r[0], origEnd = r[1];
-            int absorbedBefore = 0;
-            boolean nestedInsideOuterFold = false;
-            for (FoldedRegion f : activeFolds) {
-                if (f.originalSigLine() == origSig) continue;
-                if (f.originalSigLine() < origSig && f.originalEndLine() >= origSig) {
-                    nestedInsideOuterFold = true; break;
-                }
-                if (f.originalEndLine() < origSig) {
-                    absorbedBefore += f.originalEndLine() - f.originalOpenBraceLine();
-                }
-            }
-            if (nestedInsideOuterFold) continue;
-            int currentSig = origSig - absorbedBefore;
-            FoldedRegion folded = foldedByOriginalLine.get(origSig);
-            int currentEnd = folded != null
-                    ? currentSig          // this region is itself folded — collapses onto signature line
-                    : origEnd - absorbedBefore;
-            int currentVisibleEnd = folded != null
-                    ? folded.originalOpenBraceLine() - absorbedBefore
-                    : currentEnd;
-            if (currentSig < 0 || currentSig >= linesInBuffer) continue;
-            if (currentVisibleEnd >= linesInBuffer) continue;
-            int braceLine = -1;
-            int brace = -1;
-            for (int line = currentSig; line <= currentVisibleEnd; line++) {
-                brace = codeArea.getText(line).indexOf('{');
-                if (brace >= 0) {
-                    braceLine = line;
-                    break;
-                }
-            }
-            if (braceLine < 0) continue;
-            int originalBraceLine = folded != null ? folded.originalOpenBraceLine() : braceLine + absorbedBefore;
-            int endLineLen = codeArea.getText(currentVisibleEnd).length();
-            foldableByCurrentLine.put(currentSig,
-                    new FoldRegion(currentSig, braceLine, brace, currentVisibleEnd, endLineLen, origSig, originalBraceLine, origEnd));
-        }
-        codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
-    }
-
-    private static void collectFoldable(List<DocumentSymbol> symbols, List<int[]> out) {
-        if (symbols == null) return;
-        for (DocumentSymbol s : symbols) {
-            if (s == null) continue;
-            Range r = s.getRange();
-            if (r != null && r.getStart() != null && r.getEnd() != null) {
-                org.eclipse.lsp4j.SymbolKind k = s.getKind();
-                if (k == org.eclipse.lsp4j.SymbolKind.Function
-                        || k == org.eclipse.lsp4j.SymbolKind.Method
-                        || k == org.eclipse.lsp4j.SymbolKind.Constructor) {
-                    int startLine = r.getStart().getLine();
-                    int endLine = r.getEnd().getLine();
-                    if (endLine > startLine) out.add(new int[]{startLine, endLine});
-                }
-            }
-            collectFoldable(s.getChildren(), out);
-        }
-    }
-
-    private void toggleFold(int originalSigLine) {
-        if (foldedByOriginalLine.containsKey(originalSigLine)) unfoldByOriginal(originalSigLine);
-        else foldByOriginal(originalSigLine);
-    }
-
-    private void foldByOriginal(int originalSigLine) {
-        FoldRegion fr = findFoldableByOriginal(originalSigLine);
-        if (fr == null) return;
-        int start = Positions.offset(codeArea.getText(), fr.currentOpenBraceLine(), fr.openBracePos() + 1);
-        int end = Positions.offset(codeArea.getText(), fr.currentEndLine(), fr.currentEndLineLen());
-        if (end <= start) return;
-        // Stash the rich sub-document (not plain text) so embedded inlay-hint segments survive the
-        // fold/unfold round-trip instead of becoming literal ￼ characters.
-        var stash = codeArea.subDocument(start, end);
-        // Folding an outer region wipes any inner folds (they're inside the collapsed text).
-        foldedByOriginalLine.keySet().removeIf(o -> o > fr.originalSigLine() && o <= fr.originalEndLine());
-        foldedByOriginalLine.put(originalSigLine, new FoldedRegion(originalSigLine, fr.originalOpenBraceLine(), fr.originalEndLine(), stash));
-        double savedScrollX = codeArea.estimatedScrollXProperty().getValue();
-        double savedScrollY = codeArea.estimatedScrollYProperty().getValue();
-        int savedCaret = codeArea.getCaretPosition();
-        int caretClamped = savedCaret <= start ? savedCaret : (savedCaret >= end ? savedCaret - (end - start) + FOLD_PLACEHOLDER.length() : start);
-        isInternalEdit = true;
-        try {
-            codeArea.replaceText(start, end, FOLD_PLACEHOLDER);
-        } finally {
-            isInternalEdit = false;
-        }
-        lastDiagnosticSpans = null;
-        lastSemanticSpans = null;
-        applyHighlightingNow();
-        scheduleSemanticTokensRefresh();
-        rebuildFoldableRegions();
-        codeArea.moveTo(Math.min(caretClamped, codeArea.getLength()));
-        Platform.runLater(() -> {
-            codeArea.scrollXToPixel(savedScrollX);
-            codeArea.scrollYToPixel(savedScrollY);
+            pendingScrollY -= deltaY * sensitivity;
+            pendingScrollX -= deltaX * sensitivity;
+            scheduleScrollFlush();
+            event.consume();
         });
     }
 
-    private void unfoldByOriginal(int originalSigLine) {
-        FoldedRegion folded = foldedByOriginalLine.remove(originalSigLine);
-        if (folded == null) { rebuildFoldableRegions(); return; }
-        FoldRegion fr = findFoldableByOriginal(originalSigLine);
-        if (fr == null) { rebuildFoldableRegions(); return; }
-        int start = Positions.offset(codeArea.getText(), fr.currentOpenBraceLine(), fr.openBracePos() + 1);
-        int placeholderEnd = start + FOLD_PLACEHOLDER.length();
-        if (placeholderEnd > codeArea.getLength()) { rebuildFoldableRegions(); return; }
-        double savedScrollX = codeArea.estimatedScrollXProperty().getValue();
-        double savedScrollY = codeArea.estimatedScrollYProperty().getValue();
-        int savedCaret = codeArea.getCaretPosition();
-        int caretClamped = savedCaret <= start ? savedCaret
-                : (savedCaret >= placeholderEnd ? savedCaret + folded.stashedDoc().length() - FOLD_PLACEHOLDER.length() : start);
-        isInternalEdit = true;
-        try {
-            codeArea.replace(start, placeholderEnd, folded.stashedDoc());
-        } finally {
-            isInternalEdit = false;
-        }
-        lastDiagnosticSpans = null;
-        lastSemanticSpans = null;
-        applyHighlightingNow();
-        scheduleSemanticTokensRefresh();
-        rebuildFoldableRegions();
-        codeArea.moveTo(Math.min(caretClamped, codeArea.getLength()));
+    private void scheduleScrollFlush() {
+        if (scrollFlushScheduled) return;
+        scrollFlushScheduled = true;
         Platform.runLater(() -> {
-            codeArea.scrollXToPixel(savedScrollX);
-            codeArea.scrollYToPixel(savedScrollY);
+            scrollFlushScheduled = false;
+            double y = pendingScrollY;
+            double x = pendingScrollX;
+            pendingScrollY = 0;
+            pendingScrollX = 0;
+            if (y != 0) codeArea.scrollYBy(y);
+            if (x != 0) codeArea.scrollXBy(x);
         });
     }
 
-    private FoldRegion findFoldableByOriginal(int originalSigLine) {
-        for (FoldRegion fr : foldableByCurrentLine.values()) {
-            if (fr.originalSigLine() == originalSigLine) return fr;
-        }
-        return null;
+    /* ----- close confirmation ----- */
+
+    public boolean canClose() {
+        return confirmDiscardIfDirty();
     }
 
-    private void unfoldAll() {
-        if (foldedByOriginalLine.isEmpty()) return;
-        List<Integer> keys = new ArrayList<>(foldedByOriginalLine.keySet());
-        keys.sort(java.util.Comparator.reverseOrder());
-        for (Integer k : keys) unfoldByOriginal(k);
+    private boolean confirmDiscardIfDirty() {
+        if (!dirty.get()) return true;
+        Alert a = new Alert(Alert.AlertType.CONFIRMATION,
+                "Discard unsaved changes to " + path.getFileName() + "?",
+                ButtonType.YES, ButtonType.NO);
+        a.setHeaderText(null);
+        Optional<ButtonType> r = a.showAndWait();
+        return r.isPresent() && r.get() == ButtonType.YES;
     }
 }

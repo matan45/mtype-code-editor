@@ -11,7 +11,6 @@ import org.mtype.editor.process.BuildController;
 import org.mtype.editor.process.PackageController;
 import org.mtype.editor.process.RunController;
 import org.mtype.editor.terminal.TerminalController;
-import org.mtype.editor.ui.debug.DebuggerPanel;
 import org.mtype.editor.ui.editor.EditorTabPane;
 import org.mtype.editor.ui.git.GitChangesView;
 import org.mtype.editor.ui.output.OutputPane;
@@ -41,7 +40,6 @@ public class AppContext {
     private DebuggerBridge debuggerBridge;
     private DebuggerEventBus debuggerEventBus;
     private BreakpointService breakpointService;
-    private DebuggerPanel debuggerPanel;
     private final ReadOnlyBooleanWrapper hasProjectFile = new ReadOnlyBooleanWrapper(false);
     private final ReadOnlyBooleanWrapper workspaceOpen = new ReadOnlyBooleanWrapper(false);
 
@@ -63,7 +61,7 @@ public class AppContext {
     public DebuggerBridge getDebuggerBridge() { return debuggerBridge; }
     public DebuggerEventBus getDebuggerEventBus() { return debuggerEventBus; }
     public BreakpointService getBreakpointService() { return breakpointService; }
-    public DebuggerPanel getDebuggerPanel() { return debuggerPanel; }
+
     public ReadOnlyBooleanProperty hasProjectFileProperty() { return hasProjectFile.getReadOnlyProperty(); }
     public ReadOnlyBooleanProperty workspaceOpenProperty() { return workspaceOpen.getReadOnlyProperty(); }
 
@@ -84,7 +82,8 @@ public class AppContext {
     public void setDebuggerBridge(DebuggerBridge b) { this.debuggerBridge = b; }
     public void setDebuggerEventBus(DebuggerEventBus b) { this.debuggerEventBus = b; }
     public void setBreakpointService(BreakpointService s) { this.breakpointService = s; }
-    public void setDebuggerPanel(DebuggerPanel p) { this.debuggerPanel = p; }
+    public void setDebuggerPanel() {
+    }
 
     public void refreshHasProjectFile() {
         hasProjectFile.set(workspace != null && workspace.hasProjectFile());

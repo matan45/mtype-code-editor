@@ -27,8 +27,10 @@ public class BreakpointService {
 
     public synchronized void attachBridge(DebuggerBridge bridge) { this.bridge = bridge; }
 
-    /** Toggle a breakpoint at the given 0-based line. Returns the new state (true = on). */
-    public boolean toggle(Path path, int line0) {
+    /**
+     * Toggle a breakpoint at the given 0-based line. Returns the new state (true = on).
+     */
+    public void toggle(Path path, int line0) {
         boolean nowOn;
         Set<Integer> snapshot;
         synchronized (this) {
@@ -48,7 +50,6 @@ public class BreakpointService {
             else bridge.clearBreakpoint(path, line0 + 1);
         }
         notify(path, snapshot);
-        return nowOn;
     }
 
     /** All breakpoints in this file as 0-based lines. */

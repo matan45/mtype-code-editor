@@ -65,7 +65,7 @@ public final class WindowMaximizer {
         double height = Double.isFinite(stage.getHeight()) && stage.getHeight() > 0 ? stage.getHeight() : 1;
 
         List<Screen> screens = Screen.getScreensForRectangle(x, y, width, height);
-        Screen screen = screens.isEmpty() ? Screen.getPrimary() : screens.get(0);
+        Screen screen = screens.isEmpty() ? Screen.getPrimary() : screens.getFirst();
         return screen.getVisualBounds();
     }
 

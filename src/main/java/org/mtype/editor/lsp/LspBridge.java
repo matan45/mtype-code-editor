@@ -77,8 +77,12 @@ public class LspBridge {
 
         InitializeParams init = new InitializeParams();
         init.setProcessId((int) ProcessHandle.current().pid());
-        init.setRootUri(ws.root().toUri().toString());
-        WorkspaceFolder folder = new WorkspaceFolder(ws.root().toUri().toString(),
+        String rootUri = ws.root().toUri().toString();
+        // The mType LSP still uses rootUri/rootPath to initialize project config
+        // and mt_modules aliases, while modern clients use workspaceFolders.
+        init.setRootUri(rootUri);
+        init.setRootPath(ws.root().toString());
+        WorkspaceFolder folder = new WorkspaceFolder(rootUri,
                 ws.root().getFileName() == null ? "root" : ws.root().getFileName().toString());
         init.setWorkspaceFolders(Collections.singletonList(folder));
 
@@ -379,16 +383,20 @@ public class LspBridge {
 
     private static String renderHover(Hover h) {
         if (h == null || h.getContents() == null) return "";
-        Either<List<Either<String, MarkedString>>, MarkupContent> contents = h.getContents();
+        // Modern servers reply with MarkupContent (the right side). The left side is the legacy
+        // MarkedString[] form (deprecated); we only consume its plain-string entries so we never
+        // touch the deprecated MarkedString type.
+        var contents = h.getContents();
         String raw;
         if (contents.isRight() && contents.getRight() != null) {
             raw = contents.getRight().getValue();
         } else if (contents.isLeft() && contents.getLeft() != null) {
             StringBuilder sb = new StringBuilder();
-            for (Either<String, MarkedString> e : contents.getLeft()) {
-                if (!sb.isEmpty()) sb.append("\n");
-                if (e.isLeft()) sb.append(e.getLeft());
-                else if (e.isRight()) sb.append(e.getRight().getValue());
+            for (var e : contents.getLeft()) {
+                if (e.isLeft()) {
+                    if (!sb.isEmpty()) sb.append("\n");
+                    sb.append(e.getLeft());
+                }
             }
             raw = sb.toString();
         } else {
@@ -594,33 +602,16 @@ public class LspBridge {
 
     /* ============================== workspace symbols ============================== */
 
-    public CompletableFuture<List<SymbolInformation>> workspaceSymbol(String query) {
+    public CompletableFuture<List<WorkspaceSymbol>> workspaceSymbol(String query) {
         if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         WorkspaceSymbolParams params = new WorkspaceSymbolParams(query == null ? "" : query);
         return server.getWorkspaceService().symbol(params).thenApply(either -> {
-            if (either == null) return Collections.<SymbolInformation>emptyList();
-            if (either.isLeft()) {
-                List<? extends SymbolInformation> list = either.getLeft();
-                if (list == null) return Collections.<SymbolInformation>emptyList();
-                List<SymbolInformation> out = new ArrayList<>(list.size());
-                out.addAll(list);
-                return out;
+            // Modern servers reply with WorkspaceSymbol[] (the right side). The left side is the
+            // legacy, deprecated SymbolInformation[] form, which the mType server does not emit.
+            if (either == null || !either.isRight() || either.getRight() == null) {
+                return Collections.<WorkspaceSymbol>emptyList();
             }
-            List<? extends WorkspaceSymbol> wsList = either.getRight();
-            if (wsList == null) return Collections.<SymbolInformation>emptyList();
-            List<SymbolInformation> out = new ArrayList<>(wsList.size());
-            for (WorkspaceSymbol ws : wsList) {
-                if (ws == null) continue;
-                SymbolInformation si = new SymbolInformation();
-                si.setName(ws.getName());
-                si.setKind(ws.getKind());
-                si.setContainerName(ws.getContainerName());
-                if (ws.getLocation() != null && ws.getLocation().isLeft()) {
-                    si.setLocation(ws.getLocation().getLeft());
-                }
-                out.add(si);
-            }
-            return out;
+            return new ArrayList<WorkspaceSymbol>(either.getRight());
         }).exceptionally(_ -> Collections.emptyList());
     }
 

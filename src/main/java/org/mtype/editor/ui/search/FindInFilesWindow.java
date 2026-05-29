@@ -93,7 +93,7 @@ public class FindInFilesWindow {
         stage.setOnCloseRequest(e -> { e.consume(); hide(); });
 
         wireListeners();
-        ctx.workspaceOpenProperty().addListener((obs, was, isOpen) -> onWorkspaceChanged());
+        ctx.workspaceOpenProperty().addListener((_, _, _) -> onWorkspaceChanged());
     }
 
     private VBox buildTop() {
@@ -127,7 +127,7 @@ public class FindInFilesWindow {
         resultsTree.setShowRoot(false);
         resultsTree.setRoot(new TreeItem<>(null));
         resultsTree.getStyleClass().add("mt-search-tree");
-        resultsTree.setCellFactory(tv -> new SearchResultCell(() -> workspaceRootSnapshot));
+        resultsTree.setCellFactory(_ -> new SearchResultCell(() -> workspaceRootSnapshot));
 
         resultsTree.setOnMouseClicked(e -> {
             if (e.getButton() == MouseButton.PRIMARY && e.getClickCount() == 2) {
@@ -153,7 +153,7 @@ public class FindInFilesWindow {
         stopButton.getStyleClass().add("mt-panel-button");
         stopButton.setVisible(false);
         stopButton.setManaged(false);
-        stopButton.setOnAction(e -> cancelSearch());
+        stopButton.setOnAction(_ -> cancelSearch());
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
@@ -166,19 +166,19 @@ public class FindInFilesWindow {
     }
 
     private void wireListeners() {
-        debounce.setOnFinished(e -> runSearch());
+        debounce.setOnFinished(_ -> runSearch());
 
-        searchField.textProperty().addListener((obs, was, now) -> {
+        searchField.textProperty().addListener((_, _, _) -> {
             clearRegexError();
             debounce.playFromStart();
         });
-        searchField.setOnAction(e -> { debounce.stop(); runSearch(); });
+        searchField.setOnAction(_ -> { debounce.stop(); runSearch(); });
 
-        maskField.textProperty().addListener((obs, was, now) -> debounce.playFromStart());
+        maskField.textProperty().addListener((_, _, _) -> debounce.playFromStart());
 
-        caseToggle.selectedProperty().addListener((obs, was, now) -> debounce.playFromStart());
-        wordToggle.selectedProperty().addListener((obs, was, now) -> debounce.playFromStart());
-        regexToggle.selectedProperty().addListener((obs, was, now) -> {
+        caseToggle.selectedProperty().addListener((_, _, _) -> debounce.playFromStart());
+        wordToggle.selectedProperty().addListener((_, _, _) -> debounce.playFromStart());
+        regexToggle.selectedProperty().addListener((_, _, _) -> {
             clearRegexError();
             debounce.playFromStart();
         });
@@ -342,7 +342,6 @@ public class FindInFilesWindow {
                 fileItem.setExpanded(true);
                 fileItems.put(m.path(), fileItem);
                 root.getChildren().add(fileItem);
-                newCount = 1;
             } else {
                 FileGroup old = (FileGroup) fileItem.getValue();
                 newCount = old.matchCount() + 1;
@@ -408,16 +407,16 @@ public class FindInFilesWindow {
                 setGraphic(null);
                 return;
             }
-            if (item instanceof FileGroup fg) {
-                setGraphic(IconFactory.iconForPath(fg.path(), false));
+            if (item instanceof FileGroup(Path path, int matchCount)) {
+                setGraphic(IconFactory.iconForPath(path, false));
                 Path root = rootSupplier.get();
                 String label;
                 try {
-                    label = root != null ? root.relativize(fg.path()).toString() : fg.path().toString();
+                    label = root != null ? root.relativize(path).toString() : path.toString();
                 } catch (IllegalArgumentException ex) {
-                    label = fg.path().toString();
+                    label = path.toString();
                 }
-                setText(label + "  (" + fg.matchCount() + ")");
+                setText(label + "  (" + matchCount + ")");
                 getStyleClass().add("mt-search-file-row");
             } else if (item instanceof SearchMatch m) {
                 String line = m.lineText();
