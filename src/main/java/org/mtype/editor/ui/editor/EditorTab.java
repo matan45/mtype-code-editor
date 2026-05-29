@@ -50,7 +50,6 @@ import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
 import org.eclipse.lsp4j.TextEdit;
 import org.fxmisc.flowless.VirtualizedScrollPane;
-import org.fxmisc.richtext.CodeArea;
 import org.fxmisc.richtext.event.MouseOverTextEvent;
 import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
@@ -58,6 +57,7 @@ import org.fxmisc.richtext.model.TwoDimensional;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.debug.BreakpointService;
 import org.mtype.editor.debug.DebuggerEventBus;
+import org.mtype.editor.lsp.DiagnosticsRenderer;
 import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.lsp.LspEdits;
 import org.mtype.editor.lsp.Positions;
@@ -94,23 +94,20 @@ public class EditorTab extends Tab {
             });
     private static final double CODE_LENS_LABEL_X = 65;
     private static final double EDITOR_SCROLL_SENSITIVITY = 1.8;
-    private static final String INLAY_HINT_ANCHOR_STYLE = "mt-inlay-hint-anchor";
 
     private final AppContext ctx;
     private final Path path;
     private final boolean lspManaged;
-    private final CodeArea codeArea = new CodeArea();
+    private final MTypeCodeArea codeArea = new MTypeCodeArea();
     private final SimpleBooleanProperty dirty = new SimpleBooleanProperty(false);
     private final AtomicInteger version = new AtomicInteger(1);
     private final ContextMenu completionMenu = new ContextMenu();
     private final ContextMenu referencesMenu = new ContextMenu();
     private final HoverPopup hoverPopup = new HoverPopup();
     private final SignatureHelpPopup signaturePopup = new SignatureHelpPopup();
-    private final Pane inlayHintsLayer = new Pane();
     private final InlayHintsController inlayHintsController;
     private final Pane currentLineLayer = new Pane();
     private final CurrentLineHighlighter currentLineHighlighter;
-    private final Set<Integer> inlayHintAnchorOffsets = new HashSet<>();
     private StyleSpans<Collection<String>> lastLinkHoverSpans;
     private int linkHoverStart = -1;
     private int linkHoverEnd = -1;
@@ -126,6 +123,7 @@ public class EditorTab extends Tab {
     private StyleSpans<Collection<String>> lastTokenSpans;
     private StyleSpans<Collection<String>> lastDiagnosticSpans;
     private StyleSpans<Collection<String>> lastSemanticSpans;
+    private List<org.eclipse.lsp4j.Diagnostic> lastDiagnostics = Collections.emptyList();
     private List<DocumentSymbol> lastDocumentSymbols = Collections.emptyList();
     private ScheduledFuture<?> pendingHighlight;
     private ScheduledFuture<?> pendingDidChange;
@@ -150,7 +148,10 @@ public class EditorTab extends Tab {
     private int executionLine = -1;
 
     private record FoldRegion(int currentSigLine, int openBracePos, int currentEndLine, int currentEndLineLen, int originalSigLine, int originalEndLine) {}
-    private record FoldedRegion(int originalSigLine, int originalEndLine, String stashedText) {}
+    private record FoldedRegion(int originalSigLine, int originalEndLine,
+                                org.fxmisc.richtext.model.StyledDocument<java.util.Collection<String>,
+                                        org.reactfx.util.Either<String, InlayHintSeg>,
+                                        java.util.Collection<String>> stashedDoc) {}
     private static final String FOLD_PLACEHOLDER = " … }";
     private final Map<Integer, FoldRegion> foldableByCurrentLine = new HashMap<>();
     private final Map<Integer, FoldedRegion> foldedByOriginalLine = new java.util.LinkedHashMap<>();
@@ -172,10 +173,10 @@ public class EditorTab extends Tab {
         completionMenu.getStyleClass().add("mt-completion");
         referencesMenu.getStyleClass().add("mt-references");
 
-        VirtualizedScrollPane<CodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
+        VirtualizedScrollPane<MTypeCodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
         scroll.getStyleClass().add("mt-main-editor-scroll");
         installScrollSensitivity();
-        StackPane editorStack = new StackPane(currentLineLayer, scroll, inlayHintsLayer);
+        StackPane editorStack = new StackPane(currentLineLayer, scroll);
         editorStack.getStyleClass().add("mt-editor-stack");
         breadcrumbBar.getStyleClass().add("mt-breadcrumb-bar");
         breadcrumbBar.setVisible(false);
@@ -183,7 +184,7 @@ public class EditorTab extends Tab {
         BorderPane wrap = new BorderPane(editorStack);
         wrap.setTop(breadcrumbBar);
         setContent(wrap);
-        inlayHintsController = new InlayHintsController(codeArea, inlayHintsLayer, this::setInlayHintAnchors);
+        inlayHintsController = new InlayHintsController(codeArea, this);
         currentLineHighlighter = new CurrentLineHighlighter(codeArea, currentLineLayer);
 
         loadFile();
@@ -204,8 +205,8 @@ public class EditorTab extends Tab {
 
         codeArea.caretPositionProperty().addListener((obs, o, n) -> {
             int caret = n.intValue();
-            TwoDimensional.Position p = codeArea.offsetToPosition(caret, TwoDimensional.Bias.Forward);
-            ctx.getStatusBar().setCaret(p.getMajor(), p.getMinor());
+            int[] lc = codeArea.displayToSourceLineChar(caret);
+            ctx.getStatusBar().setCaret(lc[0], lc[1]);
             updateBreadcrumb();
         });
 
@@ -218,7 +219,7 @@ public class EditorTab extends Tab {
             Point2D local = codeArea.screenToLocal(screen);
             int charIdx = local == null
                     ? e.getCharacterIndex()
-                    : inlayHintsController.correctedHit(local.getX(), local.getY()).getInsertionIndex();
+                    : codeArea.hit(local.getX(), local.getY()).getInsertionIndex();
             requestHover(charIdx, screen);
         });
         codeArea.addEventHandler(MouseOverTextEvent.MOUSE_OVER_TEXT_END, e -> hoverPopup.hide());
@@ -228,7 +229,7 @@ public class EditorTab extends Tab {
         // on the wrong source offset on lines shifted by inlay-hint overlays.
         codeArea.addEventFilter(MouseEvent.MOUSE_PRESSED, e -> {
             if (e.getButton() == MouseButton.PRIMARY && e.isControlDown()) {
-                CharacterHit hit = inlayHintsController.correctedHit(e.getX(), e.getY());
+                CharacterHit hit = codeArea.hit(e.getX(), e.getY());
                 codeArea.moveTo(hit.getInsertionIndex());
                 goToDefinitionAtCaret();
                 e.consume();
@@ -242,7 +243,7 @@ public class EditorTab extends Tab {
         // visually (RichTextFX's raw hit() ignores the translateX shifts).
         codeArea.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
             if (e.getButton() == MouseButton.SECONDARY) {
-                CharacterHit hit = inlayHintsController.correctedHit(e.getX(), e.getY());
+                CharacterHit hit = codeArea.hit(e.getX(), e.getY());
                 int clickedOffset = hit.getInsertionIndex();
                 if (!isOffsetInsideSelection(clickedOffset)) {
                     codeArea.moveTo(clickedOffset);
@@ -254,7 +255,7 @@ public class EditorTab extends Tab {
                 double x = e.getX();
                 double y = e.getY();
                 Platform.runLater(() -> {
-                    CharacterHit hit = inlayHintsController.correctedHit(x, y);
+                    CharacterHit hit = codeArea.hit(x, y);
                     codeArea.moveTo(hit.getInsertionIndex());
                 });
             }
@@ -265,7 +266,7 @@ public class EditorTab extends Tab {
             double x = e.getX();
             double y = e.getY();
             Platform.runLater(() -> {
-                CharacterHit hit = inlayHintsController.correctedHit(x, y);
+                CharacterHit hit = codeArea.hit(x, y);
                 codeArea.selectRange(codeArea.getAnchor(), hit.getInsertionIndex());
             });
         });
@@ -352,7 +353,7 @@ public class EditorTab extends Tab {
     }
 
     public Path getPath() { return path; }
-    public CodeArea getCodeArea() { return codeArea; }
+    public MTypeCodeArea getCodeArea() { return codeArea; }
     public int getVersion() { return version.get(); }
     public boolean isDirty() { return dirty.get(); }
 
@@ -395,7 +396,7 @@ public class EditorTab extends Tab {
 
     private void writeToDisk() {
         try {
-            Files.writeString(path, codeArea.getText(), StandardCharsets.UTF_8);
+            Files.writeString(path, codeArea.getSourceText(), StandardCharsets.UTF_8);
             dirty.set(false);
             setText(path.getFileName().toString());
             ctx.getStatusBar().setMessage("Saved " + path.getFileName());
@@ -403,6 +404,58 @@ public class EditorTab extends Tab {
         } catch (Exception ex) {
             ctx.getStatusBar().setMessage("Save failed: " + ex.getMessage());
         }
+    }
+
+    /** Store the latest raw diagnostics and (re)build display-mapped spans + gutter markers. */
+    public void applyDiagnostics(List<org.eclipse.lsp4j.Diagnostic> diags) {
+        lastDiagnostics = diags == null ? Collections.emptyList() : new ArrayList<>(diags);
+        rebuildDiagnosticStyles();
+    }
+
+    /**
+     * Rebuild diagnostic spans from {@link #lastDiagnostics}, mapping LSP source ranges to current
+     * display offsets. Called on each server push and again after inlay-hint segments shift offsets.
+     */
+    private void rebuildDiagnosticStyles() {
+        String source = codeArea.getSourceText();
+        int len = codeArea.getLength(); // display length (spans overlay the hint-augmented document)
+        List<org.eclipse.lsp4j.Diagnostic> diags = new ArrayList<>(lastDiagnostics);
+        if (len == 0 || diags.isEmpty()) {
+            StyleSpansBuilder<Collection<String>> empty = new StyleSpansBuilder<>();
+            empty.add(Collections.emptyList(), Math.max(len, 1));
+            applyDiagnosticSpans(empty.create());
+            applyDiagnosticLines(Collections.emptyMap());
+            return;
+        }
+        diags.sort(java.util.Comparator
+                .comparingInt((org.eclipse.lsp4j.Diagnostic d) -> d.getRange().getStart().getLine())
+                .thenComparingInt(d -> d.getRange().getStart().getCharacter()));
+        StyleSpansBuilder<Collection<String>> b = new StyleSpansBuilder<>();
+        int cursor = 0;
+        Map<Integer, org.eclipse.lsp4j.DiagnosticSeverity> linesBySeverity = new HashMap<>();
+        for (org.eclipse.lsp4j.Diagnostic d : diags) {
+            int start = codeArea.sourceToDisplay(Positions.offset(source,
+                    d.getRange().getStart().getLine(), d.getRange().getStart().getCharacter()));
+            int end = codeArea.sourceToDisplay(Positions.offset(source,
+                    d.getRange().getEnd().getLine(), d.getRange().getEnd().getCharacter()));
+            if (end <= start) end = Math.min(start + 1, len);
+            start = Math.max(0, Math.min(start, len));
+            end = Math.max(start, Math.min(end, len));
+            int startLine = d.getRange().getStart().getLine();
+            int endLine = d.getRange().getEnd().getLine();
+            org.eclipse.lsp4j.DiagnosticSeverity sev = d.getSeverity() == null
+                    ? org.eclipse.lsp4j.DiagnosticSeverity.Error : d.getSeverity();
+            for (int line = startLine; line <= endLine; line++) {
+                linesBySeverity.merge(line, sev, DiagnosticsRenderer::worse);
+            }
+            if (start < cursor) continue; // skip overlapping spans (overlay can't handle them)
+            b.add(Collections.emptyList(), start - cursor);
+            b.add(Collections.singleton(DiagnosticsRenderer.styleFor(sev)), end - start);
+            cursor = end;
+        }
+        b.add(Collections.emptyList(), len - cursor);
+        applyDiagnosticSpans(b.create());
+        applyDiagnosticLines(linesBySeverity);
     }
 
     public void applyDiagnosticSpans(StyleSpans<Collection<String>> diagSpans) {
@@ -441,7 +494,7 @@ public class EditorTab extends Tab {
         if (lsp == null || !lsp.isReady()) return;
         long lspSession = lsp.getSession();
         if (openedLspSession == lspSession) return;
-        lsp.didOpen(path, codeArea.getText(), version.get());
+        lsp.didOpen(path, codeArea.getSourceText(), version.get());
         openedLspSession = lspSession;
         scheduleCodeLensRefresh();
         scheduleInlayHintsRefresh();
@@ -626,11 +679,13 @@ public class EditorTab extends Tab {
     }
 
     private Range wholeDocumentRange() {
-        int lastLine = Math.max(0, codeArea.getParagraphs().size() - 1);
-        int lastCharacter = 0;
-        try {
-            lastCharacter = codeArea.getText(lastLine).length();
-        } catch (Exception ignored) {}
+        // Expressed in SOURCE coordinates (no inlay hints) since this range is sent to the LSP server.
+        String source = codeArea.getSourceText();
+        int lastLine = 0;
+        for (int i = 0; i < source.length(); i++) {
+            if (source.charAt(i) == '\n') lastLine++;
+        }
+        int lastCharacter = source.length() - (source.lastIndexOf('\n') + 1);
         return new Range(new Position(0, 0), new Position(lastLine, lastCharacter));
     }
 
@@ -824,7 +879,7 @@ public class EditorTab extends Tab {
 
     /** Move the caret to a 0-based LSP position and ensure visible. */
     public void revealPosition(int line, int character) {
-        int offset = Positions.offset(codeArea.getText(), line, character);
+        int offset = codeArea.sourceLineCharToDisplay(line, character);
         codeArea.moveTo(offset);
         codeArea.requestFollowCaret();
         codeArea.requestFocus();
@@ -914,14 +969,14 @@ public class EditorTab extends Tab {
             return;
         }
         int clampedOffset = Math.max(0, Math.min(offset, codeArea.getLength()));
-        TwoDimensional.Position caret = codeArea.offsetToPosition(clampedOffset, TwoDimensional.Bias.Forward);
-        Position pos = new Position(caret.getMajor(), caret.getMinor());
+        int[] lc = codeArea.displayToSourceLineChar(clampedOffset);
+        Position pos = new Position(lc[0], lc[1]);
         Range range = new Range(pos, pos);
-        List<org.eclipse.lsp4j.Diagnostic> here = diagnosticsContainingLine(caret.getMajor());
+        List<org.eclipse.lsp4j.Diagnostic> here = diagnosticsContainingLine(lc[0]);
 
         final int serial = ++quickFixRequestSerial;
         quickFix.getItems().setAll(disabledItem("Loading..."));
-        ctx.getOutputPane().appendLspLog("[codeAction] " + (caret.getMajor() + 1) + ":" + (caret.getMinor() + 1)
+        ctx.getOutputPane().appendLspLog("[codeAction] " + (lc[0] + 1) + ":" + (lc[1] + 1)
                 + " diagnostics=" + here.size());
 
         lsp.codeAction(path, range, here).thenAcceptAsync(actions -> {
@@ -1041,8 +1096,8 @@ public class EditorTab extends Tab {
         if (!lspManaged) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
-        TwoDimensional.Position pos = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
-        lsp.definition(path, pos.getMajor(), pos.getMinor()).thenAcceptAsync(loc -> {
+        int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
+        lsp.definition(path, lc[0], lc[1]).thenAcceptAsync(loc -> {
             if (loc == null) {
                 ctx.getStatusBar().setMessage("No definition");
                 return;
@@ -1071,8 +1126,8 @@ public class EditorTab extends Tab {
             ctx.getStatusBar().setMessage("LSP not ready");
             return;
         }
-        TwoDimensional.Position pos = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
-        lsp.prepareCallHierarchy(path, pos.getMajor(), pos.getMinor())
+        int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
+        lsp.prepareCallHierarchy(path, lc[0], lc[1])
                 .thenAcceptAsync(items -> {
                     if (items == null || items.isEmpty()) {
                         ctx.getStatusBar().setMessage("No callable here");
@@ -1089,9 +1144,9 @@ public class EditorTab extends Tab {
             ctx.getStatusBar().setMessage("LSP not ready");
             return;
         }
-        TwoDimensional.Position pos = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
-        int line = pos.getMajor();
-        int col = pos.getMinor();
+        int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
+        int line = lc[0];
+        int col = lc[1];
         String word = wordAt(line, col);
         String label = word.isEmpty() ? "References" : word;
         lsp.references(path, line, col, true).thenAcceptAsync(locations -> {
@@ -1106,7 +1161,7 @@ public class EditorTab extends Tab {
 
     private String wordAt(int line, int col) {
         try {
-            String text = codeArea.getText();
+            String text = codeArea.getSourceText();
             int offset = Positions.offset(text, line, col);
             int start = offset;
             while (start > 0 && isIdentChar(text.charAt(start - 1))) start--;
@@ -1129,9 +1184,9 @@ public class EditorTab extends Tab {
             ctx.getStatusBar().setMessage("LSP not ready");
             return;
         }
-        TwoDimensional.Position pos = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
-        int line = pos.getMajor();
-        int col = pos.getMinor();
+        int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
+        int line = lc[0];
+        int col = lc[1];
 
         lsp.prepareRename(path, line, col).thenAcceptAsync(info -> {
             String placeholder = info != null && info.placeholder() != null
@@ -1281,6 +1336,10 @@ public class EditorTab extends Tab {
         pendingHighlight = BG_EXEC.schedule(() -> {
             StyleSpans<Collection<String>> spans = Tokenizers.computeFor(path, snapshot);
             Platform.runLater(() -> {
+                // Skip if the display text changed since the snapshot (e.g. inlay-hint segments were
+                // inserted/removed) — applying stale-length spans would fail the setStyleSpans length
+                // check. A fresh highlight pass (or runHintMutation) will re-apply correct spans.
+                if (!snapshot.equals(codeArea.getText())) return;
                 lastTokenSpans = spans;
                 applyCombinedStyles();
             });
@@ -1308,12 +1367,6 @@ public class EditorTab extends Tab {
                         EditorTab::mergeStyles);
             } catch (Exception ignored) {}
         }
-        StyleSpans<Collection<String>> inlayAnchors = inlayAnchorSpans(codeArea.getLength());
-        if (inlayAnchors != null) {
-            try {
-                combined = combined.overlay(inlayAnchors, EditorTab::mergeStyles);
-            } catch (Exception ignored) {}
-        }
         if (lastLinkHoverSpans != null) {
             try {
                 combined = combined.overlay(lastLinkHoverSpans, EditorTab::mergeStyles);
@@ -1327,7 +1380,7 @@ public class EditorTab extends Tab {
             clearLinkHover();
             return;
         }
-        CharacterHit hit = inlayHintsController.correctedHit(lastMouseX, lastMouseY);
+        CharacterHit hit = codeArea.hit(lastMouseX, lastMouseY);
         int[] range = identifierRangeAt(hit.getInsertionIndex());
         if (range == null) {
             clearLinkHover();
@@ -1378,48 +1431,34 @@ public class EditorTab extends Tab {
         return b.create();
     }
 
-    private void setInlayHintAnchors(List<Position> positions) {
-        Set<Integer> next = new HashSet<>();
-        String text = codeArea.getText();
-        int length = text.length();
-        if (positions != null && length > 0) {
-            for (Position position : positions) {
-                if (position == null) continue;
-                try {
-                    int offset = Positions.offset(text, position);
-                    if (offset >= 0 && offset < length) {
-                        char c = text.charAt(offset);
-                        if (c != '\n' && c != '\r') next.add(offset);
-                    }
-                } catch (Exception ignored) {}
-            }
+    /**
+     * Run an inlay-hint segment mutation (insert/remove {@code ￼} segments) while suppressing the
+     * normal text-change reactions (LSP didChange, dirty flag, debounced refreshes). Preserves the
+     * caret's SOURCE position across the offset shift, then re-tokenizes and re-maps diagnostics for
+     * the new display offsets (semantic tokens are re-requested asynchronously).
+     */
+    void runHintMutation(Runnable mutation) {
+        boolean prev = isInternalEdit;
+        isInternalEdit = true;
+        int sourceCaret = codeArea.displayToSource(codeArea.getCaretPosition());
+        double sx = codeArea.estimatedScrollXProperty().getValue();
+        double sy = codeArea.estimatedScrollYProperty().getValue();
+        try {
+            mutation.run();
+        } finally {
+            isInternalEdit = prev;
         }
-        if (next.equals(inlayHintAnchorOffsets)) return;
-        inlayHintAnchorOffsets.clear();
-        inlayHintAnchorOffsets.addAll(next);
-        applyCombinedStyles();
-        Platform.runLater(inlayHintsController::refreshLayout);
-    }
-
-    private StyleSpans<Collection<String>> inlayAnchorSpans(int length) {
-        if (inlayHintAnchorOffsets.isEmpty() || length <= 0) return null;
-        StyleSpansBuilder<Collection<String>> builder = new StyleSpansBuilder<>();
-        int cursor = 0;
-        boolean addedAnchor = false;
-        for (int offset : new TreeSet<>(inlayHintAnchorOffsets)) {
-            if (offset < cursor || offset < 0 || offset >= length) continue;
-            if (offset > cursor) {
-                builder.add(Collections.emptyList(), offset - cursor);
-            }
-            builder.add(Collections.singleton(INLAY_HINT_ANCHOR_STYLE), 1);
-            cursor = offset + 1;
-            addedAnchor = true;
-        }
-        if (!addedAnchor) return null;
-        if (cursor < length) {
-            builder.add(Collections.emptyList(), length - cursor);
-        }
-        return builder.create();
+        int newCaret = Math.min(codeArea.sourceToDisplay(sourceCaret), codeArea.getLength());
+        codeArea.moveTo(newCaret);
+        lastDiagnosticSpans = null;
+        lastSemanticSpans = null;
+        applyHighlightingNow();      // re-tokenize over the new display text (length matches spans)
+        rebuildDiagnosticStyles();   // re-map stored diagnostics to the new display offsets
+        scheduleSemanticTokensRefresh();
+        Platform.runLater(() -> {
+            codeArea.scrollXToPixel(sx);
+            codeArea.scrollYToPixel(sy);
+        });
     }
 
     private static Collection<String> mergeStyles(Collection<String> a, Collection<String> b) {
@@ -1433,7 +1472,7 @@ public class EditorTab extends Tab {
     private void scheduleDidChange() {
         if (!lspManaged) return;
         if (pendingDidChange != null) pendingDidChange.cancel(false);
-        String snapshot = codeArea.getText();
+        String snapshot = codeArea.getSourceText();
         int v = version.incrementAndGet();
         pendingDidChange = BG_EXEC.schedule(() -> {
             if (ctx.getLspBridge() != null) ctx.getLspBridge().didChange(path, snapshot, v);
@@ -1480,7 +1519,7 @@ public class EditorTab extends Tab {
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
         int caret = codeArea.getCaretPosition();
-        TwoDimensional.Position pos = codeArea.offsetToPosition(caret, TwoDimensional.Bias.Forward);
+        int[] lc = codeArea.displayToSourceLineChar(caret);
         String trigger = null;
         String text = codeArea.getText();
         int scan = caret - 1;
@@ -1489,7 +1528,7 @@ public class EditorTab extends Tab {
             char prior = text.charAt(scan);
             if (prior == '.' || prior == ':') trigger = String.valueOf(prior);
         }
-        lsp.completion(path, pos.getMajor(), pos.getMinor(), trigger).thenAcceptAsync(items -> {
+        lsp.completion(path, lc[0], lc[1], trigger).thenAcceptAsync(items -> {
             populateCompletionMenu(items);
         }, Platform::runLater);
     }
@@ -1557,11 +1596,12 @@ public class EditorTab extends Tab {
                 ? ci.getTextEdit().getLeft() : null;
         String newText;
         int serverStart = -1, serverEnd = -1;
-        String text = codeArea.getText();
+        String text = codeArea.getText();          // display text (used for the word scan below)
+        String source = codeArea.getSourceText();  // for mapping LSP (source) ranges to display
         if (te != null) {
             newText = te.getNewText();
-            serverStart = Positions.offset(text, te.getRange().getStart());
-            serverEnd = Positions.offset(text, te.getRange().getEnd());
+            serverStart = codeArea.sourceToDisplay(Positions.offset(source, te.getRange().getStart()));
+            serverEnd = codeArea.sourceToDisplay(Positions.offset(source, te.getRange().getEnd()));
             if (serverStart > serverEnd) { int t = serverStart; serverStart = serverEnd; serverEnd = t; }
         } else {
             newText = ci.getInsertText() != null ? ci.getInsertText() : ci.getLabel();
@@ -1581,9 +1621,9 @@ public class EditorTab extends Tab {
         int delta = 0;
         if (additional != null && !additional.isEmpty()) {
             for (TextEdit aedit : additional) {
-                int aEnd = Positions.offset(text, aedit.getRange().getEnd());
+                int aEnd = codeArea.sourceToDisplay(Positions.offset(source, aedit.getRange().getEnd()));
                 if (aEnd <= start) {
-                    int aStart = Positions.offset(text, aedit.getRange().getStart());
+                    int aStart = codeArea.sourceToDisplay(Positions.offset(source, aedit.getRange().getStart()));
                     String anew = aedit.getNewText() == null ? "" : aedit.getNewText();
                     delta += anew.length() - (aEnd - aStart);
                 }
@@ -1735,9 +1775,9 @@ public class EditorTab extends Tab {
         if (!lspManaged) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
-        TwoDimensional.Position p = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
+        int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
         final int request = ++signatureHelpRequestSerial;
-        lsp.signatureHelp(path, p.getMajor(), p.getMinor(), triggerChar).thenAcceptAsync(help -> {
+        lsp.signatureHelp(path, lc[0], lc[1], triggerChar).thenAcceptAsync(help -> {
             if (request != signatureHelpRequestSerial) return;
             if (help == null || help.getSignatures() == null || help.getSignatures().isEmpty()) {
                 signaturePopup.hide();
@@ -1783,9 +1823,9 @@ public class EditorTab extends Tab {
             breadcrumbBar.getChildren().clear();
             return;
         }
-        TwoDimensional.Position pos = codeArea.offsetToPosition(codeArea.getCaretPosition(), TwoDimensional.Bias.Forward);
-        int line = pos.getMajor();
-        int col = pos.getMinor();
+        int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
+        int line = lc[0];
+        int col = lc[1];
         List<DocumentSymbol> chain = new ArrayList<>();
         collectAncestors(lastDocumentSymbols, line, col, chain);
         breadcrumbBar.getChildren().clear();
@@ -1852,14 +1892,14 @@ public class EditorTab extends Tab {
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
         final int request = ++semanticTokensRequestSerial;
-        final String snapshot = codeArea.getText();
+        final String snapshot = codeArea.getSourceText();
         final SemanticTokensLegend legend = lsp.getSemanticLegend();
         if (legend == null) return;
         lsp.semanticTokensFull(path).thenAcceptAsync(tokens -> {
             if (request != semanticTokensRequestSerial) return;
             if (tokens == null) return;
-            if (!snapshot.equals(codeArea.getText())) return;
-            StyleSpans<Collection<String>> spans = SemanticTokensDecoder.decode(snapshot, tokens, legend);
+            if (!snapshot.equals(codeArea.getSourceText())) return;
+            StyleSpans<Collection<String>> spans = SemanticTokensDecoder.decode(snapshot, tokens, legend, codeArea);
             lastSemanticSpans = spans;
             applyCombinedStyles();
         }, Platform::runLater);
@@ -1870,8 +1910,8 @@ public class EditorTab extends Tab {
     private void requestHover(int charIdx, Point2D pos) {
         if (!lspManaged) return;
         if (ctx.getLspBridge() == null) return;
-        TwoDimensional.Position p = codeArea.offsetToPosition(charIdx, TwoDimensional.Bias.Forward);
-        ctx.getLspBridge().hover(path, p.getMajor(), p.getMinor()).thenAcceptAsync(content -> {
+        int[] lc = codeArea.displayToSourceLineChar(charIdx);
+        ctx.getLspBridge().hover(path, lc[0], lc[1]).thenAcceptAsync(content -> {
             if (content == null || content.isBlank()) { hoverPopup.hide(); return; }
             hoverPopup.show(codeArea, content, pos.getX() + 10, pos.getY() + 10);
         }, Platform::runLater);
@@ -1958,7 +1998,9 @@ public class EditorTab extends Tab {
         int start = Positions.offset(codeArea.getText(), fr.currentSigLine(), fr.openBracePos() + 1);
         int end = Positions.offset(codeArea.getText(), fr.currentEndLine(), fr.currentEndLineLen());
         if (end <= start) return;
-        String stash = codeArea.getText(start, end);
+        // Stash the rich sub-document (not plain text) so embedded inlay-hint segments survive the
+        // fold/unfold round-trip instead of becoming literal ￼ characters.
+        var stash = codeArea.subDocument(start, end);
         // Folding an outer region wipes any inner folds (they're inside the collapsed text).
         foldedByOriginalLine.keySet().removeIf(o -> o > fr.originalSigLine() && o <= fr.originalEndLine());
         foldedByOriginalLine.put(originalSigLine, new FoldedRegion(originalSigLine, fr.originalEndLine(), stash));
@@ -1995,10 +2037,10 @@ public class EditorTab extends Tab {
         double savedScrollY = codeArea.estimatedScrollYProperty().getValue();
         int savedCaret = codeArea.getCaretPosition();
         int caretClamped = savedCaret <= start ? savedCaret
-                : (savedCaret >= placeholderEnd ? savedCaret + folded.stashedText().length() - FOLD_PLACEHOLDER.length() : start);
+                : (savedCaret >= placeholderEnd ? savedCaret + folded.stashedDoc().length() - FOLD_PLACEHOLDER.length() : start);
         isInternalEdit = true;
         try {
-            codeArea.replaceText(start, placeholderEnd, folded.stashedText());
+            codeArea.replace(start, placeholderEnd, folded.stashedDoc());
         } finally {
             isInternalEdit = false;
         }

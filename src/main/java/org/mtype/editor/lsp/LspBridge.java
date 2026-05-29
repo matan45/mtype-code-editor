@@ -15,8 +15,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.*;
+import java.util.stream.Stream;
 
 public class LspBridge {
     private final AppContext ctx;
@@ -30,6 +33,7 @@ public class LspBridge {
     private boolean ready;
     private long session;
     private SemanticTokensLegend semanticLegend;
+    private Map<String, Long> watchedMtFiles = Collections.emptyMap();
 
     public LspBridge(AppContext ctx) {
         this.ctx = ctx;
@@ -42,6 +46,7 @@ public class LspBridge {
     public synchronized void start(Workspace ws) throws IOException {
         stop();
         long startSession = ++session;
+        watchedMtFiles = scanMtFiles(ws.root());
 
         String lspExe = resolveLanguageServerExecutable();
         ctx.getOutputPane().appendLspLog("[lsp] starting " + lspExe);
@@ -228,6 +233,7 @@ public class LspBridge {
         rpcExecutor = null;
         client = null;
         launcher = null;
+        watchedMtFiles = Collections.emptyMap();
 
         if (serverToStop != null) {
             try { serverToStop.shutdown().get(1, TimeUnit.SECONDS); } catch (Exception ignored) {}
@@ -270,6 +276,63 @@ public class LspBridge {
         if (!ready || server == null) return;
         TextDocumentIdentifier id = new TextDocumentIdentifier(path.toUri().toString());
         server.getTextDocumentService().didClose(new DidCloseTextDocumentParams(id));
+    }
+
+    public void refreshWatchedMtFiles() {
+        Workspace ws = ctx.getWorkspace();
+        if (ws == null) return;
+
+        Map<String, Long> current = scanMtFiles(ws.root());
+        List<FileEvent> changes = new ArrayList<>();
+        synchronized (this) {
+            for (Map.Entry<String, Long> entry : current.entrySet()) {
+                Long previousModified = watchedMtFiles.get(entry.getKey());
+                if (previousModified == null) {
+                    changes.add(new FileEvent(entry.getKey(), FileChangeType.Created));
+                } else if (!previousModified.equals(entry.getValue())) {
+                    changes.add(new FileEvent(entry.getKey(), FileChangeType.Changed));
+                }
+            }
+            for (String uri : watchedMtFiles.keySet()) {
+                if (!current.containsKey(uri)) {
+                    changes.add(new FileEvent(uri, FileChangeType.Deleted));
+                }
+            }
+            watchedMtFiles = current;
+        }
+
+        if (!changes.isEmpty()) {
+            didChangeWatchedFiles(changes);
+        }
+    }
+
+    public void didChangeWatchedFiles(List<FileEvent> changes) {
+        if (!ready || server == null || changes == null || changes.isEmpty()) return;
+        server.getWorkspaceService().didChangeWatchedFiles(new DidChangeWatchedFilesParams(changes));
+    }
+
+    private static Map<String, Long> scanMtFiles(Path root) {
+        if (root == null || !Files.isDirectory(root)) return Collections.emptyMap();
+        Map<String, Long> files = new HashMap<>();
+        try (Stream<Path> paths = Files.walk(root)) {
+            paths.filter(Files::isRegularFile)
+                    .filter(LspBridge::isMtFile)
+                    .forEach(path -> {
+                        try {
+                            Path absolute = path.toAbsolutePath().normalize();
+                            files.put(absolute.toUri().toString(),
+                                    Files.getLastModifiedTime(absolute).toMillis());
+                        } catch (IOException ignored) {
+                        }
+                    });
+        } catch (IOException ignored) {
+        }
+        return files;
+    }
+
+    private static boolean isMtFile(Path path) {
+        Path name = path == null ? null : path.getFileName();
+        return name != null && name.toString().toLowerCase().endsWith(".mt");
     }
 
     /* ============================== completion ============================== */

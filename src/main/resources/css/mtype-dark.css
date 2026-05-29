@@ -452,10 +452,8 @@
     -fx-underline: true;
 }
 
-.mt-inlay-hints-layer {
-    -fx-background-color: transparent;
-}
-
+/* Inlay-hint pill nodes. These are now real length-1 segments (￼) rendered inline by
+   MTypeCodeArea's nodeFactory as Labels, not overlay nodes. */
 .mt-inlay-hint {
     -fx-text-fill: #7f8490;
     -fx-background-color: transparent;
@@ -470,10 +468,6 @@
 
 .mt-inlay-hint-type {
     -fx-text-fill: #8b93a7;
-}
-
-.styled-text-area .text.mt-inlay-hint-anchor,
-.code-area .text.mt-inlay-hint-anchor {
 }
 
 .styled-text-area .text.mt-link-hover,

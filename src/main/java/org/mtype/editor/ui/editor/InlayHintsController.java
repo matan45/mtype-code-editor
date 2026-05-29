@@ -1,289 +1,103 @@
 package org.mtype.editor.ui.editor;
 
-import javafx.application.Platform;
-import javafx.geometry.Bounds;
-import javafx.geometry.Point2D;
-import javafx.scene.Node;
-import javafx.scene.control.Label;
-import javafx.scene.layout.Pane;
-import javafx.scene.text.Text;
 import org.eclipse.lsp4j.InlayHint;
-import org.eclipse.lsp4j.InlayHintKind;
 import org.eclipse.lsp4j.InlayHintLabelPart;
-import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
-import org.fxmisc.richtext.CharacterHit;
-import org.fxmisc.richtext.CodeArea;
-import org.fxmisc.richtext.model.TwoDimensional;
 import org.mtype.editor.lsp.Positions;
-import org.reactfx.Subscription;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
+/**
+ * Renders inlay hints as REAL length-1 segments embedded in the {@link MTypeCodeArea} document (each
+ * a {@code ￼} placeholder rendered as a pill node). Because the hints are genuine layout participants,
+ * RichTextFX computes correct selection/caret/wrap geometry around them — no overlay labels or
+ * {@code translateX} tricks, and the previous {@code correctedHit} compensation is no longer needed.
+ *
+ * <p>The hint characters never reach the language server / disk: {@link MTypeCodeArea} maps display
+ * offsets (with hints) to source offsets (without). All segment mutation goes through
+ * {@link EditorTab#runHintMutation(Runnable)}, which suppresses LSP/dirty reactions, preserves the
+ * caret's source position, and re-applies highlighting + diagnostics for the new offsets.
+ */
 final class InlayHintsController {
-    private final CodeArea area;
-    private final Pane layer;
-    private final Consumer<List<Position>> anchorListener;
-    private final List<RenderedHint> rendered = new ArrayList<>();
-    private final Subscription viewportSubscription;
-    private boolean layoutScheduled;
-    private Map<Integer, List<LineGap>> gapsByLine = Collections.emptyMap();
+    private final MTypeCodeArea area;
+    private final EditorTab tab;
+    private List<InlayHint> current = new ArrayList<>();
+    private String renderedSignature = "";
 
-    InlayHintsController(CodeArea area, Pane layer, Consumer<List<Position>> anchorListener) {
+    InlayHintsController(MTypeCodeArea area, EditorTab tab) {
         this.area = area;
-        this.layer = layer;
-        this.anchorListener = anchorListener;
-        this.layer.setMouseTransparent(true);
-        this.layer.getStyleClass().add("mt-inlay-hints-layer");
-        this.viewportSubscription = area.viewportDirtyEvents().subscribe(ignored -> requestLayout());
-        this.layer.layoutBoundsProperty().addListener((_, _, _) -> requestLayout());
+        this.tab = tab;
     }
 
     void setHints(List<InlayHint> hints) {
-        rendered.clear();
-        layer.getChildren().clear();
-        if (hints == null || hints.isEmpty()) return;
-
-        for (InlayHint hint : hints) {
-            if (hint == null || hint.getPosition() == null) continue;
-            String text = labelText(hint);
-            if (text.isBlank()) continue;
-
-            Label label = new Label(paddedText(hint, text));
-            label.getStyleClass().add("mt-inlay-hint");
-            InlayHintKind kind = hint.getKind();
-            if (kind == InlayHintKind.Parameter) {
-                label.getStyleClass().add("mt-inlay-hint-param");
-            } else if (kind == InlayHintKind.Type) {
-                label.getStyleClass().add("mt-inlay-hint-type");
-            }
-            label.setMouseTransparent(true);
-            rendered.add(new RenderedHint(renderPosition(hint, text), label));
-            layer.getChildren().add(label);
-        }
-        rendered.sort(Comparator
-                .comparingInt((RenderedHint h) -> h.position().getLine())
-                .thenComparingInt(h -> h.position().getCharacter()));
-        publishAnchors();
-        requestLayout();
+        current = hints == null ? new ArrayList<>() : new ArrayList<>(hints);
+        String signature = signatureOf(current);
+        if (signature.equals(renderedSignature) && area.hasHints() == !current.isEmpty()) return;
+        renderedSignature = signature;
+        tab.runHintMutation(this::rebuildSegments);
     }
 
     void clear() {
-        rendered.clear();
-        layer.getChildren().clear();
-        gapsByLine = Collections.emptyMap();
-        publishAnchors();
-    }
-
-    /**
-     * Convert a click point inside the {@link CodeArea} to a {@link CharacterHit}, accounting for
-     * the cumulative horizontal {@code translateX} that {@link #applyInlineGaps} applies to glyph
-     * runs sitting after one or more inlay-hint labels. RichTextFX's own {@code hit(x, y)} ignores
-     * the transform and would otherwise map a click on visually-shifted text to the wrong source
-     * offset.
-     */
-    CharacterHit correctedHit(double xInArea, double yInArea) {
-        CharacterHit raw = area.hit(xInArea, yInArea);
-        if (gapsByLine.isEmpty()) return raw;
-
-        double correctedX = xInArea;
-        double lastShift = -1.0;
-        for (int i = 0; i < 8; i++) {
-            CharacterHit hit = area.hit(correctedX, yInArea);
-            int offset = hit.getInsertionIndex();
-            TwoDimensional.Position pos =
-                    area.offsetToPosition(offset, TwoDimensional.Bias.Forward);
-            List<LineGap> lineGaps = gapsByLine.get(pos.getMajor());
-            double shift = lineGaps == null ? 0.0 : shiftAt(pos.getMinor(), lineGaps);
-            if (shift == lastShift) return hit;
-            lastShift = shift;
-            correctedX = xInArea - shift;
-            if (i == 7) return hit;
+        current = new ArrayList<>();
+        if (!"".equals(renderedSignature) || area.hasHints()) {
+            renderedSignature = "";
+            tab.runHintMutation(this::removeAllHintSegments);
         }
-        return raw;
     }
 
     void dispose() {
-        viewportSubscription.unsubscribe();
-        clear();
+        // The tab is closing; leave the document untouched.
     }
 
-    void refreshLayout() {
-        requestLayout();
-    }
-
-    private void requestLayout() {
-        if (layoutScheduled) return;
-        layoutScheduled = true;
-        Platform.runLater(() -> {
-            layoutScheduled = false;
-            layoutHints();
-        });
-    }
-
-    private void layoutHints() {
-        List<Node> paragraphTexts = paragraphTextNodes();
-        resetInlineGaps(paragraphTexts);
-        gapsByLine = Collections.emptyMap();
-        if (rendered.isEmpty() || layer.getScene() == null) return;
-
-        VisibleLines visibleLines = visibleLines(paragraphTexts);
-        if (visibleLines == null) {
-            rendered.forEach(hint -> hint.label().setVisible(false));
-            return;
-        }
-
-        for (RenderedHint hint : rendered) {
-            int line = hint.position().getLine();
-            if (line < visibleLines.first() || line > visibleLines.last()) {
-                hint.label().setVisible(false);
-            }
-        }
-
-        List<LineGap> gaps = new ArrayList<>();
-        int currentLine = -1;
-        double currentLineShift = 0.0;
-
-        for (RenderedHint hint : rendered) {
-            Position p = hint.position();
-            if (p.getLine() < visibleLines.first() || p.getLine() > visibleLines.last()) continue;
-
-            Label label = hint.label();
-            Optional<Bounds> maybeBounds;
+    /** Remove every existing hint segment, then (re)insert the current hints as length-1 segments. */
+    private void rebuildSegments() {
+        removeAllHintSegments();
+        // The document now equals the source text (no ￼ chars), so source offset == display offset.
+        String text = area.getText();
+        List<Insertion> inserts = new ArrayList<>();
+        for (InlayHint hint : current) {
+            if (hint == null || hint.getPosition() == null) continue;
+            String label = labelText(hint);
+            if (label.isBlank()) continue;
+            int offset;
             try {
-                int offset = Positions.offset(area.getText(), p.getLine(), p.getCharacter());
-                int start = Math.max(0, Math.min(offset - 1, area.getLength()));
-                int end = Math.max(start + 1, Math.min(offset, area.getLength()));
-                maybeBounds = area.getCharacterBoundsOnScreen(start, end);
-            } catch (Exception ignored) {
-                maybeBounds = Optional.empty();
-            }
-
-            if (maybeBounds.isEmpty()) {
-                label.setVisible(false);
+                offset = Positions.offset(text, hint.getPosition().getLine(), hint.getPosition().getCharacter());
+            } catch (Exception ex) {
                 continue;
             }
-
-            if (p.getLine() != currentLine) {
-                currentLine = p.getLine();
-                currentLineShift = 0.0;
-            }
-
-            Bounds charBounds = maybeBounds.get();
-            Point2D local = layer.screenToLocal(charBounds.getMaxX(), charBounds.getMinY());
-            label.applyCss();
-            label.autosize();
-            double width = Math.ceil(label.prefWidth(-1)) + 1.0;
-            double y = local.getY() + Math.max(0.0,
-                    (charBounds.getHeight() - label.prefHeight(-1)) * 0.5);
-            label.relocate(Math.max(0, local.getX() + currentLineShift), Math.max(0, y));
-            label.setVisible(true);
-            gaps.add(new LineGap(p.getLine(), p.getCharacter(), width));
-            currentLineShift += width;
+            if (offset < 0 || offset > text.length()) continue;
+            inserts.add(new Insertion(offset, new InlayHintSeg(paddedText(hint, label), hint.getKind())));
         }
-
-        gapsByLine = gaps.isEmpty()
-                ? Collections.emptyMap()
-                : gaps.stream().collect(Collectors.groupingBy(LineGap::line));
-        applyInlineGaps(paragraphTexts, gaps);
+        // Insert descending so earlier offsets stay valid as the document grows.
+        inserts.sort(Comparator.comparingInt(Insertion::offset).reversed());
+        for (Insertion ins : inserts) {
+            area.insert(ins.offset(),
+                    org.reactfx.util.Either.<String, InlayHintSeg>right(ins.seg()),
+                    Collections.<String>emptyList());
+        }
     }
 
-    private void resetInlineGaps(List<Node> paragraphTexts) {
-        for (Node paragraphText : paragraphTexts) {
-            if (paragraphText instanceof Pane pane) {
-                for (Node child : pane.getChildren()) {
-                    if (child instanceof Text) {
-                        child.setTranslateX(0.0);
-                    }
-                }
+    private void removeAllHintSegments() {
+        String text = area.getText();
+        for (int i = text.length() - 1; i >= 0; i--) {
+            if (text.charAt(i) == MTypeCodeArea.HINT_CHAR) {
+                area.deleteText(i, i + 1);
             }
         }
     }
 
-    private void applyInlineGaps(List<Node> paragraphTexts, List<LineGap> gaps) {
-        if (gaps.isEmpty()) return;
-        int visibleCount = Math.min(paragraphTexts.size(), area.getVisibleParagraphs().size());
-        for (int visible = 0; visible < visibleCount; visible++) {
-            int paragraphIndex;
-            try {
-                paragraphIndex = area.visibleParToAllParIndex(visible);
-            } catch (Exception ignored) {
-                continue;
-            }
-            List<LineGap> lineGaps = gaps.stream()
-                    .filter(gap -> gap.line() == paragraphIndex)
-                    .sorted(Comparator.comparingInt(LineGap::character))
-                    .toList();
-            if (lineGaps.isEmpty()) continue;
-
-            Node paragraphText = paragraphTexts.get(visible);
-            if (!(paragraphText instanceof Pane pane)) continue;
-
-            int start = 0;
-            for (Node child : pane.getChildren()) {
-                if (!(child instanceof Text text)) continue;
-                int length = text.getText() == null ? 0 : text.getText().length();
-                if (length == 0) continue;
-                int end = start + length;
-                double shift = shiftAt(start, lineGaps);
-                child.setTranslateX(shift);
-                start = end;
-            }
+    private static String signatureOf(List<InlayHint> hints) {
+        StringBuilder sb = new StringBuilder();
+        for (InlayHint hint : hints) {
+            if (hint == null || hint.getPosition() == null) continue;
+            sb.append(hint.getPosition().getLine()).append(':')
+                    .append(hint.getPosition().getCharacter()).append(':')
+                    .append(paddedText(hint, labelText(hint))).append('|');
         }
-    }
-
-    private static double shiftAt(int character, List<LineGap> gaps) {
-        double shift = 0.0;
-        for (LineGap gap : gaps) {
-            if (gap.character() <= character) {
-                shift += gap.width();
-            }
-        }
-        return shift;
-    }
-
-    private void publishAnchors() {
-        if (anchorListener == null) return;
-        anchorListener.accept(rendered.stream()
-                .map(RenderedHint::position)
-                .toList());
-    }
-
-    private List<Node> paragraphTextNodes() {
-        Set<Node> nodes = area.lookupAll(".paragraph-text");
-        return nodes.stream()
-                .filter(node -> node instanceof Pane)
-                .sorted(Comparator.comparingDouble(this::screenMinY))
-                .collect(Collectors.toList());
-    }
-
-    private VisibleLines visibleLines(List<Node> paragraphTexts) {
-        int visibleCount = Math.min(paragraphTexts.size(), area.getVisibleParagraphs().size());
-        if (visibleCount <= 0) return null;
-
-        int first = Integer.MAX_VALUE;
-        int last = Integer.MIN_VALUE;
-        for (int visible = 0; visible < visibleCount; visible++) {
-            try {
-                int paragraphIndex = area.visibleParToAllParIndex(visible);
-                first = Math.min(first, paragraphIndex);
-                last = Math.max(last, paragraphIndex);
-            } catch (Exception ignored) {}
-        }
-        return first == Integer.MAX_VALUE ? null : new VisibleLines(first, last);
-    }
-
-    private double screenMinY(Node node) {
-        Bounds b = node.localToScreen(node.getBoundsInLocal());
-        return b == null ? 0.0 : b.getMinY();
+        return sb.toString();
     }
 
     private static String labelText(InlayHint hint) {
@@ -305,121 +119,5 @@ final class InlayHintsController {
         return (left ? " " : "") + text + (right ? " " : "");
     }
 
-    private Position renderPosition(InlayHint hint, String labelText) {
-        Position p = hint.getPosition();
-        if (!isTypeHint(hint, labelText) || p == null) return p;
-
-        String text = area.getText();
-        int offset;
-        try {
-            offset = Positions.offset(text, p.getLine(), p.getCharacter());
-        } catch (Exception ignored) {
-            return p;
-        }
-
-        if (offset < 0 || offset > text.length()) {
-            return p;
-        }
-
-        Position bareLambdaPosition = bareLambdaParamEndOnLine(text, offset);
-        if (bareLambdaPosition != null) {
-            return bareLambdaPosition;
-        }
-
-        if (offset == text.length() || !isIdentifierChar(text.charAt(offset))) {
-            int next = skipHorizontalWhitespace(text, offset);
-            if (next >= text.length() || !isIdentifierChar(text.charAt(next))) {
-                return p;
-            }
-            int candidateEnd = identifierEnd(text, next);
-            int afterCandidate = skipHorizontalWhitespace(text, candidateEnd);
-            if (afterCandidate + 1 >= text.length()
-                    || text.charAt(afterCandidate) != '-'
-                    || text.charAt(afterCandidate + 1) != '>') {
-                return p;
-            }
-            return positionAtOffset(text, candidateEnd);
-        }
-
-        return positionAtOffset(text, identifierEnd(text, offset));
-    }
-
-    private static Position bareLambdaParamEndOnLine(String text, int offset) {
-        int safeOffset = Math.max(0, Math.min(offset, text.length()));
-        int lineStart = text.lastIndexOf('\n', Math.max(0, safeOffset - 1)) + 1;
-        int lineEnd = text.indexOf('\n', safeOffset);
-        if (lineEnd < 0) lineEnd = text.length();
-
-        int arrow = text.indexOf("->", lineStart);
-        while (arrow >= 0 && arrow < lineEnd) {
-            int beforeArrow = skipHorizontalWhitespaceBackward(text, arrow - 1, lineStart);
-            if (beforeArrow >= lineStart && isIdentifierChar(text.charAt(beforeArrow))) {
-                int idEnd = beforeArrow + 1;
-                int idStart = beforeArrow;
-                while (idStart > lineStart && isIdentifierChar(text.charAt(idStart - 1))) {
-                    idStart--;
-                }
-                if (safeOffset <= idEnd) {
-                    return positionAtOffset(text, idEnd);
-                }
-            }
-            arrow = text.indexOf("->", arrow + 2);
-        }
-        return null;
-    }
-
-    private static int skipHorizontalWhitespaceBackward(String text, int offset, int minInclusive) {
-        int i = Math.min(offset, text.length() - 1);
-        while (i >= minInclusive) {
-            char c = text.charAt(i);
-            if (c != ' ' && c != '\t') break;
-            i--;
-        }
-        return i;
-    }
-
-    private static int skipHorizontalWhitespace(String text, int offset) {
-        int i = Math.max(0, Math.min(offset, text.length()));
-        while (i < text.length()) {
-            char c = text.charAt(i);
-            if (c != ' ' && c != '\t') break;
-            i++;
-        }
-        return i;
-    }
-
-    private static int identifierEnd(String text, int offset) {
-        int end = offset;
-        while (end < text.length() && isIdentifierChar(text.charAt(end))) {
-            end++;
-        }
-        return end;
-    }
-
-    private static boolean isTypeHint(InlayHint hint, String labelText) {
-        if (hint.getKind() == InlayHintKind.Type) return true;
-        return labelText != null && labelText.trim().startsWith(":");
-    }
-
-    private static boolean isIdentifierChar(char c) {
-        return Character.isLetterOrDigit(c) || c == '_';
-    }
-
-    private static Position positionAtOffset(String text, int offset) {
-        int safeOffset = Math.max(0, Math.min(offset, text.length()));
-        int line = 0;
-        int lineStart = 0;
-        for (int i = 0; i < safeOffset; i++) {
-            char c = text.charAt(i);
-            if (c == '\n') {
-                line++;
-                lineStart = i + 1;
-            }
-        }
-        return new Position(line, safeOffset - lineStart);
-    }
-
-    private record RenderedHint(Position position, Label label) {}
-    private record LineGap(int line, int character, double width) {}
-    private record VisibleLines(int first, int last) {}
+    private record Insertion(int offset, InlayHintSeg seg) {}
 }

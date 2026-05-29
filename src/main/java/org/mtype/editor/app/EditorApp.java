@@ -552,7 +552,14 @@ public class EditorApp extends Application {
         selectOpenedBtn.setTooltip(new Tooltip("Select Opened File"));
         selectOpenedBtn.getStyleClass().add("mt-explorer-toolbar-button");
         selectOpenedBtn.setOnAction(_ -> tree.revealActiveFile());
-        HBox explorerToolbar = new HBox(selectOpenedBtn);
+
+        Button refreshBtn = new Button();
+        refreshBtn.setGraphic(refreshIcon());
+        refreshBtn.setTooltip(new Tooltip("Refresh Explorer"));
+        refreshBtn.getStyleClass().add("mt-explorer-toolbar-button");
+        refreshBtn.setOnAction(_ -> refreshExplorer(tree));
+
+        HBox explorerToolbar = new HBox(selectOpenedBtn, refreshBtn);
         explorerToolbar.getStyleClass().add("mt-explorer-toolbar");
 
         VBox explorerPane = new VBox(explorerToolbar, filterField, tree);
@@ -690,6 +697,15 @@ public class EditorApp extends Application {
         }
     }
 
+    private void refreshExplorer(WorkspaceTreeView tree) {
+        tree.refresh();
+        ctx.refreshHasProjectFile();
+        if (ctx.getLspBridge() != null) {
+            ctx.getLspBridge().refreshWatchedMtFiles();
+        }
+        ctx.getStatusBar().setMessage("Explorer refreshed");
+    }
+
     private Node selectOpenedFileIcon() {
         Circle outer = new Circle(8, 8, 6);
         Circle middle = new Circle(8, 8, 3);
@@ -698,6 +714,20 @@ public class EditorApp extends Application {
         middle.getStyleClass().add("mt-activity-icon");
         center.getStyleClass().add("mt-activity-icon-fill");
         Group g = new Group(outer, middle, center);
+        g.getStyleClass().add("mt-activity-graphic");
+        return g;
+    }
+
+    private Node refreshIcon() {
+        SVGPath arc = new SVGPath();
+        arc.setContent("M12.5 5.3 A5.8 5.8 0 1 0 13.2 11.1");
+        arc.getStyleClass().add("mt-activity-icon");
+
+        SVGPath arrow = new SVGPath();
+        arrow.setContent("M12.5 2.6 V5.3 H9.8");
+        arrow.getStyleClass().add("mt-activity-icon");
+
+        Group g = new Group(arc, arrow);
         g.getStyleClass().add("mt-activity-graphic");
         return g;
     }

@@ -5,9 +5,9 @@ import org.eclipse.lsp4j.TextDocumentEdit;
 import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.WorkspaceEdit;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
-import org.fxmisc.richtext.CodeArea;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.ui.editor.EditorTab;
+import org.mtype.editor.ui.editor.MTypeCodeArea;
 
 import java.io.IOException;
 import java.net.URI;
@@ -27,11 +27,13 @@ public final class LspEdits {
     }
 
     /**
-     * Apply a list of edits to a single CodeArea. Edits must not overlap.
+     * Apply a list of edits to a single area. Edits must not overlap. Edit ranges are in SOURCE
+     * coordinates (no inlay hints); they are mapped to the area's display offsets before applying so
+     * that embedded inlay-hint segments are preserved (or correctly removed when their code is replaced).
      */
-    public static void applyToCodeArea(CodeArea area, List<? extends TextEdit> edits) {
+    public static void applyToCodeArea(MTypeCodeArea area, List<? extends TextEdit> edits) {
         if (edits == null || edits.isEmpty()) return;
-        String text = area.getText();
+        String source = area.getSourceText();
         List<? extends TextEdit> sorted = new ArrayList<>(edits);
         // Apply in reverse offset order so earlier positions stay valid
         sorted.sort(Comparator
@@ -39,16 +41,17 @@ public final class LspEdits {
                 .thenComparing(Comparator.comparingInt((TextEdit e) -> e.getRange().getStart().getCharacter()).reversed()));
         int caretBefore = area.getCaretPosition();
         for (TextEdit e : sorted) {
-            int start = Positions.offset(text, e.getRange().getStart());
-            int end = Positions.offset(text, e.getRange().getEnd());
-            if (start > end) {
-                int t = start;
-                start = end;
-                end = t;
+            int sStart = Positions.offset(source, e.getRange().getStart());
+            int sEnd = Positions.offset(source, e.getRange().getEnd());
+            if (sStart > sEnd) {
+                int t = sStart;
+                sStart = sEnd;
+                sEnd = t;
             }
-            // Use replaceText against the current area text. We can't refresh `text` snapshot
-            // each iteration cheaply, but since edits are non-overlapping and sorted descending,
-            // CodeArea state stays consistent.
+            // Map source offsets to current display offsets each iteration (descending order keeps
+            // earlier positions valid as the document shrinks/grows).
+            int start = area.sourceToDisplay(sStart);
+            int end = area.sourceToDisplay(sEnd);
             area.replaceText(start, end, e.getNewText() == null ? "" : e.getNewText());
         }
         int finalLen = area.getLength();

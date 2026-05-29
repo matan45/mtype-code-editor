@@ -6,7 +6,6 @@ import javafx.geometry.Point2D;
 import javafx.scene.Node;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Region;
-import org.fxmisc.richtext.CodeArea;
 import org.reactfx.Subscription;
 
 import java.util.Comparator;
@@ -15,7 +14,7 @@ import java.util.stream.Collectors;
 
 /**
  * Draws the current (caret) line highlight as a single full-width translucent band in an overlay
- * {@code layer} that sits on top of the {@link CodeArea} text but below the inlay-hint labels.
+ * {@code layer} that sits on top of the {@link MTypeCodeArea} text but below the inlay-hint labels.
  *
  * <p>RichTextFX sizes each {@code .paragraph-box} cell to its content width (wrapping is off), so a
  * {@code .paragraph-box:has-caret} background only ever reaches end-of-text — and inlay hints, which
@@ -25,13 +24,13 @@ import java.util.stream.Collectors;
  * debounced-relayout pattern used by {@link InlayHintsController}.
  */
 final class CurrentLineHighlighter {
-    private final CodeArea area;
+    private final MTypeCodeArea area;
     private final Pane layer;
     private final Region band;
     private final Subscription viewportSubscription;
     private boolean layoutScheduled;
 
-    CurrentLineHighlighter(CodeArea area, Pane layer) {
+    CurrentLineHighlighter(MTypeCodeArea area, Pane layer) {
         this.area = area;
         this.layer = layer;
         this.layer.setMouseTransparent(true);

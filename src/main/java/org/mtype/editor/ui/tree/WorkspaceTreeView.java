@@ -512,6 +512,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
             try { Files.createFile(target); }
             catch (IOException ex) { errorAlert("Could not create file", ex); return; }
             refreshDirectory(dir);
+            refreshLspWatchedFiles();
             ctx.getTabPane().openFile(target);
         });
     }
@@ -529,6 +530,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
             try { Files.createFile(target); }
             catch (IOException ex) { errorAlert("Could not create file", ex); return; }
             refreshDirectory(dir);
+            refreshLspWatchedFiles();
             ctx.getTabPane().openFile(target);
         });
     }
@@ -564,6 +566,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
             } catch (IOException ex) { errorAlert("Rename failed", ex); return; }
             refreshDirectory(sel.getParent());
             ctx.refreshHasProjectFile();
+            refreshLspWatchedFiles();
             if (Files.isRegularFile(target)) ctx.getTabPane().openFile(target);
         });
     }
@@ -593,6 +596,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
         }
         refreshParents(selected);
         ctx.refreshHasProjectFile();
+        refreshLspWatchedFiles();
     }
 
     private void clipAction(ClipboardOp op) {
@@ -653,6 +657,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
             }
         }
         ctx.refreshHasProjectFile();
+        refreshLspWatchedFiles();
     }
 
     private List<Path> dragSourcePaths(Path draggedPath) {
@@ -714,6 +719,7 @@ public class WorkspaceTreeView extends TreeView<Path> {
             if (!sourceParent.equals(targetDir)) refreshDirectory(sourceParent);
         }
         ctx.refreshHasProjectFile();
+        refreshLspWatchedFiles();
         ctx.getStatusBar().setMessage("Moved " + describePaths(moved));
         return true;
     }
@@ -788,6 +794,12 @@ public class WorkspaceTreeView extends TreeView<Path> {
         }
         for (Path parent : parents) {
             refreshDirectory(parent);
+        }
+    }
+
+    private void refreshLspWatchedFiles() {
+        if (ctx.getLspBridge() != null) {
+            ctx.getLspBridge().refreshWatchedMtFiles();
         }
     }
 

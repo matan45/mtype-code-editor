@@ -4,6 +4,7 @@ import org.eclipse.lsp4j.SemanticTokens;
 import org.eclipse.lsp4j.SemanticTokensLegend;
 import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
+import org.mtype.editor.ui.editor.MTypeCodeArea;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -13,9 +14,14 @@ import java.util.List;
 public final class SemanticTokensDecoder {
     private SemanticTokensDecoder() {}
 
+    /**
+     * Decode delta-encoded semantic tokens. {@code text} is the SOURCE document (no inlay hints); the
+     * resulting spans are mapped to {@code area}'s DISPLAY offsets so they overlay the hint-augmented
+     * document correctly.
+     */
     public static StyleSpans<Collection<String>> decode(
-            String text, SemanticTokens tokens, SemanticTokensLegend legend) {
-        if (text == null || text.isEmpty() || tokens == null || legend == null) return null;
+            String text, SemanticTokens tokens, SemanticTokensLegend legend, MTypeCodeArea area) {
+        if (text == null || text.isEmpty() || tokens == null || legend == null || area == null) return null;
         List<Integer> data = tokens.getData();
         if (data == null || data.size() < 5) return null;
         List<String> tokenTypes = legend.getTokenTypes();
@@ -23,7 +29,8 @@ public final class SemanticTokensDecoder {
         if (tokenTypes == null) tokenTypes = Collections.emptyList();
         if (tokenModifiers == null) tokenModifiers = Collections.emptyList();
 
-        int textLen = text.length();
+        int textLen = text.length();              // source length (token offsets are in source space)
+        int displayLen = area.getLength();         // spans overlay the displayed document
         List<int[]> ranges = new ArrayList<>(data.size() / 5);
         List<Collection<String>> classes = new ArrayList<>(data.size() / 5);
 
@@ -48,8 +55,12 @@ public final class SemanticTokensDecoder {
             int offset = lineStartOffset + character;
             if (offset < 0 || offset >= textLen || length <= 0) continue;
             int end = Math.min(offset + length, textLen);
-            int effectiveLen = end - offset;
+            // Map source span -> display span (preserves alignment when inlay-hint chars sit between tokens).
+            int dStart = area.sourceToDisplay(offset);
+            int dEnd = area.sourceToDisplay(end);
+            int effectiveLen = dEnd - dStart;
             if (effectiveLen <= 0) continue;
+            offset = dStart;
             List<String> cls = new ArrayList<>(2);
             if (typeId >= 0 && typeId < tokenTypes.size()) {
                 cls.add("mt-sem-" + tokenTypes.get(typeId));
@@ -75,7 +86,7 @@ public final class SemanticTokensDecoder {
             builder.add(classes.get(i), len);
             cursor = start + len;
         }
-        if (cursor < textLen) builder.add(Collections.emptyList(), textLen - cursor);
+        if (cursor < displayLen) builder.add(Collections.emptyList(), displayLen - cursor);
         return builder.create();
     }
 
