@@ -237,10 +237,10 @@ public class EditorTab extends Tab {
         });
 
         // Right-click -> position caret, kick off the code-action request so the
-        // submenu is already populated by the time the user hovers it.
-        // Plain left-click -> let RichTextFX run, then snap caret to the
-        // inlay-hint-corrected offset so the caret lands where the user clicked
-        // visually (RichTextFX's raw hit() ignores the translateX shifts).
+        // submenu is already populated by the time the user hovers it. Plain left-click,
+        // double-click word selection, and drag selection are left entirely to RichTextFX:
+        // inlay hints are now real segments, so its native hit-testing is accurate and no
+        // caret/selection "correction" is needed (correcting it actually broke selection).
         codeArea.addEventHandler(MouseEvent.MOUSE_PRESSED, e -> {
             if (e.getButton() == MouseButton.SECONDARY) {
                 CharacterHit hit = codeArea.hit(e.getX(), e.getY());
@@ -249,26 +249,8 @@ public class EditorTab extends Tab {
                     codeArea.moveTo(clickedOffset);
                 }
                 if (quickFixMenu != null) populateQuickFix(quickFixMenu, clickedOffset);
-            } else if (e.getButton() == MouseButton.PRIMARY
-                    && !e.isControlDown() && !e.isShiftDown() && !e.isAltDown()
-                    && e.getClickCount() == 1) {
-                double x = e.getX();
-                double y = e.getY();
-                Platform.runLater(() -> {
-                    CharacterHit hit = codeArea.hit(x, y);
-                    codeArea.moveTo(hit.getInsertionIndex());
-                });
             }
             if (completionMenu.isShowing()) completionMenu.hide();
-        });
-        codeArea.addEventHandler(MouseEvent.MOUSE_DRAGGED, e -> {
-            if (e.getButton() != MouseButton.PRIMARY) return;
-            double x = e.getX();
-            double y = e.getY();
-            Platform.runLater(() -> {
-                CharacterHit hit = codeArea.hit(x, y);
-                codeArea.selectRange(codeArea.getAnchor(), hit.getInsertionIndex());
-            });
         });
 
         // Ctrl+hover hyperlink underline.
