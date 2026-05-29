@@ -108,6 +108,8 @@ public class EditorTab extends Tab {
     private final SignatureHelpPopup signaturePopup = new SignatureHelpPopup();
     private final Pane inlayHintsLayer = new Pane();
     private final InlayHintsController inlayHintsController;
+    private final Pane currentLineLayer = new Pane();
+    private final CurrentLineHighlighter currentLineHighlighter;
     private final Set<Integer> inlayHintAnchorOffsets = new HashSet<>();
     private StyleSpans<Collection<String>> lastLinkHoverSpans;
     private int linkHoverStart = -1;
@@ -162,13 +164,19 @@ public class EditorTab extends Tab {
 
         codeArea.setParagraphGraphicFactory(this::paragraphGraphic);
         codeArea.getStyleClass().add("code-area");
+        // VS-Code-style current-line highlight: the band is painted in currentLineLayer BEHIND a
+        // transparent CodeArea (mt-main-editor) so the text stays crisp on top of it. The editor
+        // background is painted by the StackPane (mt-editor-stack) instead of the area itself.
+        codeArea.getStyleClass().add("mt-main-editor");
         applyFontFromSettings();
         completionMenu.getStyleClass().add("mt-completion");
         referencesMenu.getStyleClass().add("mt-references");
 
         VirtualizedScrollPane<CodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
+        scroll.getStyleClass().add("mt-main-editor-scroll");
         installScrollSensitivity();
-        StackPane editorStack = new StackPane(scroll, inlayHintsLayer);
+        StackPane editorStack = new StackPane(currentLineLayer, scroll, inlayHintsLayer);
+        editorStack.getStyleClass().add("mt-editor-stack");
         breadcrumbBar.getStyleClass().add("mt-breadcrumb-bar");
         breadcrumbBar.setVisible(false);
         breadcrumbBar.setManaged(false);
@@ -176,6 +184,7 @@ public class EditorTab extends Tab {
         wrap.setTop(breadcrumbBar);
         setContent(wrap);
         inlayHintsController = new InlayHintsController(codeArea, inlayHintsLayer, this::setInlayHintAnchors);
+        currentLineHighlighter = new CurrentLineHighlighter(codeArea, currentLineLayer);
 
         loadFile();
         suppressDirty = false;
@@ -420,6 +429,7 @@ public class EditorTab extends Tab {
         if (pendingSemanticTokens != null) pendingSemanticTokens.cancel(false);
         signaturePopup.hide();
         inlayHintsController.dispose();
+        currentLineHighlighter.dispose();
         if (lspManaged && ctx.getLspBridge() != null) {
             try { ctx.getLspBridge().didClose(path); } catch (Exception ignored) {}
         }

@@ -343,8 +343,31 @@
     -fx-background-color: #282c34;
 }
 
-.code-area .paragraph-box:has-caret,
-.styled-text-area .paragraph-box:has-caret {
+/* VS-Code-style current-line highlight. The full-width band lives in a layer (.mt-current-line-layer)
+   BEHIND the main editor; the editor (.mt-main-editor) and its paragraph cells are made transparent
+   so the band shows through under the crisp text, and the editor background is painted by the
+   enclosing StackPane (.mt-editor-stack). Scoped to .mt-main-editor so the diff view (.mt-diff-area)
+   and other CodeAreas keep their own opaque backgrounds. */
+.mt-editor-stack {
+    -fx-background-color: #282c34;
+}
+.code-area.mt-main-editor,
+.styled-text-area.mt-main-editor {
+    -fx-background-color: transparent;
+}
+.code-area.mt-main-editor .paragraph-box,
+.styled-text-area.mt-main-editor .paragraph-box {
+    -fx-background-color: transparent;
+}
+.mt-main-editor .virtual-flow,
+.mt-main-editor .viewport,
+.mt-main-editor-scroll {
+    -fx-background-color: transparent;
+}
+.mt-current-line-layer {
+    -fx-background-color: transparent;
+}
+.mt-current-line-band {
     -fx-background-color: #2c313c;
 }
 
