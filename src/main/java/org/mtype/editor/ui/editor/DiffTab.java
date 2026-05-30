@@ -15,10 +15,14 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
+import org.eclipse.lsp4j.SemanticTokens;
+import org.eclipse.lsp4j.SemanticTokensLegend;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.CodeArea;
+import org.fxmisc.richtext.model.StyleSpans;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.git.GitService;
+import org.mtype.editor.lsp.LspBridge;
 import org.mtype.editor.syntax.Tokenizers;
 import org.mtype.editor.ui.dialogs.Dialogs;
 
@@ -28,7 +32,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntFunction;
 
 public class DiffTab extends Tab {
@@ -37,17 +44,22 @@ public class DiffTab extends Tab {
     private static final Collection<String> STYLE_PAD = Collections.singletonList("mt-diff-pad");
     private static final Collection<String> STYLE_EQ = Collections.emptyList();
 
+    /** Monotonic version counter for temporary didOpen used only to fetch diff semantic tokens. */
+    private static final AtomicInteger TEMP_VERSION = new AtomicInteger(1);
+
     private final AppContext ctx;
     private final Path path;
     private final List<Integer> chunkStarts = new ArrayList<>();
     private int currentChunk = -1;
     private CodeArea rightArea;
+    private volatile boolean closed;
 
     public DiffTab(AppContext ctx, Path path, String title, String leftText, String rightText, boolean binary) {
         this.ctx = ctx;
         this.path = path;
         setText(title);
         setClosable(true);
+        setOnClosed(e -> closed = true);
 
         if (binary) {
             Label msg = new Label("Binary file — cannot show diff");
@@ -102,6 +114,7 @@ public class DiffTab extends Tab {
         right.replaceText(rightBuf.toString());
         applySyntaxHighlighting(left);
         applySyntaxHighlighting(right);
+        requestSemanticColors(rows, leftLn, rightLn, left, right, rightText);
 
         for (int i = 0; i < rows.size(); i++) {
             DiffComputer.Row r = rows.get(i);
@@ -207,6 +220,68 @@ public class DiffTab extends Tab {
 
     private void applySyntaxHighlighting(CodeArea area) {
         area.setStyleSpans(0, Tokenizers.computeFor(path, area.getText()));
+    }
+
+    /**
+     * Match the normal editor's coloring by overlaying LSP semantic tokens onto the regex layer.
+     * The server only has tokens for the working-tree content, so the right pane matches exactly and
+     * the left/HEAD pane is colored on EQUAL rows only (see {@link DiffSemanticDecoder}). Falls back
+     * silently to regex-only when the LSP is unavailable or the document has drifted.
+     */
+    private void requestSemanticColors(List<DiffComputer.Row> rows, Integer[] leftLn, Integer[] rightLn,
+                                       CodeArea left, CodeArea right, String workingTreeText) {
+        if (!Tokenizers.isMTypeFile(path)) return;
+        LspBridge lsp = ctx.getLspBridge();
+        if (lsp == null || !lsp.isReady()) return;
+        SemanticTokensLegend legend = lsp.getSemanticLegend();
+        if (legend == null) return;
+
+        // The server only produces semantic tokens for documents it has open. When the file isn't
+        // already open in an editor tab, temporarily open the working-tree content so the request
+        // resolves, then close it again (unless an editor opened it in the meantime).
+        boolean openInEditor = ctx.getTabPane() != null && ctx.getTabPane().findByPath(path) != null;
+        final boolean tempOpened = !openInEditor && workingTreeText != null;
+        if (tempOpened) lsp.didOpen(path, workingTreeText, TEMP_VERSION.incrementAndGet());
+
+        String rightSnapshot = right.getText();
+        lsp.semanticTokensFull(path).thenAcceptAsync(tokens -> {
+            if (closed || tokens == null) return;
+            int count = tokens.getData() == null ? 0 : tokens.getData().size() / 5;
+            if (ctx.getOutputPane() != null) {
+                ctx.getOutputPane().appendLspLog("[diff-sem] tempOpened=" + tempOpened + " got " + count + " tokens");
+            }
+            // The server's tokens reflect its current buffer; only apply if the pane still matches it.
+            if (!rightSnapshot.equals(right.getText())) return;
+            DiffSemanticDecoder.DiffSemantic ds = DiffSemanticDecoder.decode(
+                    rows, leftLn, rightLn, tokens, legend, left.getLength(), right.getLength());
+            if (ds == null) return;
+            applyWithSemantic(right, ds.right());
+            applyWithSemantic(left, ds.left());
+        }, Platform::runLater).whenComplete((v, err) -> {
+            // Only close the doc we opened, and never close one an editor now owns.
+            if (tempOpened && (ctx.getTabPane() == null || ctx.getTabPane().findByPath(path) == null)) {
+                lsp.didClose(path);
+            }
+        });
+    }
+
+    private void applyWithSemantic(CodeArea area, StyleSpans<Collection<String>> semantic) {
+        if (semantic == null) return;
+        StyleSpans<Collection<String>> base = Tokenizers.computeFor(path, area.getText());
+        try {
+            StyleSpans<Collection<String>> combined = base.overlay(semantic, DiffTab::mergeStyles);
+            area.setStyleSpans(0, combined);
+        } catch (Exception ignored) {
+            // Length mismatch (e.g. document drift) — leave the regex-only spans in place.
+        }
+    }
+
+    private static Collection<String> mergeStyles(Collection<String> a, Collection<String> b) {
+        if (a.isEmpty()) return b;
+        if (b.isEmpty()) return a;
+        Set<String> merged = new LinkedHashSet<>(a);
+        merged.addAll(b);
+        return merged;
     }
 
     private void applyFontFromSettings(CodeArea area) {
