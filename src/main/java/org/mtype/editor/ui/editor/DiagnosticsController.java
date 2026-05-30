@@ -2,18 +2,11 @@ package org.mtype.editor.ui.editor;
 
 import org.eclipse.lsp4j.Diagnostic;
 import org.eclipse.lsp4j.DiagnosticSeverity;
-import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
 import org.mtype.editor.lsp.DiagnosticsRenderer;
 import org.mtype.editor.lsp.Positions;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Holds the latest server-pushed diagnostics for this document and rebuilds the squiggle overlay

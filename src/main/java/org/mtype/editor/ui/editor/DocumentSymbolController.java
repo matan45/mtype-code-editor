@@ -74,11 +74,7 @@ final class DocumentSymbolController {
 
     void updateBreadcrumb() {
         if (lastDocumentSymbols == null || lastDocumentSymbols.isEmpty()) {
-            if (breadcrumbBar.isVisible()) {
-                breadcrumbBar.setVisible(false);
-                breadcrumbBar.setManaged(false);
-            }
-            breadcrumbBar.getChildren().clear();
+            showFallbackBreadcrumb();
             return;
         }
         int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
@@ -88,8 +84,7 @@ final class DocumentSymbolController {
         collectAncestors(lastDocumentSymbols, line, col, chain);
         breadcrumbBar.getChildren().clear();
         if (chain.isEmpty()) {
-            breadcrumbBar.setVisible(false);
-            breadcrumbBar.setManaged(false);
+            showFallbackBreadcrumb();
             return;
         }
         for (int i = 0; i < chain.size(); i++) {
@@ -107,10 +102,21 @@ final class DocumentSymbolController {
                 breadcrumbBar.getChildren().add(sep);
             }
         }
-        if (!breadcrumbBar.isVisible()) {
-            breadcrumbBar.setVisible(true);
-            breadcrumbBar.setManaged(true);
-        }
+        showBreadcrumbBar();
+    }
+
+    private void showFallbackBreadcrumb() {
+        breadcrumbBar.getChildren().clear();
+        String name = path.getFileName() == null ? path.toString() : path.getFileName().toString();
+        Label fallback = new Label(name);
+        fallback.getStyleClass().add("mt-breadcrumb-fallback");
+        breadcrumbBar.getChildren().add(fallback);
+        showBreadcrumbBar();
+    }
+
+    private void showBreadcrumbBar() {
+        if (!breadcrumbBar.isVisible()) breadcrumbBar.setVisible(true);
+        if (!breadcrumbBar.isManaged()) breadcrumbBar.setManaged(true);
     }
 
     private static void collectAncestors(List<DocumentSymbol> symbols, int line, int col, List<DocumentSymbol> out) {

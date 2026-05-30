@@ -52,7 +52,7 @@ public class EditorTabPane extends TabPane {
             }
             Platform.runLater(this::wireTabHeaderDragHandlers);
         });
-        skinProperty().addListener((obs, old, sk) -> {
+        skinProperty().addListener((_, _, sk) -> {
             if (sk != null) Platform.runLater(this::wireTabHeaderDragHandlers);
         });
     }
@@ -150,9 +150,7 @@ public class EditorTabPane extends TabPane {
     }
 
     public void closeAllInteractive() {
-        for (Tab t : new ArrayList<>(getTabs())) {
-            if (canClose(t)) getTabs().remove(t);
-        }
+        getTabs().removeIf(this::canClose);
     }
 
     public void closeAllButThis(Tab keep) {
@@ -187,12 +185,12 @@ public class EditorTabPane extends TabPane {
         MenuItem closeRight = new MenuItem("Close All To The Right");
         MenuItem copyPath = new MenuItem("Copy Path");
 
-        close.setOnAction(e -> closeTab(t));
-        closeOthers.setOnAction(e -> closeAllButThis(t));
-        closeAll.setOnAction(e -> closeAllInteractive());
-        closeLeft.setOnAction(e -> closeTabsToLeftOf(t));
-        closeRight.setOnAction(e -> closeTabsToRightOf(t));
-        copyPath.setOnAction(e -> {
+        close.setOnAction(_ -> closeTab(t));
+        closeOthers.setOnAction(_ -> closeAllButThis(t));
+        closeAll.setOnAction(_ -> closeAllInteractive());
+        closeLeft.setOnAction(_ -> closeTabsToLeftOf(t));
+        closeRight.setOnAction(_ -> closeTabsToRightOf(t));
+        copyPath.setOnAction(_ -> {
             Path p = pathOf(t);
             if (p != null) copyToClipboard(p.toAbsolutePath().toString());
         });
@@ -209,7 +207,7 @@ public class EditorTabPane extends TabPane {
                 copyPath
         );
 
-        menu.setOnShowing(ev -> {
+        menu.setOnShowing(_ -> {
             int idx = getTabs().indexOf(t);
             int size = getTabs().size();
             closeOthers.setDisable(size <= 1);

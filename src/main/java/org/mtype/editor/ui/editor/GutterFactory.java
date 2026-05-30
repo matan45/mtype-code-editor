@@ -25,7 +25,6 @@ import java.util.function.IntSupplier;
 final class GutterFactory {
     private static final double CODE_LENS_LABEL_X = 65;
 
-    private final MTypeCodeArea codeArea;
     private final Path path;
     private final AppContext ctx;
     private final DiagnosticsController diagnostics;
@@ -33,9 +32,8 @@ final class GutterFactory {
     private final CodeFoldingController folding;
     private final IntSupplier executionLine;
 
-    GutterFactory(MTypeCodeArea codeArea, Path path, AppContext ctx, DiagnosticsController diagnostics,
+    GutterFactory(Path path, AppContext ctx, DiagnosticsController diagnostics,
                   CodeLensController codeLens, CodeFoldingController folding, IntSupplier executionLine) {
-        this.codeArea = codeArea;
         this.path = path;
         this.ctx = ctx;
         this.diagnostics = diagnostics;

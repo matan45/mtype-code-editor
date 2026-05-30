@@ -75,8 +75,8 @@ final class InlayHintsController {
         inserts.sort(Comparator.comparingInt(Insertion::offset).reversed());
         for (Insertion ins : inserts) {
             area.insert(ins.offset(),
-                    org.reactfx.util.Either.<String, InlayHintSeg>right(ins.seg()),
-                    Collections.<String>emptyList());
+                    org.reactfx.util.Either.right(ins.seg()),
+                    Collections.emptyList());
         }
     }
 

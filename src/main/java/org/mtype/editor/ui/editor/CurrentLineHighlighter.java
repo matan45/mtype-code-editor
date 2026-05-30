@@ -68,9 +68,9 @@ final class CurrentLineHighlighter {
         }
         int line = area.getCurrentParagraph();
 
-        List<Node> boxes = sortedByScreenY(".paragraph-box");
+        List<Node> boxes = sortedByScreenY();
         int visibleCount = Math.min(boxes.size(), area.getVisibleParagraphs().size());
-        if (visibleCount <= 0) {
+        if (visibleCount == 0) {
             band.setVisible(false);
             return;
         }
@@ -138,8 +138,8 @@ final class CurrentLineHighlighter {
         return Math.max(Math.max(a, b), Math.max(c, d));
     }
 
-    private List<Node> sortedByScreenY(String selector) {
-        return area.lookupAll(selector).stream()
+    private List<Node> sortedByScreenY() {
+        return area.lookupAll(".paragraph-box").stream()
                 .sorted(Comparator.comparingDouble(this::screenMinY))
                 .collect(Collectors.toList());
     }

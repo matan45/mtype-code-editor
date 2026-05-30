@@ -7,9 +7,7 @@ import org.eclipse.lsp4j.InlayHintKind;
 import org.fxmisc.richtext.GenericStyledArea;
 import org.fxmisc.richtext.StyledTextArea;
 import org.fxmisc.richtext.model.NodeSegmentOpsBase;
-import org.fxmisc.richtext.model.ReadOnlyStyledDocument;
 import org.fxmisc.richtext.model.SegmentOps;
-import org.fxmisc.richtext.model.StyledDocument;
 import org.fxmisc.richtext.model.StyledSegment;
 import org.fxmisc.richtext.model.TextOps;
 import org.reactfx.util.Either;
@@ -39,23 +37,19 @@ public final class MTypeCodeArea
     private static final TextOps<Either<String, InlayHintSeg>, Collection<String>> SEGMENT_OPS = buildSegmentOps();
 
     MTypeCodeArea() {
-        super(Collections.<String>emptyList(),
+        super(Collections.emptyList(),
                 (TextFlow tf, Collection<String> styleClasses) -> tf.getStyleClass().addAll(styleClasses),
-                Collections.<String>emptyList(),
+                Collections.emptyList(),
                 SEGMENT_OPS,
                 MTypeCodeArea::createNode);
         getStyleClass().add("code-area");
         setUseInitialStyleForInsertion(true);
     }
 
-    static TextOps<Either<String, InlayHintSeg>, Collection<String>> segmentOps() {
-        return SEGMENT_OPS;
-    }
-
     private static TextOps<Either<String, InlayHintSeg>, Collection<String>> buildSegmentOps() {
         TextOps<String, Collection<String>> textOps = SegmentOps.styledTextOps();
         SegmentOps<InlayHintSeg, Collection<String>> hintOps = new InlayHintSegmentOps();
-        return textOps._or(hintOps, (a, b) -> Optional.empty());
+        return textOps._or(hintOps, (_, _) -> Optional.empty());
     }
 
     private static Node createNode(StyledSegment<Either<String, InlayHintSeg>, Collection<String>> styledSeg) {
@@ -74,16 +68,6 @@ public final class MTypeCodeArea
             label.getStyleClass().add("mt-inlay-hint-type");
         }
         return label;
-    }
-
-    /** Builds a one-segment styled document wrapping a hint, for {@code replace}/{@code insert}. */
-    static StyledDocument<Collection<String>, Either<String, InlayHintSeg>, Collection<String>> hintDocument(
-            InlayHintSeg hint) {
-        return ReadOnlyStyledDocument.fromSegment(
-                Either.right(hint),
-                Collections.<String>emptyList(),
-                Collections.singletonList("mt-inlay-hint"),
-                SEGMENT_OPS);
     }
 
     // ---- display↔source offset mapping -------------------------------------------------------

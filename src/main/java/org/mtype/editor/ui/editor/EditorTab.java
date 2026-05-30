@@ -61,7 +61,6 @@ public class EditorTab extends Tab {
     private final MTypeCodeArea codeArea = new MTypeCodeArea();
     private final SimpleBooleanProperty dirty = new SimpleBooleanProperty(false);
     private final AtomicInteger version = new AtomicInteger(1);
-    private final HBox breadcrumbBar = new HBox();
 
     // Feature collaborators.
     private final StyleCompositor compositor;
@@ -108,9 +107,8 @@ public class EditorTab extends Tab {
         Pane currentLineLayer = new Pane();
         StackPane editorStack = new StackPane(currentLineLayer, scroll);
         editorStack.getStyleClass().add("mt-editor-stack");
+        HBox breadcrumbBar = new HBox();
         breadcrumbBar.getStyleClass().add("mt-breadcrumb-bar");
-        breadcrumbBar.setVisible(false);
-        breadcrumbBar.setManaged(false);
         BorderPane wrap = new BorderPane(editorStack);
         wrap.setTop(breadcrumbBar);
         setContent(wrap);
@@ -127,13 +125,14 @@ public class EditorTab extends Tab {
         folding = new CodeFoldingController(codeArea, this, compositor, semanticTokens, this::refreshGutter);
         documentSymbols = new DocumentSymbolController(codeArea, path, ctx, lspManaged, breadcrumbBar, folding, this);
         commands = new EditorCommands(codeArea, path, ctx, lspManaged, compositor, semanticTokens);
-        gutter = new GutterFactory(codeArea, path, ctx, diagnostics, codeLens, folding, () -> executionLine);
+        gutter = new GutterFactory(path, ctx, diagnostics, codeLens, folding, () -> executionLine);
         inlayHintsController = new InlayHintsController(codeArea, this);
         currentLineHighlighter = new CurrentLineHighlighter(codeArea, currentLineLayer);
 
         codeArea.setParagraphGraphicFactory(gutter::paragraphGraphic);
 
         loadFile();
+        documentSymbols.updateBreadcrumb();
         suppressDirty = false;
 
         codeArea.textProperty().addListener((_, oldText, newText) -> {
@@ -470,10 +469,8 @@ public class EditorTab extends Tab {
 
     public void formatDocument() { commands.formatDocument(); }
     public void goToDefinitionAtCaret() { commands.goToDefinitionAtCaret(); }
-    public void findReferencesAtCaret() { commands.findReferencesAtCaret(); }
     public void renameAtCaret() { commands.renameAtCaret(); }
     public void showCallHierarchyAtCaret() { commands.showCallHierarchyAtCaret(); }
-    public void requestSignatureHelpAtCaret() { signatureHelp.requestSignatureHelpAtCaret(); }
 
     /** Move the caret to a 0-based LSP position and ensure visible. */
     public void revealPosition(int line, int character) {

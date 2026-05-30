@@ -110,7 +110,7 @@ final class SnippetSession {
         if (placeholders.isEmpty()) {
             return new Selection(finalOffset, finalOffset, true);
         }
-        Placeholder p = placeholders.get(0);
+        Placeholder p = placeholders.getFirst();
         return new Selection(p.start, p.end, false);
     }
 
