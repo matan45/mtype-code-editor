@@ -78,10 +78,7 @@ public class LspBridge {
         InitializeParams init = new InitializeParams();
         init.setProcessId((int) ProcessHandle.current().pid());
         String rootUri = ws.root().toUri().toString();
-        // The mType LSP still uses rootUri/rootPath to initialize project config
-        // and mt_modules aliases, while modern clients use workspaceFolders.
-        init.setRootUri(rootUri);
-        init.setRootPath(ws.root().toString());
+        setLegacyWorkspaceRoot(init, rootUri, ws.root().toString());
         WorkspaceFolder folder = new WorkspaceFolder(rootUri,
                 ws.root().getFileName() == null ? "root" : ws.root().getFileName().toString());
         init.setWorkspaceFolders(Collections.singletonList(folder));
@@ -163,6 +160,14 @@ public class LspBridge {
                 if (ctx.getTabPane() != null) ctx.getTabPane().syncOpenDocumentsWithLsp();
             });
         });
+    }
+
+    @SuppressWarnings("deprecation")
+    private static void setLegacyWorkspaceRoot(InitializeParams init, String rootUri, String rootPath) {
+        // The mType LSP still uses rootUri/rootPath to initialize project config
+        // and mt_modules aliases, while modern clients use workspaceFolders.
+        init.setRootUri(rootUri);
+        init.setRootPath(rootPath);
     }
 
     private String resolveLanguageServerExecutable() {

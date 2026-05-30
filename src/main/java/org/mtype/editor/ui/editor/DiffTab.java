@@ -18,6 +18,7 @@ import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.CodeArea;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.git.GitService;
+import org.mtype.editor.syntax.Tokenizers;
 import org.mtype.editor.ui.dialogs.Dialogs;
 
 import java.nio.charset.StandardCharsets;
@@ -98,6 +99,8 @@ public class DiffTab extends Tab {
         }
         left.replaceText(leftBuf.toString());
         right.replaceText(rightBuf.toString());
+        applySyntaxHighlighting(left);
+        applySyntaxHighlighting(right);
 
         for (int i = 0; i < rows.size(); i++) {
             DiffComputer.Row r = rows.get(i);
@@ -186,6 +189,10 @@ public class DiffTab extends Tab {
         area.setEditable(false);
         area.getStyleClass().add("mt-diff-area");
         return area;
+    }
+
+    private void applySyntaxHighlighting(CodeArea area) {
+        area.setStyleSpans(0, Tokenizers.computeFor(path, area.getText()));
     }
 
     private void applyFontFromSettings(CodeArea area) {
