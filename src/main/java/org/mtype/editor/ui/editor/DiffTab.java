@@ -9,6 +9,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tab;
 import javafx.scene.control.Tooltip;
+import javafx.scene.input.ScrollEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -129,8 +130,10 @@ public class DiffTab extends Tab {
 
         VirtualizedScrollPane<CodeArea> leftScroll = new VirtualizedScrollPane<>(left);
         VirtualizedScrollPane<CodeArea> rightScroll = new VirtualizedScrollPane<>(right);
+        leftScroll.getStyleClass().add("mt-diff-follower-scroll");
 
-        bindSyncedScroll(left, right);
+        bindFollowerScroll(left, right);
+        forwardWheelToOwner(leftScroll, right);
 
         SplitPane split = new SplitPane(wrapWithHeader("HEAD", leftScroll, false),
                                         wrapWithHeader("Working Tree", rightScroll, true));
@@ -139,35 +142,46 @@ public class DiffTab extends Tab {
         setContent(split);
     }
 
-    private static void bindSyncedScroll(CodeArea a, CodeArea b) {
-        // Gated one-way listeners — avoids the feedback loop that
-        // bindBidirectional hits when the two viewports clamp to
-        // slightly different max-scroll values at the document ends.
+    private static void bindFollowerScroll(CodeArea left, CodeArea right) {
+        // The right/working-tree pane owns scroll state. The left pane follows only, which avoids
+        // handoff loops when the two viewports clamp to slightly different max-scroll values.
         boolean[] syncing = {false};
-        a.estimatedScrollYProperty().addListener((_, _, newV) -> {
-            if (syncing[0] || newV == null) return;
-            syncing[0] = true;
-            try { b.estimatedScrollYProperty().setValue(newV); }
-            finally { syncing[0] = false; }
+        right.estimatedScrollYProperty().addListener((_, _, newV) -> {
+            syncScrollY(left, newV, syncing);
         });
-        b.estimatedScrollYProperty().addListener((_, _, newV) -> {
-            if (syncing[0] || newV == null) return;
-            syncing[0] = true;
-            try { a.estimatedScrollYProperty().setValue(newV); }
-            finally { syncing[0] = false; }
+        right.estimatedScrollXProperty().addListener((_, _, newV) -> {
+            syncScrollX(left, newV, syncing);
         });
-        a.estimatedScrollXProperty().addListener((_, _, newV) -> {
-            if (syncing[0] || newV == null) return;
-            syncing[0] = true;
-            try { b.estimatedScrollXProperty().setValue(newV); }
-            finally { syncing[0] = false; }
+    }
+
+    private static void forwardWheelToOwner(VirtualizedScrollPane<CodeArea> followerScroll, CodeArea owner) {
+        followerScroll.addEventFilter(ScrollEvent.SCROLL, event -> {
+            double deltaY = event.getDeltaY();
+            double deltaX = event.getDeltaX();
+            if (deltaY == 0 && deltaX == 0) return;
+
+            if (deltaY != 0) owner.scrollYBy(-deltaY);
+            if (deltaX != 0) owner.scrollXBy(-deltaX);
+            event.consume();
         });
-        b.estimatedScrollXProperty().addListener((_, _, newV) -> {
-            if (syncing[0] || newV == null) return;
-            syncing[0] = true;
-            try { a.estimatedScrollXProperty().setValue(newV); }
-            finally { syncing[0] = false; }
-        });
+    }
+
+    private static void syncScrollY(CodeArea target, Double y, boolean[] syncing) {
+        if (syncing[0] || !isFinite(y)) return;
+        syncing[0] = true;
+        try { target.scrollYToPixel(y); }
+        finally { syncing[0] = false; }
+    }
+
+    private static void syncScrollX(CodeArea target, Double x, boolean[] syncing) {
+        if (syncing[0] || !isFinite(x)) return;
+        syncing[0] = true;
+        try { target.scrollXToPixel(x); }
+        finally { syncing[0] = false; }
+    }
+
+    private static boolean isFinite(Double value) {
+        return value != null && Double.isFinite(value);
     }
 
     private void jumpToChunk(int direction) {

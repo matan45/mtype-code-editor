@@ -1549,6 +1549,17 @@
     -fx-font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
     -fx-font-size: 13;
 }
+.mt-diff-follower-scroll .scroll-bar:vertical,
+.mt-diff-follower-scroll .scroll-bar:horizontal {
+    -fx-opacity: 0;
+    -fx-pref-width: 0;
+    -fx-pref-height: 0;
+    -fx-min-width: 0;
+    -fx-min-height: 0;
+    -fx-max-width: 0;
+    -fx-max-height: 0;
+    -fx-padding: 0;
+}
 .mt-diff-area .paragraph-text.mt-diff-del,
 .mt-diff-area .paragraph-box.mt-diff-del {
     -fx-background-color: rgba(224,108,117,0.18);
