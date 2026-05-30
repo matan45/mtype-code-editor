@@ -1,5 +1,6 @@
 package org.mtype.editor.ui.editor;
 
+import javafx.beans.binding.Bindings;
 import javafx.geometry.Pos;
 import javafx.scene.Cursor;
 import javafx.scene.Node;
@@ -23,8 +24,6 @@ import java.util.function.IntSupplier;
  * trigger a re-render by re-setting this factory on the code area (the shared "gutter refresh" hook).
  */
 final class GutterFactory {
-    private static final double CODE_LENS_LABEL_X = 65;
-
     private final Path path;
     private final AppContext ctx;
     private final DiagnosticsController diagnostics;
@@ -50,7 +49,9 @@ final class GutterFactory {
         Label title = new Label(lensTitle);
         title.getStyleClass().add("mt-code-lens");
         title.setCursor(Cursor.HAND);
-        title.setTranslateX(CODE_LENS_LABEL_X);
+        title.translateXProperty().bind(Bindings.createDoubleBinding(
+                () -> lineNumber.getLayoutBounds().getWidth(),
+                lineNumber.layoutBoundsProperty()));
         title.setOnMouseClicked(e -> {
             codeLens.showReferencesAt(paragraphIndex, title);
             e.consume();

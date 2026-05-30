@@ -62,14 +62,14 @@ public class TerminalPane extends BorderPane {
 
         try {
             TerminalSession session = controller.openSession(
-                    chunk -> view.append(chunk.text(), chunk.stderr()),
+                    chunk -> view.append(chunk.text()),
                     code -> Platform.runLater(() -> markExited(tab, view, code)));
             tab.setText(session.title());
             view.setSession(session);
-            view.append("Started cmd.exe in " + session.cwd() + System.lineSeparator(), false);
+            view.append("Started cmd.exe in " + session.cwd() + System.lineSeparator());
             view.focusTerminal();
         } catch (IOException ex) {
-            view.append("Failed to start cmd.exe: " + ex.getMessage() + System.lineSeparator(), true);
+            view.append("Failed to start cmd.exe: " + ex.getMessage() + System.lineSeparator());
             view.disableInput();
             tab.setText("cmd failed");
             ctx.getStatusBar().setMessage("Failed to start terminal: " + ex.getMessage());
@@ -102,11 +102,11 @@ public class TerminalPane extends BorderPane {
             tab.setText(tab.getText() + " (exited)");
         }
         view.append(System.lineSeparator() + "[process exited with code " + code + "]"
-                + System.lineSeparator(), false);
+                + System.lineSeparator());
         view.disableInput();
     }
 
-    private final class TerminalView extends BorderPane {
+    private static final class TerminalView extends BorderPane {
         private final TextArea terminal = new TextArea();
         private TerminalSession session;
         private int inputStart;
@@ -145,7 +145,7 @@ public class TerminalPane extends BorderPane {
             this.session = session;
         }
 
-        private void append(String text, boolean stderr) {
+        private void append(String text) {
             Platform.runLater(() -> {
                 boolean atEnd = terminal.getCaretPosition() >= terminal.getLength();
                 String pending = terminal.getText(inputStart, terminal.getLength());
@@ -181,7 +181,7 @@ public class TerminalPane extends BorderPane {
             try {
                 session.send(command);
             } catch (IOException ex) {
-                append("Failed to send command: " + ex.getMessage() + System.lineSeparator(), true);
+                append("Failed to send command: " + ex.getMessage() + System.lineSeparator());
                 disableInput();
             }
         }
