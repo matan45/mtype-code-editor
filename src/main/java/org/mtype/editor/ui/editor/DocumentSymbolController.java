@@ -8,7 +8,6 @@ import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.lsp.LspBridge;
-import org.mtype.editor.ui.output.OutlinePanel;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -65,7 +64,7 @@ final class DocumentSymbolController {
         final int request = ++requestSerial;
         lsp.documentSymbol(path).thenAcceptAsync(raw -> {
             if (request != requestSerial) return;
-            lastDocumentSymbols = OutlinePanel.flatten(raw);
+            lastDocumentSymbols = raw == null ? Collections.emptyList() : raw;
             updateBreadcrumb();
             folding.setDocumentSymbols(lastDocumentSymbols);
             if (ctx.getOutputPane() != null) ctx.getOutputPane().refreshOutlineFor(tab);

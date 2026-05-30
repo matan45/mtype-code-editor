@@ -591,12 +591,19 @@ public class LspBridge {
 
     /* ============================== document symbols ============================== */
 
-    public CompletableFuture<List<Either<SymbolInformation, DocumentSymbol>>> documentSymbol(Path path) {
+    public CompletableFuture<List<DocumentSymbol>> documentSymbol(Path path) {
         if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         DocumentSymbolParams params = new DocumentSymbolParams(
                 new TextDocumentIdentifier(path.toUri().toString()));
         return server.getTextDocumentService().documentSymbol(params)
-                .thenApply(list -> list == null ? Collections.<Either<SymbolInformation, DocumentSymbol>>emptyList() : list)
+                .thenApply(list -> {
+                    if (list == null || list.isEmpty()) return Collections.<DocumentSymbol>emptyList();
+                    List<DocumentSymbol> out = new ArrayList<>(list.size());
+                    for (Either<SymbolInformation, DocumentSymbol> e : list) {
+                        if (e != null && e.isRight() && e.getRight() != null) out.add(e.getRight());
+                    }
+                    return out;
+                })
                 .exceptionally(_ -> Collections.emptyList());
     }
 

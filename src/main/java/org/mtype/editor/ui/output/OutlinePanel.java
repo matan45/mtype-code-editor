@@ -13,14 +13,10 @@ import javafx.scene.layout.BorderPane;
 import org.eclipse.lsp4j.DocumentSymbol;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
-import org.eclipse.lsp4j.SymbolInformation;
 import org.eclipse.lsp4j.SymbolKind;
-import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.ui.editor.EditorTab;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 public class OutlinePanel extends BorderPane {
@@ -98,41 +94,6 @@ public class OutlinePanel extends BorderPane {
         if (r == null || r.getStart() == null) return;
         Position start = r.getStart();
         activeTab.revealPosition(start.getLine(), start.getCharacter());
-    }
-
-    /**
-     * Convert a flat SymbolInformation[] to a hierarchical DocumentSymbol[] by containment.
-     * lsp4j's {@code textDocument/documentSymbol} return type forces the deprecated
-     * {@link SymbolInformation} on the left branch — it is the legacy form mandated by the LSP
-     * spec, so the getter calls in the fallback below are unavoidably deprecated.
-     */
-    @SuppressWarnings("deprecation")
-    public static List<DocumentSymbol> flatten(List<Either<SymbolInformation, DocumentSymbol>> raw) {
-        if (raw == null || raw.isEmpty()) return Collections.emptyList();
-        if (raw.getFirst().isRight()) {
-            List<DocumentSymbol> out = new ArrayList<>(raw.size());
-            for (Either<SymbolInformation, DocumentSymbol> e : raw) {
-                if (e != null && e.isRight() && e.getRight() != null) out.add(e.getRight());
-            }
-            return out;
-        }
-        return getDocumentSymbols(raw);
-    }
-
-    private static List<DocumentSymbol> getDocumentSymbols(List<Either<SymbolInformation, DocumentSymbol>> raw) {
-        List<DocumentSymbol> out = new ArrayList<>(raw.size());
-        for (Either<SymbolInformation, DocumentSymbol> e : raw) {
-            if (e == null || !e.isLeft() || e.getLeft() == null) continue;
-            SymbolInformation si = e.getLeft();
-            if (si.getLocation() == null || si.getLocation().getRange() == null) continue;
-            DocumentSymbol ds = new DocumentSymbol(
-                    si.getName() == null ? "" : si.getName(),
-                    si.getKind(),
-                    si.getLocation().getRange(),
-                    si.getLocation().getRange());
-            out.add(ds);
-        }
-        return out;
     }
 
     private static String kindGlyph(SymbolKind kind) {
