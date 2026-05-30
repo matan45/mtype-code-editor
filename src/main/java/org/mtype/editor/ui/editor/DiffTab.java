@@ -246,10 +246,6 @@ public class DiffTab extends Tab {
         String rightSnapshot = right.getText();
         lsp.semanticTokensFull(path).thenAcceptAsync(tokens -> {
             if (closed || tokens == null) return;
-            int count = tokens.getData() == null ? 0 : tokens.getData().size() / 5;
-            if (ctx.getOutputPane() != null) {
-                ctx.getOutputPane().appendLspLog("[diff-sem] tempOpened=" + tempOpened + " got " + count + " tokens");
-            }
             // The server's tokens reflect its current buffer; only apply if the pane still matches it.
             if (!rightSnapshot.equals(right.getText())) return;
             DiffSemanticDecoder.DiffSemantic ds = DiffSemanticDecoder.decode(
