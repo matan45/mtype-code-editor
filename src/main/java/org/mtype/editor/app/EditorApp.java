@@ -53,6 +53,7 @@ import org.mtype.editor.workspace.Workspace;
 import java.io.File;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 
 public class EditorApp extends Application {
@@ -212,6 +213,7 @@ public class EditorApp extends Application {
         WindowResizer.install(stage, scene);
         WindowMaximizer.maximize(stage);
         stage.show();
+        openStartupFileArgument();
     }
 
     private MenuBar buildMenuBar() {
@@ -520,6 +522,36 @@ public class EditorApp extends Application {
         Workspace ws = new Workspace(root);
         ctx.openWorkspace(ws);
         stage.setTitle("mType Editor - " + root.getFileName());
+    }
+
+    private void openStartupFileArgument() {
+        var params = getParameters();
+        if (params == null || params.getRaw().isEmpty()) return;
+
+        String rawPath = params.getRaw().get(0);
+        Path file;
+        try {
+            file = Path.of(rawPath).toAbsolutePath().normalize();
+        } catch (InvalidPathException ex) {
+            ctx.getStatusBar().setMessage("Could not open startup file: " + rawPath);
+            return;
+        }
+
+        if (!Files.isRegularFile(file)) {
+            ctx.getStatusBar().setMessage("Startup path is not a file: " + file);
+            return;
+        }
+
+        Path root = file.getParent();
+        if (root == null) {
+            ctx.getStatusBar().setMessage("Could not resolve startup file folder: " + file);
+            return;
+        }
+
+        ctx.openWorkspace(new Workspace(root));
+        stage.setTitle("mType Editor - " + root.getFileName());
+        ctx.getTabPane().openFile(file);
+        ctx.getStatusBar().setMessage("Opened " + file.getFileName());
     }
 
     private void openNewWindow() {
