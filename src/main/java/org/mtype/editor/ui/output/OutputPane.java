@@ -54,7 +54,16 @@ public class OutputPane extends TabPane {
         debugConsoleArea.setEditable(false);
         debugConsoleArea.getStyleClass().add("mt-output");
 
-        runTab = new Tab("Run", runArea);
+        Button clearRunButton = new Button("Clear");
+        clearRunButton.getStyleClass().add("mt-output-toolbar-button");
+        clearRunButton.setOnAction(_ -> runArea.clear());
+        HBox runToolbar = new HBox(clearRunButton);
+        runToolbar.setAlignment(Pos.CENTER_RIGHT);
+        runToolbar.setPadding(new Insets(4, 6, 4, 6));
+        runToolbar.getStyleClass().add("mt-output-toolbar");
+        BorderPane runContent = new BorderPane(runArea);
+        runContent.setTop(runToolbar);
+        runTab = new Tab("Run", runContent);
         runTab.setClosable(false);
 
         Button clearLspButton = new Button("Clear");
