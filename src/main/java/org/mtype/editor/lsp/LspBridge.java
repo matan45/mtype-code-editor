@@ -105,19 +105,7 @@ public class LspBridge {
         td.setSignatureHelp(new SignatureHelpCapabilities());
         td.setDocumentSymbol(new DocumentSymbolCapabilities());
 
-        SemanticTokensCapabilities stCaps = new SemanticTokensCapabilities(false);
-        SemanticTokensClientCapabilitiesRequests stReq =
-                new SemanticTokensClientCapabilitiesRequests(true);
-        stCaps.setRequests(stReq);
-        stCaps.setTokenTypes(List.of(
-                "namespace", "type", "class", "enum", "interface", "struct",
-                "typeParameter", "parameter", "variable", "property", "enumMember",
-                "event", "function", "method", "macro", "keyword", "modifier",
-                "comment", "string", "number", "regexp", "operator", "decorator"));
-        stCaps.setTokenModifiers(List.of(
-                "declaration", "definition", "readonly", "static", "deprecated",
-                "abstract", "async", "modification", "documentation", "defaultLibrary"));
-        stCaps.setFormats(List.of(TokenFormat.Relative));
+        SemanticTokensCapabilities stCaps = getSemanticTokensCapabilities();
         td.setSemanticTokens(stCaps);
 
         RenameCapabilities rename = new RenameCapabilities();
@@ -160,6 +148,23 @@ public class LspBridge {
                 if (ctx.getTabPane() != null) ctx.getTabPane().syncOpenDocumentsWithLsp();
             });
         });
+    }
+
+    private static SemanticTokensCapabilities getSemanticTokensCapabilities() {
+        SemanticTokensCapabilities stCaps = new SemanticTokensCapabilities(false);
+        SemanticTokensClientCapabilitiesRequests stReq =
+                new SemanticTokensClientCapabilitiesRequests(true);
+        stCaps.setRequests(stReq);
+        stCaps.setTokenTypes(List.of(
+                "namespace", "type", "class", "enum", "interface", "struct",
+                "typeParameter", "parameter", "variable", "property", "enumMember",
+                "event", "function", "method", "macro", "keyword", "modifier",
+                "comment", "string", "number", "regexp", "operator", "decorator"));
+        stCaps.setTokenModifiers(List.of(
+                "declaration", "definition", "readonly", "static", "deprecated",
+                "abstract", "async", "modification", "documentation", "defaultLibrary"));
+        stCaps.setFormats(List.of(TokenFormat.Relative));
+        return stCaps;
     }
 
     @SuppressWarnings("deprecation")
