@@ -339,23 +339,7 @@ public class EditorApp extends Application {
         });
         pkgAdd.disableProperty().bind(noPkg);
 
-        MenuItem pkgRemove = new MenuItem("Remove Package...");
-        pkgRemove.setOnAction(_ -> {
-            Path mtproj = findSingleMtproj();
-            var prompt = Dialogs.prompt(stage, "Remove Package",
-                    mtproj != null ? "Remove package from " + mtproj.getFileName() : "Remove package",
-                    "Package name:", "");
-            prompt.showAndWait().map(String::trim).filter(s -> !s.isEmpty()).ifPresent(name -> {
-                var confirm = Dialogs.confirm(stage, "Remove " + name + "?",
-                        mtproj != null
-                                ? "Remove " + name + " from " + mtproj.getFileName() + " and clean mt_modules?"
-                                : "Remove " + name + " and clean mt_modules?");
-                var result = confirm.showAndWait();
-                if (result.isPresent() && result.get() == javafx.scene.control.ButtonType.OK) {
-                    pc.remove(mtproj, name);
-                }
-            });
-        });
+        MenuItem pkgRemove = getMenuItem(pc);
         pkgRemove.disableProperty().bind(noPkg);
 
         MenuItem pkgList = new MenuItem("List Packages");
@@ -409,6 +393,27 @@ public class EditorApp extends Application {
 
         mb.getMenus().addAll(file, code, pkg, build, view, terminal);
         return mb;
+    }
+
+    private MenuItem getMenuItem(PackageController pc) {
+        MenuItem pkgRemove = new MenuItem("Remove Package...");
+        pkgRemove.setOnAction(_ -> {
+            Path mtproj = findSingleMtproj();
+            var prompt = Dialogs.prompt(stage, "Remove Package",
+                    mtproj != null ? "Remove package from " + mtproj.getFileName() : "Remove package",
+                    "Package name:", "");
+            prompt.showAndWait().map(String::trim).filter(s -> !s.isEmpty()).ifPresent(name -> {
+                var confirm = Dialogs.confirm(stage, "Remove " + name + "?",
+                        mtproj != null
+                                ? "Remove " + name + " from " + mtproj.getFileName() + " and clean mt_modules?"
+                                : "Remove " + name + " and clean mt_modules?");
+                var result = confirm.showAndWait();
+                if (result.isPresent() && result.get() == ButtonType.OK) {
+                    pc.remove(mtproj, name);
+                }
+            });
+        });
+        return pkgRemove;
     }
 
     /** Return the single .mtproj at the workspace root, or null if zero or multiple exist. */
