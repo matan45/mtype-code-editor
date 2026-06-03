@@ -319,6 +319,82 @@ public class EditorTab extends Tab {
         codeArea.getUndoManager().forgetHistory();
     }
 
+    public void reloadFromDiskExternal() {
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater(this::reloadFromDiskExternal);
+            return;
+        }
+
+        String diskText;
+        try {
+            diskText = Files.readString(path, StandardCharsets.UTF_8);
+        } catch (Exception ex) {
+            ctx.getStatusBar().setMessage("Reload failed: " + ex.getMessage());
+            return;
+        }
+
+        if (dirty.get()) {
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
+                    "Reload " + path.getFileName() + " from disk and discard unsaved changes?",
+                    ButtonType.YES, ButtonType.NO);
+            alert.setHeaderText(null);
+            Optional<ButtonType> result = alert.showAndWait();
+            if (result.isEmpty() || result.get() != ButtonType.YES) {
+                ctx.getStatusBar().setMessage("Kept local changes for " + path.getFileName());
+                return;
+            }
+        } else if (diskText.equals(codeArea.getSourceText())) {
+            return;
+        }
+
+        applyExternalText(diskText);
+        ctx.getStatusBar().setMessage("Reloaded " + path.getFileName());
+    }
+
+    public void handleExternalDelete() {
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater(this::handleExternalDelete);
+            return;
+        }
+        if (dirty.get()) {
+            ctx.getStatusBar().setMessage("Backing file deleted; kept unsaved tab " + path.getFileName());
+            return;
+        }
+        if (ctx.getTabPane() != null) ctx.getTabPane().closeByPath(path);
+        ctx.getStatusBar().setMessage("Closed deleted file " + path.getFileName());
+    }
+
+    private void applyExternalText(String text) {
+        folding.unfoldAll();
+        int sourceCaret = codeArea.displayToSource(codeArea.getCaretPosition());
+        double sx = codeArea.estimatedScrollXProperty().getValue();
+        double sy = codeArea.estimatedScrollYProperty().getValue();
+
+        runInternalEdit(() -> {
+            codeArea.replaceText(text == null ? "" : text);
+            int newCaret = Math.min(codeArea.sourceToDisplay(sourceCaret), codeArea.getLength());
+            codeArea.moveTo(newCaret);
+        });
+        codeArea.getUndoManager().forgetHistory();
+        dirty.set(false);
+        setText(path.getFileName().toString());
+
+        compositor.invalidateOverlays();
+        diagnostics.applyDiagnostics(Collections.emptyList());
+        compositor.applyHighlightingNow();
+        sendDidChangeNow();
+        codeLens.schedule();
+        scheduleInlayHintsRefresh();
+        documentSymbols.schedule();
+        documentSymbols.updateBreadcrumb();
+        semanticTokens.schedule();
+
+        Platform.runLater(() -> {
+            codeArea.scrollXToPixel(sx);
+            codeArea.scrollYToPixel(sy);
+        });
+    }
+
     private void markDirty() {
         if (!dirty.get()) {
             dirty.set(true);
@@ -373,6 +449,14 @@ public class EditorTab extends Tab {
         pendingDidChange = BG_EXEC.schedule(() -> {
             if (ctx.getLspBridge() != null) ctx.getLspBridge().didChange(path, snapshot, v);
         }, 200, TimeUnit.MILLISECONDS);
+    }
+
+    private void sendDidChangeNow() {
+        if (!lspManaged) return;
+        if (pendingDidChange != null) pendingDidChange.cancel(false);
+        String snapshot = codeArea.getSourceText();
+        int v = version.incrementAndGet();
+        if (ctx.getLspBridge() != null) ctx.getLspBridge().didChange(path, snapshot, v);
     }
 
     /* ----- inlay hints (request scheduling; rendering lives in InlayHintsController) ----- */

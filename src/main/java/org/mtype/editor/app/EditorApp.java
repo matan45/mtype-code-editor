@@ -104,7 +104,7 @@ public class EditorApp extends Application {
         DebuggerBridge debugger = new DebuggerBridge(ctx, debugEvents, breakpoints);
         ctx.setDebuggerBridge(debugger);
         breakpoints.attachBridge(debugger);
-        DebuggerPanel debuggerPanel = new DebuggerPanel(ctx);
+        DebuggerPanel dp = new DebuggerPanel(ctx);
         ctx.setDebuggerPanel();
 
         output.attachCallHierarchy(ctx);
@@ -151,7 +151,7 @@ public class EditorApp extends Application {
         this.verticalSplit = verticalSplit;
         this.outputPane = output;
 
-        Node sidePanel = buildSidePanel(tree, gitChanges, debuggerPanel);
+        Node sidePanel = buildSidePanel(tree, gitChanges, dp);
 
         SplitPane mainSplit = new SplitPane(sidePanel, verticalSplit);
         mainSplit.setOrientation(Orientation.HORIZONTAL);
@@ -170,7 +170,6 @@ public class EditorApp extends Application {
                 new KeyCodeCombination(KeyCode.S, KeyCombination.SHORTCUT_DOWN),
                 tabPane::saveActive);
 
-        DebuggerPanel dp = debuggerPanel;
         scene.getAccelerators().put(new KeyCodeCombination(KeyCode.F5), dp::onStartOrContinue);
         scene.getAccelerators().put(
                 new KeyCodeCombination(KeyCode.F5, KeyCombination.SHIFT_DOWN),
@@ -528,7 +527,7 @@ public class EditorApp extends Application {
         var params = getParameters();
         if (params == null || params.getRaw().isEmpty()) return;
 
-        String rawPath = params.getRaw().get(0);
+        String rawPath = params.getRaw().getFirst();
         Path file;
         try {
             file = Path.of(rawPath).toAbsolutePath().normalize();
@@ -815,6 +814,7 @@ public class EditorApp extends Application {
         try { if (ctx.getBuildController() != null) ctx.getBuildController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getPackageController() != null) ctx.getPackageController().stop(); } catch (Exception ignored) {}
         try { if (ctx.getTerminalController() != null) ctx.getTerminalController().shutdownAll(); } catch (Exception ignored) {}
+        try { ctx.stopFileWatcher(); } catch (Exception ignored) {}
         try { if (ctx.getTabPane() != null) ctx.getTabPane().closeAll(); } catch (Exception ignored) {}
         try { if (ctx.getLspBridge() != null) ctx.getLspBridge().stop(); } catch (Exception ignored) {}
         try { if (ctx.getFindInFilesWindow() != null) ctx.getFindInFilesWindow().dispose(); } catch (Exception ignored) {}

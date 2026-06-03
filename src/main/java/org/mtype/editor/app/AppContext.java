@@ -19,6 +19,7 @@ import org.mtype.editor.lsp.DiagnosticsBus;
 import org.mtype.editor.ui.search.FindInFilesWindow;
 import org.mtype.editor.ui.tree.WorkspaceTreeView;
 import org.mtype.editor.workspace.Workspace;
+import org.mtype.editor.workspace.WorkspaceFileWatcher;
 import org.mtype.editor.workspace.WorkspaceSettings;
 
 public class AppContext {
@@ -40,6 +41,7 @@ public class AppContext {
     private DebuggerBridge debuggerBridge;
     private DebuggerEventBus debuggerEventBus;
     private BreakpointService breakpointService;
+    private WorkspaceFileWatcher fileWatcher;
     private final ReadOnlyBooleanWrapper hasProjectFile = new ReadOnlyBooleanWrapper(false);
     private final ReadOnlyBooleanWrapper workspaceOpen = new ReadOnlyBooleanWrapper(false);
 
@@ -90,6 +92,7 @@ public class AppContext {
     }
 
     public void openWorkspace(Workspace ws) {
+        stopFileWatcher();
         if (this.workspace != null) {
             try { if (debuggerBridge != null) debuggerBridge.stop(); } catch (Exception ignored) {}
             try { if (breakpointService != null) breakpointService.clearAll(); } catch (Exception ignored) {}
@@ -109,6 +112,19 @@ public class AppContext {
         } catch (Exception ex) {
             statusBar.setLspState("LSP: failed");
             outputPane.appendLspLog("[error] " + ex.getMessage());
+        }
+        try {
+            fileWatcher = new WorkspaceFileWatcher(this, ws);
+        } catch (Exception ex) {
+            statusBar.setMessage("File watcher failed: " + ex.getMessage());
+        }
+    }
+
+    public void stopFileWatcher() {
+        WorkspaceFileWatcher watcher = fileWatcher;
+        fileWatcher = null;
+        if (watcher != null) {
+            try { watcher.close(); } catch (Exception ignored) {}
         }
     }
 }
