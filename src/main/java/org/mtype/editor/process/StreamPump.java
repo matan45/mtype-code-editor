@@ -10,11 +10,21 @@ public class StreamPump implements Runnable {
     private final InputStream in;
     private final Consumer<String> lineSink;
     private final String threadName;
+    private final Runnable onClose;
 
     public StreamPump(InputStream in, Consumer<String> lineSink, String threadName) {
+        this(in, lineSink, threadName, null);
+    }
+
+    /**
+     * @param onClose optional callback invoked once when the stream ends (EOF or
+     *                error). Lets a socket transport detect a host disconnect.
+     */
+    public StreamPump(InputStream in, Consumer<String> lineSink, String threadName, Runnable onClose) {
         this.in = in;
         this.lineSink = lineSink;
         this.threadName = threadName;
+        this.onClose = onClose;
     }
 
     public Thread start() {
@@ -35,6 +45,13 @@ public class StreamPump implements Runnable {
                 }
             }
         } catch (Exception ignored) {
+        } finally {
+            if (onClose != null) {
+                try {
+                    onClose.run();
+                } catch (Exception ignored) {
+                }
+            }
         }
     }
 }

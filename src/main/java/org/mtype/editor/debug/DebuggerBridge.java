@@ -7,6 +7,8 @@ import org.mtype.editor.workspace.Workspace;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,6 +27,8 @@ public class DebuggerBridge {
     private final BreakpointService breakpoints;
 
     private Process process;
+    private Socket socket;
+    private volatile boolean attached;
     private BufferedWriter writer;
     private long session;
     private boolean running;
@@ -90,6 +94,42 @@ public class DebuggerBridge {
         breakpoints.replayTo(this);
     }
 
+    /**
+     * Attach to an already-running mType host over TCP (e.g. the VertexForge
+     * engine started with {@code --debug-port=<n>} or embedding the debug server).
+     * The same line protocol is used; program output arrives as OUTPUT messages.
+     * <p>
+     * Detach semantics: {@link #stop()} only closes our socket — the host keeps running.
+     */
+    public synchronized void attach(String host, int port) throws IOException {
+        stop();
+        long startSession = ++session;
+        lastFile = null;
+        ctx.getOutputPane().appendDebugConsole("$ attach " + host + ":" + port, "console");
+
+        Socket s = new Socket();
+        try {
+            s.connect(new InetSocketAddress(host, port), 10_000);
+        } catch (IOException e) {
+            try { s.close(); } catch (Exception ignored) {}
+            throw new IOException("Attach to " + host + ":" + port + " failed: " + e.getMessage(), e);
+        }
+        socket = s;
+        attached = true;
+        writer = new BufferedWriter(new OutputStreamWriter(s.getOutputStream(), StandardCharsets.UTF_8));
+        running = true;
+        setState(DebuggerEventBus.State.RUNNING);
+
+        new StreamPump(s.getInputStream(),
+                line -> handleProtocolLine(startSession, line),
+                "mtype-dbg-attach",
+                () -> onTransportClosed(startSession)).start();
+
+        // Replay breakpoints first; the host applies them before our entry CONTINUE
+        // (see handleProtocolLine STOPPED/entry) since the socket preserves order.
+        breakpoints.replayTo(this);
+    }
+
     public synchronized void stop() {
         session++;
         running = false;
@@ -100,25 +140,41 @@ public class DebuggerBridge {
             pendingExpandRefs.clear();
         }
         Process p = process;
+        Socket s = socket;
+        boolean wasAttached = attached;
         BufferedWriter w = writer;
         process = null;
+        socket = null;
+        attached = false;
         writer = null;
-        if (w != null) {
-            try {
-                writeRaw(w, "STOP");
-            } catch (Exception ignored) {
+
+        if (wasAttached) {
+            // Detach only: close our socket without sending STOP, so the host
+            // (the engine) keeps running after the debugger disconnects.
+            if (w != null) {
+                try { w.close(); } catch (Exception ignored) {}
             }
-            try {
-                w.close();
-            } catch (Exception ignored) {
+            if (s != null) {
+                try { s.close(); } catch (Exception ignored) {}
             }
-        }
-        if (p != null) {
-            try {
-                p.destroy();
-                if (!p.waitFor(1, TimeUnit.SECONDS)) p.destroyForcibly();
-            } catch (Exception ignored) {
-                p.destroyForcibly();
+        } else {
+            if (w != null) {
+                try {
+                    writeRaw(w, "STOP");
+                } catch (Exception ignored) {
+                }
+                try {
+                    w.close();
+                } catch (Exception ignored) {
+                }
+            }
+            if (p != null) {
+                try {
+                    p.destroy();
+                    if (!p.waitFor(1, TimeUnit.SECONDS)) p.destroyForcibly();
+                } catch (Exception ignored) {
+                    p.destroyForcibly();
+                }
             }
         }
         if (state != DebuggerEventBus.State.IDLE && state != DebuggerEventBus.State.TERMINATED) {
@@ -127,6 +183,20 @@ public class DebuggerBridge {
         } else {
             setState(DebuggerEventBus.State.IDLE);
         }
+    }
+
+    /** Fired when the socket transport ends (host closed the connection). */
+    private void onTransportClosed(long startSession) {
+        boolean fire = false;
+        synchronized (this) {
+            if (startSession != session) return;
+            running = false;
+            if (state != DebuggerEventBus.State.TERMINATED && state != DebuggerEventBus.State.IDLE) {
+                setState(DebuggerEventBus.State.TERMINATED);
+                fire = true;
+            }
+        }
+        if (fire) events.fireTerminated();
     }
 
     /* ============================== commands ============================== */
@@ -252,6 +322,13 @@ public class DebuggerBridge {
                 int line1 = msg.getInt("line", 0);
                 String reason = msg.get("reason", "unknown");
                 String message = msg.get("message", "");
+                // On attach, the host pauses at entry as soon as we connect. Resume
+                // it now that breakpoints are replayed, and don't surface the pause —
+                // breakpoints will stop it where the user actually wants.
+                if (attached && "entry".equals(reason)) {
+                    cont();
+                    return;
+                }
                 synchronized (this) {
                     setState(DebuggerEventBus.State.PAUSED);
                 }

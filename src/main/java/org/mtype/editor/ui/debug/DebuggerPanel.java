@@ -14,6 +14,7 @@ import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TitledPane;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
@@ -55,6 +56,7 @@ public class DebuggerPanel extends VBox {
     private final Button stepIntoBtn = new Button();
     private final Button stepOutBtn = new Button();
     private final Button restartBtn = new Button();
+    private final Button attachBtn = new Button("Attach");
     private final Label statusLabel = new Label("Idle");
     private final StringProperty statusText = new SimpleStringProperty("Idle");
 
@@ -100,12 +102,17 @@ public class DebuggerPanel extends VBox {
         configToolbarButton(stepOutBtn, DebuggerIcons.stepOutIcon(), "Step Out (Shift+F11)");
         configToolbarButton(restartBtn, DebuggerIcons.restartIcon(), "Restart");
 
+        attachBtn.setContentDisplay(ContentDisplay.TEXT_ONLY);
+        attachBtn.setTooltip(new Tooltip("Attach to a running mType debug host over TCP"));
+        attachBtn.getStyleClass().add("mt-debug-toolbar-button");
+
         startContinueBtn.setOnAction(_ -> onStartOrContinue());
         stopBtn.setOnAction(_ -> bridge.stop());
         stepOverBtn.setOnAction(_ -> bridge.stepOver());
         stepIntoBtn.setOnAction(_ -> bridge.stepInto());
         stepOutBtn.setOnAction(_ -> bridge.stepOut());
         restartBtn.setOnAction(_ -> onRestart());
+        attachBtn.setOnAction(_ -> onAttach());
 
         statusLabel.textProperty().bind(statusText);
         statusLabel.getStyleClass().add("mt-debug-status");
@@ -114,7 +121,7 @@ public class DebuggerPanel extends VBox {
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         HBox toolbar = new HBox(4, startContinueBtn, stepOverBtn, stepIntoBtn,
-                stepOutBtn, restartBtn, stopBtn, spacer, statusLabel);
+                stepOutBtn, restartBtn, stopBtn, attachBtn, spacer, statusLabel);
         toolbar.setAlignment(Pos.CENTER_LEFT);
         toolbar.setPadding(new Insets(6, 8, 6, 8));
         toolbar.getStyleClass().add("mt-debug-toolbar");
@@ -160,6 +167,42 @@ public class DebuggerPanel extends VBox {
             bridge.start(last);
         } catch (Exception ex) {
             statusText.set("Restart failed: " + ex.getMessage());
+        }
+    }
+
+    public void onAttach() {
+        TextInputDialog dlg = new TextInputDialog("localhost:5005");
+        dlg.setTitle("Attach to mType Debug Host");
+        dlg.setHeaderText("Connect to a running mType host (e.g. VertexForge started with --debug-port)");
+        dlg.setContentText("host:port");
+        var result = dlg.showAndWait();
+        if (result.isEmpty()) return;
+        String addr = result.get().trim();
+        if (addr.isEmpty()) return;
+
+        String host = "localhost";
+        int port;
+        int colon = addr.lastIndexOf(':');
+        try {
+            if (colon >= 0) {
+                String h = addr.substring(0, colon).trim();
+                if (!h.isEmpty()) host = h;
+                port = Integer.parseInt(addr.substring(colon + 1).trim());
+            } else {
+                port = Integer.parseInt(addr);
+            }
+        } catch (NumberFormatException ex) {
+            statusText.set("Invalid address: " + addr);
+            return;
+        }
+
+        try {
+            ctx.getOutputPane().clearDebugConsole();
+            ctx.getOutputPane().focusDebugConsole();
+            bridge.attach(host, port);
+        } catch (Exception ex) {
+            statusText.set("Attach failed: " + ex.getMessage());
+            ctx.getOutputPane().appendDebugConsole("[error] " + ex.getMessage(), "stderr");
         }
     }
 
@@ -304,6 +347,7 @@ public class DebuggerPanel extends VBox {
         boolean live = next == DebuggerEventBus.State.RUNNING || next == DebuggerEventBus.State.PAUSED;
         boolean paused = next == DebuggerEventBus.State.PAUSED;
         startContinueBtn.setDisable(next == DebuggerEventBus.State.RUNNING);
+        attachBtn.setDisable(live);
         stopBtn.setDisable(!live);
         stepOverBtn.setDisable(!paused);
         stepIntoBtn.setDisable(!paused);
