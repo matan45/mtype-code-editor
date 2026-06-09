@@ -14,7 +14,6 @@ import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.TextField;
-import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TitledPane;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
@@ -25,12 +24,14 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.stage.Window;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.debug.BreakpointService;
 import org.mtype.editor.debug.DebuggerBridge;
 import org.mtype.editor.debug.DebuggerEventBus;
 import org.mtype.editor.debug.Frame;
 import org.mtype.editor.debug.Variable;
+import org.mtype.editor.ui.dialogs.Dialogs;
 
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -171,10 +172,10 @@ public class DebuggerPanel extends VBox {
     }
 
     public void onAttach() {
-        TextInputDialog dlg = new TextInputDialog("localhost:5005");
-        dlg.setTitle("Attach to mType Debug Host");
-        dlg.setHeaderText("Connect to a running mType host (e.g. VertexForge started with --debug-port)");
-        dlg.setContentText("host:port");
+        Window owner = getScene() != null ? getScene().getWindow() : null;
+        var dlg = Dialogs.prompt(owner, "Attach to mType Debug Host",
+                "Connect to a running mType host (e.g. VertexForge started with --debug-port)",
+                "host:port", "localhost:5005");
         var result = dlg.showAndWait();
         if (result.isEmpty()) return;
         String addr = result.get().trim();
