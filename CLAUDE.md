@@ -16,8 +16,11 @@ Defaults for these paths live in `WorkspaceSettings.Toolchain.defaults()`. An `M
 
 ```powershell
 mvn clean compile                # build, no tests
+mvn test                         # headless JUnit tests (pure logic only: no JavaFX toolkit needed)
 mvn javafx:run                   # launch via the javafx-maven-plugin
 ```
+
+Tests live in `src/test/java` and must not construct JavaFX controls (`MTypeCodeArea` etc. need a running toolkit). Keep testable logic in pure helpers — e.g. `lsp/SourceEdits`, `ui/editor/FoldRegions`. CI still builds with `-DskipTests`.
 
 **IntelliJ run config**: main class must be `org.mtype.editor.app.Launcher` — **not** `EditorApp`. The JVM main launcher rejects classes extending `javafx.application.Application` when JavaFX is on the classpath (which is how Maven resolves it), so `Launcher` is a trivial non-`Application` shim that calls `EditorApp.main()`.
 
@@ -49,6 +52,10 @@ LSP features wired today: `initialize/initialized`, `textDocument/{didOpen,didCh
 
 `Positions.offset(text, line, char)` is the **only** correct LSP↔CodeArea position converter. `LspEdits.applyToCodeArea` / `applyWorkspaceEdit` are the **only** places that mutate documents from server responses; they sort edits descending by offset so earlier positions stay valid. WorkspaceEdits modify open tabs via `CodeArea.replaceText`; closed files are read+rewritten on disk.
 
+Edits are first shrunk by `SourceEdits.minimize`, which trims each edit to the spans that change and splits it per line when the line structure is unchanged. The mType formatter answers with ONE whole-document edit; applied verbatim, it would reset every paragraph style (folds, code-lens padding, execution line). `applyToCodeArea` returns the number of edits applied; 0 means nothing changed, so skip re-highlighting and report "No formatting changes".
+
+`replaceText` always moves the caret to the end of what it inserted (`GenericStyledArea.replace` calls `selectRange`). So `applyToCodeArea` maps the caret through the applied edits (`SourceEdits.mapOffset`) and moves it back to the same code.
+
 ### Diagnostics flow (one bus, many subscribers)
 
 `DiagnosticsBus` on `AppContext` is the single source of truth. `MTypeLanguageClient.publishDiagnostics` forwards each push to the bus, then the bus broadcasts to all subscribers on the FX thread. Subscribers:
@@ -60,7 +67,33 @@ LSP features wired today: `initialize/initialized`, `textDocument/{didOpen,didCh
 
 ### Document model & version drift
 
-Every `EditorTab` owns a monotonically increasing `AtomicInteger version` per the LSP spec. `scheduleDidChange()` debounces 200 ms and calls `version.incrementAndGet()` — versions sent to the server must strictly increase per document or the server will reject the change. `openedLspSession` on the tab tracks which LSP session opened it; `onLspReady()` re-sends `didOpen` only if the session changed (e.g., after an LSP restart).
+Every `EditorTab` owns a monotonically increasing `AtomicInteger version` per the LSP spec.
+- **Versions:** `scheduleDidChange()` bumps it on every edit, so a response can be checked against `getVersion()` to detect that the text changed meanwhile (e.g. `DocumentSymbolController`). Versions sent to the server always increase.
+- **didChange timing:** the debounced didChange (200 ms) hops to the FX thread and goes through `flushPendingDidChange()`, which reads the text at **send** time.
+- **Ordering:** lsp4j writes on the caller's thread, so FX-thread didChange and FX-thread requests reach the server in order. This matters because the mType server has **no version guard**: `DocumentManager::updateDocument` keeps the last didChange it reads. Never send didChange from a background thread.
+- **`flushPendingDidChange()`** (package-private) sends the pending change now. If this tab isn't open in the current LSP session, it sends didOpen instead. It does nothing when nothing is pending or the LSP isn't ready.
+- **Save / Format / Rename** call it before their request. Rename flushes **all** open tabs, because its WorkspaceEdit rewrites them too. They then drop the response if the source text changed while it was in flight. Save then writes the current text unformatted.
+- `openedLspSession` on the tab tracks which LSP session opened it; `onLspReady()` re-sends `didOpen` only if the session changed (e.g., after an LSP restart).
+
+### Code folding (visual-only)
+
+Folding NEVER edits the text. It hides paragraphs with RichTextFX's built-in paragraph folding (protected on `GenericStyledArea`, wrapped by `MTypeCodeArea.foldLines` / `unfoldRunAfter`). Folded lines carry the paragraph style class `collapse`, which RichTextFX's bundled `styled-text-area.css` hides.
+
+The language server, the disk, undo, line numbers, breakpoints and diagnostics therefore always see the real source, and paragraph index == source line. MYT-444 was the text-edit version of folding sending its `" … }"` placeholder to the LSP and writing it to disk.
+
+- **Model.** A fold is a visible header paragraph followed by a maximal run of `collapse` paragraphs; the state moves with the text.
+  - Regions come from documentSymbol via `FoldRegions.compute`. The header is the first line containing `{`.
+  - VS Code style: a closing line starting with `}` stays visible.
+  - The folded look lives in the gutter (`mt-gutter-fold-arrow-folded`, `mt-lineno-folded`), not on the header text.
+- **Paragraph style classes are shared state** (`collapse`, `mt-code-lens-paragraph`, `mt-execution-line`). Use `MTypeCodeArea.updateParagraphClasses`; never `setParagraphStyle` with a fresh collection.
+- **Inserted text gets the INITIAL (empty) paragraph style** (`setUseInitialStyleForInsertion(true)`), so an insert at column 0 of a hidden line un-hides it. Inlay hints therefore go through `insertHint`, which keeps the paragraph style.
+- **`CodeFoldingController` keeps folds honest:**
+  - **M1:** an edit touching a hidden line, or adding/removing a line break right above one, opens that fold.
+  - **M2:** the caret never rests in hidden text.
+  - Both run deferred via `Platform.runLater`. Never change paragraph styles inside a `richChanges()` handler.
+- **M3: navigate with `EditorTab.revealPosition` / `revealLine`.** They unfold first; a raw `moveTo` into a fold is pushed out of it by RichTextFX.
+- **Undo is plain-text** (`UndoUtils.plainTextUndoManager`). The default rich manager would record every highlighting / fold style change as an undo step.
+- **Gutter.** `GutterFactory` returns `null` for hidden rows: zero-height rows aren't clipped, so their graphics would overlap. Call `refreshGutter` after fold/unfold so hidden rows re-query the factory.
 
 ### Syntax highlighting (`org.mtype.editor.syntax`)
 
@@ -92,7 +125,7 @@ Changing `diagnosticsByLine` or `codeLensByParagraph` calls `codeArea.setParagra
 ### Threading rules
 
 - **FX thread only**: scene-graph mutation, `setStyleSpans`, `ContextMenu`/`Tooltip` show, tab manipulation, button enable/disable.
-- **`BG_EXEC` (static 2-thread scheduled pool in `EditorTab`)**: debounced tokenize, debounced `didChange`, debounced completion request, debounced code-lens refresh. Each task hops back via `Platform.runLater` before touching UI.
+- **`BG_EXEC` (static 2-thread scheduled pool in `EditorTab`)**: debounced tokenize, debounced `didChange`, debounced completion request, debounced code-lens refresh. Each task hops back via `Platform.runLater` before touching UI. The `didChange` task hops back too and is *sent* from the FX thread, which keeps it ordered with requests (see "Document model & version drift").
 - **`StreamPump`** (daemon threads, one per stdout/stderr): pumps child-process output line-by-line. **Must drain unconditionally** — failing to read either pipe deadlocks the child on a full buffer.
 - **Process shutdown order**: stop tokenizer/exec tasks → LSP `shutdown`/`exit` → kill run process → `Platform.exit()`.
 - Never `Future.get()` on the FX thread; use `process.onExit()` not `waitFor()`.

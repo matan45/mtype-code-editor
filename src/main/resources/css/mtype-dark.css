@@ -1201,6 +1201,11 @@
 .mt-gutter-fold-spacer {
     -fx-pref-width: 14; -fx-min-width: 14; -fx-max-width: 14;
 }
+/* Folded header. Folding is visual-only (the body's paragraphs are hidden, the text is untouched), so
+   the folded look lives in the gutter: accent arrow + line number. Same specificity as
+   ".paragraph-box:has-caret .lineno" and declared later, so it also wins on the caret line. */
+.paragraph-box .mt-gutter-fold-arrow.mt-gutter-fold-arrow-folded { -fx-text-fill: #61afef; }
+.paragraph-box .lineno.mt-lineno-folded { -fx-text-fill: #61afef; }
 
 /* Current-line highlight — applied via codeArea.setParagraphStyle */
 .code-area .paragraph-box .paragraph-text.mt-execution-line,

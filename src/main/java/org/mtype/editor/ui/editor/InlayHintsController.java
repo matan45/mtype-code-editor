@@ -6,7 +6,6 @@ import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.mtype.editor.lsp.Positions;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
@@ -71,12 +70,11 @@ final class InlayHintsController {
             if (offset < 0 || offset > text.length()) continue;
             inserts.add(new Insertion(offset, new InlayHintSeg(paddedText(hint, label), hint.getKind())));
         }
-        // Insert descending so earlier offsets stay valid as the document grows.
+        // Insert descending so earlier offsets stay valid as the document grows. insertHint keeps the
+        // paragraph's style, so a hint in column 0 of a folded line doesn't un-hide it.
         inserts.sort(Comparator.comparingInt(Insertion::offset).reversed());
         for (Insertion ins : inserts) {
-            area.insert(ins.offset(),
-                    org.reactfx.util.Either.right(ins.seg()),
-                    Collections.emptyList());
+            area.insertHint(ins.offset(), ins.seg());
         }
     }
 

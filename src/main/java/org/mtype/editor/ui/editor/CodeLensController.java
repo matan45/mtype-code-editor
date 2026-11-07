@@ -23,7 +23,6 @@ import org.mtype.editor.lsp.LspBridge;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -34,11 +33,12 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Code-lens rows (debounced fetch) shown above signatures in the gutter, plus the references popup
- * menu opened when a lens is clicked. Owns the lens-by-paragraph map and the set of paragraphs styled
- * with extra top padding; both are consulted by {@link GutterFactory} and {@link EditorTab}'s
- * execution-line styling.
+ * menu opened when a lens is clicked. Owns the lens-by-paragraph map (consulted by {@link GutterFactory})
+ * and the set of paragraphs given the extra top-padding class, which it adds/removes merge-safely.
  */
 final class CodeLensController {
+    private static final String LENS_PARAGRAPH_CLASS = "mt-code-lens-paragraph";
+
     private final MTypeCodeArea codeArea;
     private final Path path;
     private final AppContext ctx;
@@ -66,10 +66,6 @@ final class CodeLensController {
     String lensTitleAt(int paragraphIndex) {
         CodeLensLine lens = codeLensByParagraph.get(paragraphIndex);
         return lens == null ? null : lens.title();
-    }
-
-    boolean isCodeLensParagraph(int line) {
-        return codeLensParagraphStyles.contains(line);
     }
 
     /** Resolve and display the references popup for the lens on this paragraph, anchored at {@code anchor}. */
@@ -118,16 +114,20 @@ final class CodeLensController {
         gutterRefresh.run();
     }
 
+    /**
+     * Add/remove only the lens padding class: paragraph style classes are shared with folds (collapse)
+     * and the debugger execution line, so the whole collection must never be replaced.
+     */
     private void updateCodeLensParagraphStyles(Set<Integer> nextLines) {
         for (Integer line : new HashSet<>(codeLensParagraphStyles)) {
-            if (!nextLines.contains(line) && line >= 0 && line < codeArea.getParagraphs().size()) {
-                codeArea.setParagraphStyle(line, Collections.emptyList());
+            if (!nextLines.contains(line)) {
+                codeArea.updateParagraphClasses(line, null, LENS_PARAGRAPH_CLASS);
                 codeLensParagraphStyles.remove(line);
             }
         }
         for (Integer line : nextLines) {
             if (line >= 0 && line < codeArea.getParagraphs().size() && codeLensParagraphStyles.add(line)) {
-                codeArea.setParagraphStyle(line, Collections.singletonList("mt-code-lens-paragraph"));
+                codeArea.updateParagraphClasses(line, LENS_PARAGRAPH_CLASS, null);
             }
         }
     }

@@ -14,7 +14,9 @@ import org.mtype.editor.ui.dialogs.Dialogs;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -30,18 +32,22 @@ final class EditorCommands {
     private final boolean lspManaged;
     private final StyleCompositor compositor;
     private final SemanticTokensController semanticTokens;
+    /** Sends this tab's pending didChange now ({@link EditorTab#flushPendingDidChange()}). */
+    private final Runnable flushDidChange;
 
     private Menu quickFixMenu;
     private int quickFixRequestSerial;
 
     EditorCommands(MTypeCodeArea codeArea, Path path, AppContext ctx, boolean lspManaged,
-                   StyleCompositor compositor, SemanticTokensController semanticTokens) {
+                   StyleCompositor compositor, SemanticTokensController semanticTokens,
+                   Runnable flushDidChange) {
         this.codeArea = codeArea;
         this.path = path;
         this.ctx = ctx;
         this.lspManaged = lspManaged;
         this.compositor = compositor;
         this.semanticTokens = semanticTokens;
+        this.flushDidChange = flushDidChange;
     }
 
     /* ----- commands ----- */
@@ -53,17 +59,24 @@ final class EditorCommands {
             ctx.getStatusBar().setMessage("LSP not ready");
             return;
         }
+        // Put the current text on the wire before the request, and drop the response if the text
+        // changes while it is in flight (its edits would describe an older document).
+        flushDidChange.run();
+        String requested = codeArea.getSourceText();
         lsp.format(path, 4, true).thenAcceptAsync(edits -> {
-            boolean hadChanges = edits != null && !edits.isEmpty();
-            if (hadChanges) {
-                LspEdits.applyToCodeArea(codeArea, edits);
+            if (!requested.equals(codeArea.getSourceText())) {
+                ctx.getStatusBar().setMessage("Document changed; format skipped");
+                return;
             }
-            // RichTextFX clears styles in replaced ranges, and any cached diagnostic spans
-            // reference old offsets — so always re-tokenize before showing the result.
-            compositor.invalidateOverlays();
-            compositor.applyHighlightingNow();
-            semanticTokens.schedule();
-            ctx.getStatusBar().setMessage(hadChanges
+            int applied = LspEdits.applyToCodeArea(codeArea, edits);
+            if (applied > 0) {
+                // RichTextFX clears styles in replaced ranges, and any cached diagnostic spans
+                // reference old offsets — so re-tokenize before showing the result.
+                compositor.invalidateOverlays();
+                compositor.applyHighlightingNow();
+                semanticTokens.schedule();
+            }
+            ctx.getStatusBar().setMessage(applied > 0
                     ? "Formatted " + path.getFileName()
                     : "No formatting changes");
         }, Platform::runLater);
@@ -134,6 +147,10 @@ final class EditorCommands {
         int line = lc[0];
         int col = lc[1];
 
+        // The resulting WorkspaceEdit also rewrites OTHER open tabs from the server's copies, so every
+        // open tab must have its pending changes on the wire, not just this one.
+        flushAllOpenTabs();
+        Map<EditorTab, String> snapshot = snapshotOpenTabs();
         lsp.prepareRename(path, line, col).thenAcceptAsync(info -> {
             String placeholder = info != null && info.placeholder() != null
                     ? info.placeholder() : Words.wordAroundCaret(codeArea);
@@ -158,9 +175,20 @@ final class EditorCommands {
             String newName = result.get().trim();
             if (newName.isEmpty() || newName.equals(placeholder)) return;
 
+            // The dialog keeps the FX event loop running, so documents may have changed under it
+            // (e.g. an external reload): (line, col) and the server's copies would then be stale.
+            flushAllOpenTabs();
+            if (!unchanged(snapshot)) {
+                ctx.getStatusBar().setMessage("Rename cancelled: a document changed");
+                return;
+            }
             lsp.rename(path, line, col, newName).thenAcceptAsync(edit -> {
                 if (edit == null) {
                     ctx.getStatusBar().setMessage("Rename returned no edit");
+                    return;
+                }
+                if (!unchanged(snapshot)) {
+                    ctx.getStatusBar().setMessage("Rename cancelled: a document changed during rename");
                     return;
                 }
                 int files = LspEdits.applyWorkspaceEdit(ctx, edit);
@@ -170,6 +198,33 @@ final class EditorCommands {
                 ctx.getStatusBar().setMessage("Renamed in " + files + " file(s)");
             }, Platform::runLater);
         }, Platform::runLater);
+    }
+
+    /** Send every open tab's pending didChange (this tab included) so the server holds the current text. */
+    private void flushAllOpenTabs() {
+        if (ctx.getTabPane() == null) {
+            flushDidChange.run();
+            return;
+        }
+        for (EditorTab t : ctx.getTabPane().openTabs()) t.flushPendingDidChange();
+    }
+
+    /** Source text of every open tab (this one included), to detect edits while a request is in flight. */
+    private Map<EditorTab, String> snapshotOpenTabs() {
+        Map<EditorTab, String> texts = new HashMap<>();
+        if (ctx.getTabPane() != null) {
+            for (EditorTab t : ctx.getTabPane().openTabs()) texts.put(t, t.getCodeArea().getSourceText());
+        }
+        if (texts.isEmpty()) texts.put(null, codeArea.getSourceText());
+        return texts;
+    }
+
+    private boolean unchanged(Map<EditorTab, String> snapshot) {
+        for (Map.Entry<EditorTab, String> e : snapshot.entrySet()) {
+            MTypeCodeArea area = e.getKey() == null ? codeArea : e.getKey().getCodeArea();
+            if (!area.getSourceText().equals(e.getValue())) return false;
+        }
+        return true;
     }
 
     /* ----- context menu + quick fix ----- */

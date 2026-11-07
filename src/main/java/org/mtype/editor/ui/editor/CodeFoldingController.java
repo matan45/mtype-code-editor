@@ -2,229 +2,187 @@ package org.mtype.editor.ui.editor;
 
 import javafx.application.Platform;
 import org.eclipse.lsp4j.DocumentSymbol;
-import org.eclipse.lsp4j.Range;
-import org.eclipse.lsp4j.SymbolKind;
-import org.fxmisc.richtext.model.StyledDocument;
-import org.mtype.editor.lsp.Positions;
+import org.fxmisc.richtext.model.Paragraph;
+import org.fxmisc.richtext.model.RichTextChange;
+import org.fxmisc.richtext.model.TwoDimensional;
 import org.reactfx.util.Either;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Function/method/constructor body folding driven by document symbols.
+ * Function/method/constructor body folding driven by document symbols. Folding is VISUAL ONLY.
  *
- * <p>Folding is tricky because both folds <i>and</i> inlay-hint segments shift display offsets, so a
- * region tracks both its ORIGINAL (source) line numbers and its CURRENT (display) line numbers. Folded
- * bodies are stashed as a rich {@link StyledDocument} (not plain text) so embedded inlay-hint segments
- * survive the fold/unfold round-trip. All document mutations go through
- * {@link EditorTab#runInternalEdit(Runnable)} to suppress LSP/dirty reactions, after which highlighting
- * and overlays are rebuilt for the new offsets.
+ * <p>A fold hides paragraphs through RichTextFX's built-in paragraph folding (the
+ * {@link MTypeCodeArea#COLLAPSE} paragraph style class): the document text is never modified, so the
+ * language server, the file on disk, undo, line numbers, breakpoints and diagnostics always see the real
+ * source (MYT-444). A fold is a visible paragraph (its header) followed by a maximal run of collapsed
+ * paragraphs; that state lives in the paragraph styles and moves with the text when lines are inserted
+ * or deleted. VS Code style: the header and the closing-brace line stay visible, only the body is hidden.
+ * Unfolding an outer fold also unfolds folds nested in it.
+ *
+ * <p>Maintenance rules, which keep the user's text from ever disappearing into a fold:
+ * <ul>
+ *   <li><b>M1 (touch):</b> an edit that touches a hidden line, or adds/removes a line break directly above
+ *       one, opens that fold (see {@link FoldRegions#touchesFold}). Without it, Backspace at column 0 under
+ *       a fold would merge the line into the hidden text, and Enter on a folded header would leave the
+ *       fold detached from its header.</li>
+ *   <li><b>M2 (caret):</b> the caret never rests in hidden text; the fold containing it is opened (e.g.
+ *       Ctrl+End into a folded last line, where RichTextFX's own caret skip gives up).</li>
+ *   <li><b>M3 (navigation):</b> {@link EditorTab#revealPosition} / {@link EditorTab#revealLine} open the
+ *       target's fold first; RichTextFX would otherwise push a {@code moveTo} out of the fold.</li>
+ * </ul>
+ * M1/M2 unfolds run in one deferred {@code Platform.runLater}: changing paragraph styles while RichTextFX
+ * is still dispatching the change would interleave with its caret and undo bookkeeping.
  */
 final class CodeFoldingController {
-    private static final String FOLD_PLACEHOLDER = " … }";
-
-    private final MTypeCodeArea codeArea;
+    private final MTypeCodeArea area;
     private final EditorTab tab;
-    private final StyleCompositor compositor;
-    private final SemanticTokensController semanticTokens;
     private final Runnable gutterRefresh;
 
-    private List<DocumentSymbol> documentSymbols = Collections.emptyList();
-    private final Map<Integer, FoldRegion> foldableByCurrentLine = new java.util.HashMap<>();
-    private final Map<Integer, FoldedRegion> foldedByOriginalLine = new LinkedHashMap<>();
+    /** Foldable regions from the last document symbols, keyed by header line. */
+    private Map<Integer, FoldRegions.Region> regions = Collections.emptyMap();
+    /** {@link EditorTab#getVersion()} the regions were computed for; folding is refused when stale. */
+    private int regionsVersion = Integer.MIN_VALUE;
 
-    private record FoldRegion(int currentSigLine, int currentOpenBraceLine, int openBracePos, int currentEndLine,
-                              int currentEndLineLen, int originalSigLine, int originalOpenBraceLine, int originalEndLine) {}
-    private record FoldedRegion(int originalSigLine, int originalOpenBraceLine, int originalEndLine,
-                                StyledDocument<Collection<String>, Either<String, InlayHintSeg>, Collection<String>> stashedDoc) {}
+    /** Paragraph windows [from, to] whose folds M1 must open, applied by {@link #reconcile()}. */
+    private final List<int[]> pendingWindows = new ArrayList<>();
+    private boolean reconcileQueued;
 
-    CodeFoldingController(MTypeCodeArea codeArea, EditorTab tab, StyleCompositor compositor,
-                          SemanticTokensController semanticTokens, Runnable gutterRefresh) {
-        this.codeArea = codeArea;
+    CodeFoldingController(MTypeCodeArea area, EditorTab tab, Runnable gutterRefresh) {
+        this.area = area;
         this.tab = tab;
-        this.compositor = compositor;
-        this.semanticTokens = semanticTokens;
         this.gutterRefresh = gutterRefresh;
+        area.richChanges().subscribe(this::onChange);
+        area.currentParagraphProperty().addListener((_, _, _) -> queueReconcile());
     }
 
     void setDocumentSymbols(List<DocumentSymbol> symbols) {
-        this.documentSymbols = symbols == null ? Collections.emptyList() : symbols;
-        rebuildFoldableRegions();
+        // Only the ▼ arrows come from symbols. Existing folds are NOT reconciled against them: symbols
+        // computed while the file has a parse error can be partial and would open everything.
+        regions = FoldRegions.compute(symbols, area.getParagraphs().size(), area::getText);
+        regionsVersion = tab.getVersion();
+        gutterRefresh.run();
     }
 
     /* ----- gutter queries ----- */
 
-    boolean isFoldable(int currentLine) {
-        return foldableByCurrentLine.containsKey(currentLine);
+    /** Whether paragraph {@code p} is hidden by a fold (the gutter draws nothing for it). */
+    boolean isHidden(int p) {
+        return area.isParagraphFolded(p);
     }
 
-    boolean isFoldedAt(int currentLine) {
-        FoldRegion fr = foldableByCurrentLine.get(currentLine);
-        return fr != null && foldedByOriginalLine.containsKey(fr.originalSigLine());
+    /** Whether {@code p} is the visible header of a fold (gutter ▶). */
+    boolean isFoldedAt(int p) {
+        return p >= 0 && !isHidden(p) && isHidden(p + 1);
     }
 
-    void toggleFoldAt(int currentLine) {
-        FoldRegion fr = foldableByCurrentLine.get(currentLine);
-        if (fr != null) toggleFold(fr.originalSigLine());
+    /** Whether the gutter shows a fold arrow on {@code p}: ▶ for a fold, ▼ for a foldable region. */
+    boolean isFoldable(int p) {
+        return isFoldedAt(p) || regions.containsKey(p);
     }
 
-    /* ----- region computation ----- */
-
-    private void rebuildFoldableRegions() {
-        foldableByCurrentLine.clear();
-        if (documentSymbols == null || documentSymbols.isEmpty()) {
-            gutterRefresh.run();
+    void toggleFoldAt(int p) {
+        if (isFoldedAt(p)) {
+            unfold(p);
             return;
         }
-        List<int[]> raw = new ArrayList<>();
-        collectFoldable(documentSymbols, raw);
-        if (raw.isEmpty()) {
-            gutterRefresh.run();
-            return;
+        FoldRegions.Region r = regions.get(p);
+        // Regions from an older text would hide the wrong lines; the next symbol refresh brings fresh ones.
+        if (r == null || regionsVersion != tab.getVersion()) return;
+        if (r.lastHidden() >= area.getParagraphs().size() || isHidden(r.header())) return;
+        int caret = area.getCaretPosition();
+        int anchor = area.getAnchor();
+        int bodyStart = area.getAbsolutePosition(r.header() + 1, 0);
+        int bodyEnd = area.getAbsolutePosition(r.lastHidden(), area.getParagraphLength(r.lastHidden()));
+        area.foldLines(r.header(), r.lastHidden());
+        if (within(caret, bodyStart, bodyEnd) || within(anchor, bodyStart, bodyEnd)) {
+            area.moveTo(r.header(), area.getParagraphLength(r.header()));
+        } else {
+            area.selectRange(anchor, caret);
         }
-        // For each currently-folded region, how many lines it absorbed from the original.
-        // Walk in ascending origSigLine order — that's how LinkedHashMap iterates if we
-        // inserted in order, but we re-sort to be safe.
-        List<FoldedRegion> activeFolds = new ArrayList<>(foldedByOriginalLine.values());
-        activeFolds.sort(Comparator.comparingInt(FoldedRegion::originalSigLine));
-
-        int linesInBuffer = codeArea.getParagraphs().size();
-        for (int[] r : raw) {
-            int origSig = r[0], origEnd = r[1];
-            int absorbedBefore = 0;
-            boolean nestedInsideOuterFold = false;
-            for (FoldedRegion f : activeFolds) {
-                if (f.originalSigLine() == origSig) continue;
-                if (f.originalSigLine() < origSig && f.originalEndLine() >= origSig) {
-                    nestedInsideOuterFold = true; break;
-                }
-                if (f.originalEndLine() < origSig) {
-                    absorbedBefore += f.originalEndLine() - f.originalOpenBraceLine();
-                }
-            }
-            if (nestedInsideOuterFold) continue;
-            int currentSig = origSig - absorbedBefore;
-            FoldedRegion folded = foldedByOriginalLine.get(origSig);
-            int currentEnd = folded != null
-                    ? currentSig          // this region is itself folded — collapses onto signature line
-                    : origEnd - absorbedBefore;
-            int currentVisibleEnd = folded != null
-                    ? folded.originalOpenBraceLine() - absorbedBefore
-                    : currentEnd;
-            if (currentSig < 0 || currentSig >= linesInBuffer) continue;
-            if (currentVisibleEnd >= linesInBuffer) continue;
-            int braceLine = -1;
-            int brace = -1;
-            for (int line = currentSig; line <= currentVisibleEnd; line++) {
-                brace = codeArea.getText(line).indexOf('{');
-                if (brace >= 0) {
-                    braceLine = line;
-                    break;
-                }
-            }
-            if (braceLine < 0) continue;
-            int originalBraceLine = folded != null ? folded.originalOpenBraceLine() : braceLine + absorbedBefore;
-            int endLineLen = codeArea.getText(currentVisibleEnd).length();
-            foldableByCurrentLine.put(currentSig,
-                    new FoldRegion(currentSig, braceLine, brace, currentVisibleEnd, endLineLen, origSig, originalBraceLine, origEnd));
-        }
+        // Hidden rows must drop their gutter graphics: re-query the factory for every row.
         gutterRefresh.run();
     }
 
-    private static void collectFoldable(List<DocumentSymbol> symbols, List<int[]> out) {
-        if (symbols == null) return;
-        for (DocumentSymbol s : symbols) {
-            if (s == null) continue;
-            Range r = s.getRange();
-            if (r != null && r.getStart() != null && r.getEnd() != null) {
-                SymbolKind k = s.getKind();
-                if (k == SymbolKind.Function || k == SymbolKind.Method || k == SymbolKind.Constructor) {
-                    int startLine = r.getStart().getLine();
-                    int endLine = r.getEnd().getLine();
-                    if (endLine > startLine) out.add(new int[]{startLine, endLine});
+    /** Open the fold that hides paragraph {@code p}; no-op when {@code p} is visible or out of range. */
+    void unfoldContaining(int p) {
+        if (!isHidden(p)) return;
+        int header = p;
+        while (header > 0 && isHidden(header)) header--;
+        unfold(header);
+    }
+
+    /** Open every fold (bottom-up). */
+    void unfoldAll() {
+        for (int p = area.getParagraphs().size() - 1; p >= 0; p--) {
+            if (isHidden(p)) unfoldContaining(p);
+        }
+    }
+
+    private void unfold(int header) {
+        int caret = area.getCaretPosition();
+        int anchor = area.getAnchor();
+        // A run can only start at paragraph 0 when its header line was deleted; un-hide that line too.
+        if (isHidden(header)) area.updateParagraphClasses(header, null, MTypeCodeArea.COLLAPSE);
+        area.unfoldRunAfter(header);
+        area.selectRange(anchor, caret); // the text is unchanged, so the old offsets are still valid
+        gutterRefresh.run();
+    }
+
+    private static boolean within(int offset, int start, int end) {
+        return offset >= start && offset <= end;
+    }
+
+    /* ----- maintenance (M1 / M2) ----- */
+
+    private void onChange(RichTextChange<Collection<String>, Either<String, InlayHintSeg>, Collection<String>> change) {
+        if (change.isPlainTextIdentity()) return; // fold/unfold themselves and style-only changes
+        int p0 = area.offsetToPosition(change.getPosition(), TwoDimensional.Bias.Forward).getMajor();
+        int inserted = change.getInserted().getParagraphs().size();
+        int removed = change.getRemoved().getParagraphs().size();
+        int lineDelta = inserted - removed;
+        if (lineDelta != 0) { // keep queued windows on the same lines
+            for (int[] w : pendingWindows) {
+                for (int i = 0; i < 2; i++) {
+                    if (w[i] > p0) w[i] = Math.max(p0, w[i] + lineDelta);
                 }
             }
-            collectFoldable(s.getChildren(), out);
+        }
+        if (tab.isInternalEditActive()) return; // inlay-hint mutations, external reload
+        int p1 = p0 + inserted - 1;
+        // Removed paragraphs (even empty slices) keep their original paragraph styles.
+        boolean removedHidden = false;
+        for (Paragraph<Collection<String>, Either<String, InlayHintSeg>, Collection<String>> par
+                : change.getRemoved().getParagraphs()) {
+            if (par.getParagraphStyle().contains(MTypeCodeArea.COLLAPSE)) {
+                removedHidden = true;
+                break;
+            }
+        }
+        boolean structural = inserted > 1 || removed > 1;
+        if (FoldRegions.touchesFold(removedHidden, structural, p0, p1, this::isHidden)) {
+            pendingWindows.add(new int[]{p0 - 1, p1 + 1});
+            queueReconcile();
         }
     }
 
-    /* ----- fold / unfold ----- */
-
-    private void toggleFold(int originalSigLine) {
-        if (foldedByOriginalLine.containsKey(originalSigLine)) unfoldByOriginal(originalSigLine);
-        else foldByOriginal(originalSigLine);
+    private void queueReconcile() {
+        if (reconcileQueued) return;
+        reconcileQueued = true;
+        Platform.runLater(this::reconcile);
     }
 
-    private void foldByOriginal(int originalSigLine) {
-        FoldRegion fr = findFoldableByOriginal(originalSigLine);
-        if (fr == null) return;
-        int start = Positions.offset(codeArea.getText(), fr.currentOpenBraceLine(), fr.openBracePos() + 1);
-        int end = Positions.offset(codeArea.getText(), fr.currentEndLine(), fr.currentEndLineLen());
-        if (end <= start) return;
-        // Stash the rich sub-document (not plain text) so embedded inlay-hint segments survive the
-        // fold/unfold round-trip instead of becoming literal ￼ characters.
-        var stash = codeArea.subDocument(start, end);
-        // Folding an outer region wipes any inner folds (they're inside the collapsed text).
-        foldedByOriginalLine.keySet().removeIf(o -> o > fr.originalSigLine() && o <= fr.originalEndLine());
-        foldedByOriginalLine.put(originalSigLine, new FoldedRegion(originalSigLine, fr.originalOpenBraceLine(), fr.originalEndLine(), stash));
-        double savedScrollX = codeArea.estimatedScrollXProperty().getValue();
-        double savedScrollY = codeArea.estimatedScrollYProperty().getValue();
-        int savedCaret = codeArea.getCaretPosition();
-        int caretClamped = savedCaret <= start ? savedCaret : (savedCaret >= end ? savedCaret - (end - start) + FOLD_PLACEHOLDER.length() : start);
-        tab.runInternalEdit(() -> codeArea.replaceText(start, end, FOLD_PLACEHOLDER));
-        compositor.invalidateOverlays();
-        compositor.applyHighlightingNow();
-        semanticTokens.schedule();
-        rebuildFoldableRegions();
-        codeArea.moveTo(Math.min(caretClamped, codeArea.getLength()));
-        Platform.runLater(() -> {
-            codeArea.scrollXToPixel(savedScrollX);
-            codeArea.scrollYToPixel(savedScrollY);
-        });
-    }
-
-    private void unfoldByOriginal(int originalSigLine) {
-        FoldedRegion folded = foldedByOriginalLine.remove(originalSigLine);
-        if (folded == null) { rebuildFoldableRegions(); return; }
-        FoldRegion fr = findFoldableByOriginal(originalSigLine);
-        if (fr == null) { rebuildFoldableRegions(); return; }
-        int start = Positions.offset(codeArea.getText(), fr.currentOpenBraceLine(), fr.openBracePos() + 1);
-        int placeholderEnd = start + FOLD_PLACEHOLDER.length();
-        if (placeholderEnd > codeArea.getLength()) { rebuildFoldableRegions(); return; }
-        double savedScrollX = codeArea.estimatedScrollXProperty().getValue();
-        double savedScrollY = codeArea.estimatedScrollYProperty().getValue();
-        int savedCaret = codeArea.getCaretPosition();
-        int caretClamped = savedCaret <= start ? savedCaret
-                : (savedCaret >= placeholderEnd ? savedCaret + folded.stashedDoc().length() - FOLD_PLACEHOLDER.length() : start);
-        tab.runInternalEdit(() -> codeArea.replace(start, placeholderEnd, folded.stashedDoc()));
-        compositor.invalidateOverlays();
-        compositor.applyHighlightingNow();
-        semanticTokens.schedule();
-        rebuildFoldableRegions();
-        codeArea.moveTo(Math.min(caretClamped, codeArea.getLength()));
-        Platform.runLater(() -> {
-            codeArea.scrollXToPixel(savedScrollX);
-            codeArea.scrollYToPixel(savedScrollY);
-        });
-    }
-
-    private FoldRegion findFoldableByOriginal(int originalSigLine) {
-        for (FoldRegion fr : foldableByCurrentLine.values()) {
-            if (fr.originalSigLine() == originalSigLine) return fr;
+    private void reconcile() {
+        reconcileQueued = false;
+        List<int[]> windows = new ArrayList<>(pendingWindows);
+        pendingWindows.clear();
+        for (int[] w : windows) {
+            for (int p = Math.max(0, w[0]); p <= w[1]; p++) unfoldContaining(p); // M1
         }
-        return null;
-    }
-
-    void unfoldAll() {
-        if (foldedByOriginalLine.isEmpty()) return;
-        List<Integer> keys = new ArrayList<>(foldedByOriginalLine.keySet());
-        keys.sort(Comparator.reverseOrder());
-        for (Integer k : keys) unfoldByOriginal(k);
+        unfoldContaining(area.getCurrentParagraph()); // M2
     }
 }

@@ -62,8 +62,12 @@ final class DocumentSymbolController {
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
         final int request = ++requestSerial;
+        final int version = tab.getVersion();
         lsp.documentSymbol(path).thenAcceptAsync(raw -> {
-            if (request != requestSerial) return;
+            // Drop responses for an older text: their line numbers would be applied to the current
+            // document (fold regions, breadcrumb, outline). The edit that changed the text has
+            // already scheduled a fresh request.
+            if (request != requestSerial || version != tab.getVersion()) return;
             lastDocumentSymbols = raw == null ? Collections.emptyList() : raw;
             updateBreadcrumb();
             folding.setDocumentSymbols(lastDocumentSymbols);

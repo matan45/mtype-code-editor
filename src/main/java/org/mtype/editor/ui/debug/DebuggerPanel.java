@@ -410,12 +410,7 @@ public class DebuggerPanel extends VBox {
                         .filter(t -> t.getPath() != null && t.getPath().equals(p))
                         .findFirst().orElse(null);
                 if (tab != null && frame.line() > 0) {
-                    int line0 = Math.max(0, frame.line() - 1);
-                    var ca = tab.getCodeArea();
-                    if (line0 < ca.getParagraphs().size()) {
-                        ca.moveTo(line0, 0);
-                        ca.requestFollowCaret();
-                    }
+                    tab.revealLine(Math.max(0, frame.line() - 1)); // opens a fold hiding the line
                 }
             } catch (Exception ignored) {}
         });
@@ -515,10 +510,7 @@ public class DebuggerPanel extends VBox {
                             var tab = ctx.getTabPane().openTabs().stream()
                                     .filter(t -> t.getPath() != null && t.getPath().equals(p))
                                     .findFirst().orElse(null);
-                            if (tab != null && item.line0() < tab.getCodeArea().getParagraphs().size()) {
-                                tab.getCodeArea().moveTo(item.line0(), 0);
-                                tab.getCodeArea().requestFollowCaret();
-                            }
+                            if (tab != null) tab.revealLine(item.line0()); // opens a fold hiding the line
                         } catch (Exception ignored) {}
                     }
                 }

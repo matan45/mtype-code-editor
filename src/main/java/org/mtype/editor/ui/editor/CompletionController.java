@@ -199,23 +199,26 @@ final class CompletionController {
         int end = serverEnd >= 0 ? Math.max(serverEnd, caret) : caret;
 
         // Apply additionalTextEdits (typically import statements above the caret) BEFORE
-        // the main edit so snippet placeholder offsets land correctly. Shift start/end by
-        // the net length delta of additional edits that fall above the main edit range.
+        // the main edit so snippet placeholder offsets land correctly. The shift is computed in
+        // SOURCE offsets: applyToCodeArea trims edits to their changed spans, so inlay-hint chars
+        // inside an edit's range may survive and display-offset arithmetic would drift.
         List<TextEdit> additional = ci.getAdditionalTextEdits();
-        int delta = 0;
         if (additional != null && !additional.isEmpty()) {
+            int sourceStart = codeArea.displayToSource(start);
+            int sourceEnd = codeArea.displayToSource(end);
+            int sourceDelta = 0;
             for (TextEdit aedit : additional) {
-                int aEnd = codeArea.sourceToDisplay(Positions.offset(source, aedit.getRange().getEnd()));
-                if (aEnd <= start) {
-                    int aStart = codeArea.sourceToDisplay(Positions.offset(source, aedit.getRange().getStart()));
+                int aStart = Positions.offset(source, aedit.getRange().getStart());
+                int aEnd = Positions.offset(source, aedit.getRange().getEnd());
+                if (Math.max(aStart, aEnd) <= sourceStart) {
                     String anew = aedit.getNewText() == null ? "" : aedit.getNewText();
-                    delta += anew.length() - (aEnd - aStart);
+                    sourceDelta += anew.length() - Math.abs(aEnd - aStart);
                 }
             }
             LspEdits.applyToCodeArea(codeArea, additional);
+            start = codeArea.sourceToDisplay(sourceStart + sourceDelta);
+            end = codeArea.sourceToDisplay(sourceEnd + sourceDelta);
         }
-        start += delta;
-        end += delta;
 
         activeSnippet = null;
         if (ci.getInsertTextFormat() == InsertTextFormat.Snippet) {
