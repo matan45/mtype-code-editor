@@ -622,14 +622,12 @@ public class LspBridge {
     public CompletableFuture<List<WorkspaceSymbol>> workspaceSymbol(String query) {
         if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         WorkspaceSymbolParams params = new WorkspaceSymbolParams(query == null ? "" : query);
-        return server.getWorkspaceService().symbol(params).thenApply(either -> {
-            // Modern servers reply with WorkspaceSymbol[] (the right side). The left side is the
-            // legacy, deprecated SymbolInformation[] form, which the mType server does not emit.
-            if (either == null || !either.isRight() || either.getRight() == null) {
-                return Collections.<WorkspaceSymbol>emptyList();
-            }
-            return new ArrayList<WorkspaceSymbol>(either.getRight());
-        }).exceptionally(_ -> Collections.emptyList());
+        // The mType server sends SymbolInformation-shaped entries ({name, kind, location}); lsp4j
+        // decodes them as WorkspaceSymbol[] unless an element carries `deprecated`, in which case
+        // they arrive on the legacy left side. Accept both shapes (MYT-447).
+        return server.getWorkspaceService().symbol(params)
+                .thenApply(WorkspaceSymbols::fromEither)
+                .exceptionally(_ -> Collections.emptyList());
     }
 
     /* ============================== semantic tokens ============================== */

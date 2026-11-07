@@ -185,6 +185,7 @@ public class EditorTab extends Tab {
                 commands.requestQuickFix(clickedOffset);
             }
             if (completion.isMenuShowing()) completion.hideMenu();
+            commands.hideQuickFixPopup();
         });
 
         codeArea.setContextMenu(commands.buildCodeContextMenu());
@@ -436,6 +437,7 @@ public class EditorTab extends Tab {
         if (pendingInlayHints != null) pendingInlayHints.cancel(false);
         compositor.dispose();
         completion.dispose();
+        commands.dispose();
         signatureHelp.dispose();
         hover.dispose();
         codeLens.dispose();
@@ -593,6 +595,7 @@ public class EditorTab extends Tab {
     public void goToDefinitionAtCaret() { commands.goToDefinitionAtCaret(); }
     public void renameAtCaret() { commands.renameAtCaret(); }
     public void showCallHierarchyAtCaret() { commands.showCallHierarchyAtCaret(); }
+    public void showQuickFixAtCaret() { commands.showQuickFixAtCaret(); }
 
     /** Move the caret to a 0-based LSP position and ensure visible, opening any fold that hides it. */
     public void revealPosition(int line, int character) {
@@ -617,6 +620,25 @@ public class EditorTab extends Tab {
     /* ----- key + mouse helpers ----- */
 
     private void handleKey(KeyEvent e) {
+        // The Ctrl+. popup doesn't take focus from the code area, so ESC / ENTER land here (same as
+        // the completion menu below).
+        if (commands.isQuickFixPopupShowing()) {
+            if (e.getCode() == KeyCode.ESCAPE) {
+                commands.hideQuickFixPopup();
+                e.consume();
+                return;
+            }
+            if (e.getCode() == KeyCode.ENTER && commands.fireFocusedQuickFix()) {
+                e.consume();
+                return;
+            }
+        }
+        if (e.getCode() == KeyCode.PERIOD && e.isShortcutDown() && !e.isAltDown()) {
+            if (completion.isMenuShowing()) completion.hideMenu();
+            commands.showQuickFixAtCaret();
+            e.consume();
+            return;
+        }
         if (completion.isMenuShowing()) {
             if (e.getCode() == KeyCode.ESCAPE) {
                 completion.hideMenu();

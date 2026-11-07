@@ -13,6 +13,7 @@ import javafx.scene.layout.VBox;
 import javafx.stage.Window;
 
 import java.util.*;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 public class QuickPickDialog<T> {
@@ -28,9 +29,11 @@ public class QuickPickDialog<T> {
     private final FilteredList<Object> filtered;
     private final Function<T, String> labelFn;
     private final Function<T, String> descriptionFn;
+    private final Function<T, String> groupFn;
     private final boolean grouped;
     private final Set<String> collapsedGroups = new HashSet<>();
     private String currentQuery = "";
+    private Consumer<String> onQueryChanged;
 
     public QuickPickDialog(Window owner,
                            String title,
@@ -48,6 +51,7 @@ public class QuickPickDialog<T> {
                            Function<T, String> groupFn) {
         this.labelFn = labelFn;
         this.descriptionFn = descriptionFn;
+        this.groupFn = groupFn;
         this.grouped = groupFn != null;
         if (owner != null) dialog.initOwner(owner);
         dialog.setTitle(title);
@@ -120,6 +124,7 @@ public class QuickPickDialog<T> {
             int first = firstSelectableIndex(0, 1);
             if (first >= 0) listView.getSelectionModel().select(first);
             else listView.getSelectionModel().clearSelection();
+            if (onQueryChanged != null) onQueryChanged.accept(newV == null ? "" : newV);
         });
 
         filter.setOnKeyPressed(e -> {
@@ -173,6 +178,33 @@ public class QuickPickDialog<T> {
             Object sel = listView.getSelectionModel().getSelectedItem();
             return sel instanceof Header ? null : (T) sel;
         });
+    }
+
+    /**
+     * Replace the items while the dialog is open (e.g. results of a server re-query). The filter
+     * text and collapsed groups are kept; the selection stays on the same item when it is still
+     * listed, otherwise moves to the first selectable row. Call on the FX thread.
+     */
+    public void setItems(List<T> items) {
+        Object selected = listView.getSelectionModel().getSelectedItem();
+        backing.setAll(buildModel(items, groupFn));
+        refilter();
+        int index = selected == null || selected instanceof Header ? -1 : filtered.indexOf(selected);
+        if (index < 0) index = firstSelectableIndex(0, 1);
+        if (index >= 0) listView.getSelectionModel().select(index);
+        else listView.getSelectionModel().clearSelection();
+    }
+
+    /** Called with the raw filter text after each edit, after the local filter has been applied. */
+    public void setOnQueryChanged(Consumer<String> listener) {
+        this.onQueryChanged = listener;
+    }
+
+    /** Text shown in the list while it is empty (e.g. "Loading…" or "No matches"). */
+    public void setPlaceholder(String text) {
+        Label placeholder = new Label(text);
+        placeholder.getStyleClass().add("mt-quickpick-desc");
+        listView.setPlaceholder(placeholder);
     }
 
     private List<Object> buildModel(List<T> items, Function<T, String> groupFn) {

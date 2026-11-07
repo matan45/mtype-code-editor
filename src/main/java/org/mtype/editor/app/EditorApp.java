@@ -269,6 +269,10 @@ public class EditorApp extends Application {
                 KeyCombination.CONTROL_DOWN, KeyCombination.ALT_DOWN));
         callHierarchy.setOnAction(_ -> ctx.getTabPane().callHierarchyActive());
 
+        MenuItem quickFix = new MenuItem("Quick Fix...");
+        quickFix.setAccelerator(new KeyCodeCombination(KeyCode.PERIOD, KeyCombination.SHORTCUT_DOWN));
+        quickFix.setOnAction(_ -> ctx.getTabPane().quickFixActive());
+
         MenuItem findInFiles = new MenuItem("Find in Files...");
         findInFiles.setAccelerator(new KeyCodeCombination(KeyCode.F,
                 KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN));
@@ -279,7 +283,7 @@ public class EditorApp extends Application {
                 KeyCombination.SHORTCUT_DOWN));
         gotoSymbol.setOnAction(_ -> WorkspaceSymbolPicker.open(ctx, stage));
 
-        code.getItems().addAll(format, goToDef, rename, callHierarchy,
+        code.getItems().addAll(format, goToDef, rename, callHierarchy, quickFix,
                 new SeparatorMenuItem(), gotoSymbol, findInFiles);
 
         Menu build = new Menu("Build");
