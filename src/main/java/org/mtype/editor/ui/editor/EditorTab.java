@@ -119,10 +119,12 @@ public class EditorTab extends Tab {
         compositor = new StyleCompositor(codeArea, path);
         diagnostics = new DiagnosticsController(codeArea, compositor, this::refreshGutter);
         semanticTokens = new SemanticTokensController(codeArea, path, ctx, compositor, lspManaged);
-        completion = new CompletionController(codeArea, path, ctx, compositor, semanticTokens, lspManaged);
-        signatureHelp = new SignatureHelpController(codeArea, path, ctx, lspManaged);
+        completion = new CompletionController(codeArea, path, ctx, compositor, semanticTokens, lspManaged,
+                this::flushPendingDidChange);
+        signatureHelp = new SignatureHelpController(codeArea, path, ctx, lspManaged, this::flushPendingDidChange);
         hover = new HoverController(codeArea, path, ctx, lspManaged, compositor);
-        codeLens = new CodeLensController(codeArea, path, ctx, lspManaged, this::refreshGutter);
+        codeLens = new CodeLensController(codeArea, path, ctx, lspManaged, this::refreshGutter,
+                this::flushPendingDidChange);
         folding = new CodeFoldingController(codeArea, this, this::refreshGutter);
         documentSymbols = new DocumentSymbolController(codeArea, path, ctx, lspManaged, breadcrumbBar, folding, this);
         commands = new EditorCommands(codeArea, path, ctx, lspManaged, compositor, semanticTokens,
@@ -184,7 +186,8 @@ public class EditorTab extends Tab {
                 }
                 commands.requestQuickFix(clickedOffset);
             }
-            if (completion.isMenuShowing()) completion.hideMenu();
+            // Also drops a completion request in flight, so it can't pop up at the new caret.
+            completion.hideMenu();
             commands.hideQuickFixPopup();
         });
 
@@ -452,10 +455,11 @@ public class EditorTab extends Tab {
 
     /**
      * Debounce a didChange for the edit that just happened. The version is bumped per edit (so stale
-     * responses can be detected against {@link #getVersion()}), but the text is read and sent only when
-     * the debounce fires, ON THE FX THREAD: lsp4j writes on the caller's thread, so FX-thread didChange
-     * and FX-thread requests reach the server in order. (The server has no version guard — the last
-     * didChange it reads wins — so a background send overtaking a flush would revert its text.)
+     * responses can be detected against {@link #getVersion()}), but the text is read only when the
+     * debounce fires, ON THE FX THREAD, through {@link #flushPendingDidChange()}. LspBridge writes every
+     * message from one ordered outgoing thread in the order it was queued, so a didChange queued here
+     * before a request reaches the server before that request (MYT-422). LspBridge and the server
+     * both drop a didChange whose version is not newer than the last one.
      */
     private void scheduleDidChange() {
         if (!lspManaged) return;
@@ -468,10 +472,12 @@ public class EditorTab extends Tab {
     }
 
     /**
-     * Make sure the server holds exactly the current text before a request that depends on it (format,
-     * rename, …): sends any pending didChange now, or didOpen if this tab isn't open in the current LSP
-     * session. Does nothing when nothing is pending or the LSP isn't ready (the didOpen sent once it
-     * becomes ready carries the current text). FX thread only.
+     * Make sure the server holds exactly the current text before a request that depends on it
+     * (completion, signature help, format, rename, definition, references, code actions, …): queues
+     * any pending didChange now, ahead of the request, or didOpen if this tab isn't open in the
+     * current LSP session. Does nothing when nothing is pending or the LSP isn't ready (the didOpen
+     * sent once it becomes ready carries the current text). FX thread only: it reads FX-only state and
+     * the code area's text.
      */
     void flushPendingDidChange() {
         if (!lspManaged) return;
@@ -634,7 +640,7 @@ public class EditorTab extends Tab {
             }
         }
         if (e.getCode() == KeyCode.PERIOD && e.isShortcutDown() && !e.isAltDown()) {
-            if (completion.isMenuShowing()) completion.hideMenu();
+            completion.hideMenu();
             commands.showQuickFixAtCaret();
             e.consume();
             return;
@@ -651,6 +657,10 @@ public class EditorTab extends Tab {
                     return;
                 }
             }
+        } else if (e.getCode() == KeyCode.ESCAPE) {
+            // No menu yet, but a completion may be scheduled or in flight: ESC cancels it. Not
+            // consumed, so ESC still reaches anything else that handles it.
+            completion.cancelRequest();
         }
         if (e.getCode() == KeyCode.TAB && completion.hasActiveSnippet()) {
             if (completion.advanceSnippet()) {

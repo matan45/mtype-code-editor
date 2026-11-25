@@ -91,6 +91,7 @@ final class EditorCommands {
         if (!lspManaged) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
+        flushDidChange.run();
         int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
         lsp.definition(path, lc[0], lc[1]).thenAcceptAsync(loc -> {
             if (loc == null) {
@@ -108,6 +109,7 @@ final class EditorCommands {
             ctx.getStatusBar().setMessage("LSP not ready");
             return;
         }
+        flushDidChange.run();
         int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
         lsp.prepareCallHierarchy(path, lc[0], lc[1])
                 .thenAcceptAsync(items -> {
@@ -126,6 +128,7 @@ final class EditorCommands {
             ctx.getStatusBar().setMessage("LSP not ready");
             return;
         }
+        flushDidChange.run();
         int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
         int line = lc[0];
         int col = lc[1];

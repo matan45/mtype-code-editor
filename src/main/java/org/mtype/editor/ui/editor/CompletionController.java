@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -33,19 +34,25 @@ final class CompletionController {
     private final StyleCompositor compositor;
     private final SemanticTokensController semanticTokens;
     private final boolean lspManaged;
+    /** Sends the tab's pending didChange, so the server completes on the text the user sees. */
+    private final Runnable flushDidChange;
     private final ContextMenu completionMenu = new ContextMenu();
+    private final LatestRequest<List<CompletionItem>> inFlight = new LatestRequest<>();
 
     private SnippetSession activeSnippet;
     private ScheduledFuture<?> pendingCompletion;
+    private boolean disposed;
 
     CompletionController(MTypeCodeArea codeArea, Path path, AppContext ctx,
-                         StyleCompositor compositor, SemanticTokensController semanticTokens, boolean lspManaged) {
+                         StyleCompositor compositor, SemanticTokensController semanticTokens, boolean lspManaged,
+                         Runnable flushDidChange) {
         this.codeArea = codeArea;
         this.path = path;
         this.ctx = ctx;
         this.compositor = compositor;
         this.semanticTokens = semanticTokens;
         this.lspManaged = lspManaged;
+        this.flushDidChange = flushDidChange;
         completionMenu.getStyleClass().add("mt-completion");
     }
 
@@ -55,8 +62,16 @@ final class CompletionController {
         return completionMenu.isShowing();
     }
 
+    /** Hide the menu and drop the pending/in-flight request, so it can't pop the menu back up. */
     void hideMenu() {
         completionMenu.hide();
+        cancelRequest();
+    }
+
+    /** Cancel the debounced request and the request in flight (the server request too). */
+    void cancelRequest() {
+        if (pendingCompletion != null) pendingCompletion.cancel(false);
+        inFlight.cancel();
     }
 
     boolean hasActiveSnippet() {
@@ -75,7 +90,7 @@ final class CompletionController {
 
     void maybeAutoCompletion(String oldText, String newText) {
         if (activeSnippet != null) {
-            completionMenu.hide();
+            hideMenu();
             return;
         }
         int caret = codeArea.getCaretPosition();
@@ -84,7 +99,7 @@ final class CompletionController {
             if (completionMenu.isShowing() && delta == -1) {
                 scheduleCompletion(); // user deleted a char while popup open — refresh
             } else if (completionMenu.isShowing()) {
-                completionMenu.hide();
+                hideMenu();
             }
             return;
         }
@@ -93,7 +108,11 @@ final class CompletionController {
         if (Character.isLetterOrDigit(c) || c == '_' || c == '.') {
             scheduleCompletion();
         } else {
+            // Hide, and drop a response still in flight for the text before this character. A pending
+            // timer is left alone: it then completes at the new caret, which is how `Foo::` or `"./`
+            // typed quickly get completions today (real trigger characters are MYT-424).
             completionMenu.hide();
+            inFlight.cancel();
         }
     }
 
@@ -106,9 +125,13 @@ final class CompletionController {
     }
 
     void requestCompletionNow() {
-        if (!lspManaged) return;
+        if (!lspManaged || disposed) return;
+        if (pendingCompletion != null) pendingCompletion.cancel(false);
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
+        // Put the text the user sees on the wire first: the server answers requests in order, so this
+        // completion is computed on exactly that text (MYT-422).
+        flushDidChange.run();
         int caret = codeArea.getCaretPosition();
         int[] lc = codeArea.displayToSourceLineChar(caret);
         String trigger = null;
@@ -119,7 +142,11 @@ final class CompletionController {
             char prior = text.charAt(scan);
             if (prior == '.' || prior == ':') trigger = String.valueOf(prior);
         }
-        lsp.completion(path, lc[0], lc[1], trigger).thenAcceptAsync(this::populateCompletionMenu, Platform::runLater);
+        CompletableFuture<List<CompletionItem>> request = lsp.completion(path, lc[0], lc[1], trigger);
+        long token = inFlight.begin(request);
+        request.thenAcceptAsync(items -> {
+            if (inFlight.isCurrent(token)) populateCompletionMenu(items);
+        }, Platform::runLater);
     }
 
     private void populateCompletionMenu(List<CompletionItem> items) {
@@ -173,9 +200,10 @@ final class CompletionController {
     }
 
     private void applyResolvedCompletion(CompletionItem ci) {
-        // The mType server sometimes returns a textEdit range narrower than the typed
-        // prefix (e.g. only the last char), so we widen the replacement to the union of
-        // the server's range and the word currently under the caret.
+        // The server's textEdit range can be narrower than the word under the caret: the user may
+        // have typed more while the request (or the resolve) was in flight, and the server mixes
+        // UTF-16 and UTF-8 columns on lines with non-ASCII text. So the replacement is widened to
+        // the union of the server's range and the word currently under the caret.
         TextEdit te = ci.getTextEdit() != null && ci.getTextEdit().isLeft()
                 ? ci.getTextEdit().getLeft() : null;
         String newText;
@@ -277,7 +305,8 @@ final class CompletionController {
     }
 
     void dispose() {
-        if (pendingCompletion != null) pendingCompletion.cancel(false);
+        disposed = true;
+        cancelRequest();
         completionMenu.hide();
     }
 

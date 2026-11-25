@@ -43,6 +43,8 @@ Most fields apply only on app restart (font family / font size / theme / LSP pat
 
 `LspBridge` owns the child `Process` plus the lsp4j `Launcher<LanguageServer>`. The lsp4j reader runs on its own thread, so every `MTypeLanguageClient` callback (diagnostics, log, message) MUST `Platform.runLater` before touching UI. Outgoing requests return `CompletableFuture` — chain `.thenAcceptAsync(x, Platform::runLater)` so completion handlers land on the FX thread.
 
+**Outgoing messages (MYT-422).** Each LSP session has one `Outbox` with a single outgoing thread (`mtype-lsp-out`); every notification and request is queued there and written in call order, so callers (the FX thread included) never write to the pipe. The outbox drops a didChange whose version is not newer than the last one sent for that URI (didOpen resets the baseline). Request futures always complete (response, fallback, or cancelled); cancelling one before it is written means it is never sent, after it lsp4j writes `$/cancelRequest` from the outgoing thread. See CLAUDE.md for the details.
+
 LSP features wired today: `initialize/initialized`, `textDocument/{didOpen,didChange,didClose,publishDiagnostics,completion,hover,definition,references,formatting,codeAction,codeLens,prepareRename,rename,prepareCallHierarchy}`, `callHierarchy/{incomingCalls,outgoingCalls}`, `workspace/executeCommand`. Document sync is **full content** (not incremental) — simpler and the mType server accepts it.
 
 `LspBridge` tracks a `session` long that's incremented on every start/stop. Async handlers (initialize callback, completion responses, etc.) check `startSession == session` before mutating state — this prevents responses from a previously-stopped LSP process from leaking into the current state when the user switches workspaces.
@@ -60,7 +62,9 @@ LSP features wired today: `initialize/initialized`, `textDocument/{didOpen,didCh
 
 ### Document model & version drift
 
-Every `EditorTab` owns a monotonically increasing `AtomicInteger version` per the LSP spec. `scheduleDidChange()` debounces 200 ms and calls `version.incrementAndGet()` — versions sent to the server must strictly increase per document or the server will reject the change. `openedLspSession` on the tab tracks which LSP session opened it; `onLspReady()` re-sends `didOpen` only if the session changed (e.g., after an LSP restart).
+Every `EditorTab` owns a monotonically increasing `AtomicInteger version` per the LSP spec. `scheduleDidChange()` bumps it on every edit and debounces the didChange 200 ms; the text is read when it is sent, on the FX thread, by `flushPendingDidChange()`. Versions sent per document must strictly increase: `LspBridge` and the mType server (`DocumentManager::updateDocument` → `UpdateResult::Stale`) both drop a didChange that is not newer. `openedLspSession` on the tab tracks which LSP session opened it; `onLspReady()` re-sends `didOpen` only if the session changed (e.g., after an LSP restart).
+
+`flushPendingDidChange()` (package-private) queues the pending change now (or didOpen when the tab isn't open in this session). Completion, signature help, Save / Format, Rename (all open tabs), definition, references, call hierarchy and Quick Fix call it before their request, so the server answers on the text the user sees.
 
 ### Syntax highlighting (`org.mtype.editor.syntax`)
 
@@ -93,9 +97,10 @@ Changing `diagnosticsByLine` or `codeLensByParagraph` calls `codeArea.setParagra
 
 - **FX thread only**: scene-graph mutation, `setStyleSpans`, `ContextMenu`/`Tooltip` show, tab manipulation, button enable/disable.
 - **`BG_EXEC` (static 2-thread scheduled pool in `EditorTab`)**: debounced tokenize, debounced `didChange`, debounced completion request, debounced code-lens refresh. Each task hops back via `Platform.runLater` before touching UI.
+- **`mtype-lsp-out`** (one single-thread executor per LSP session, in `LspBridge`): the only thread that writes LSP notifications and requests.
 - **`StreamPump`** (daemon threads, one per stdout/stderr): pumps child-process output line-by-line. **Must drain unconditionally** — failing to read either pipe deadlocks the child on a full buffer.
-- **Process shutdown order**: stop tokenizer/exec tasks → LSP `shutdown`/`exit` → kill run process → `Platform.exit()`.
-- Never `Future.get()` on the FX thread; use `process.onExit()` not `waitFor()`.
+- **Process shutdown order**: stop tokenizer/exec tasks → LSP `shutdown`/`exit` (queued behind pending notifications) → destroy the LSP process, then close its streams → kill run process → `Platform.exit()`.
+- Never `Future.get()` on the FX thread; use `process.onExit()` not `waitFor()`. The one exception is `LspBridge.stop()`, which waits a bounded time.
 
 ### Fonts
 

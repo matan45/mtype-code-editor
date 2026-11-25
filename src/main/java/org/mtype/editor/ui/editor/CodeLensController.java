@@ -44,6 +44,8 @@ final class CodeLensController {
     private final AppContext ctx;
     private final boolean lspManaged;
     private final Runnable gutterRefresh;
+    /** Sends the tab's pending didChange before a references request (MYT-422). */
+    private final Runnable flushDidChange;
     private final ContextMenu referencesMenu = new ContextMenu();
 
     private final Map<Integer, CodeLensLine> codeLensByParagraph = new HashMap<>();
@@ -51,12 +53,14 @@ final class CodeLensController {
     private ScheduledFuture<?> pending;
     private int requestSerial;
 
-    CodeLensController(MTypeCodeArea codeArea, Path path, AppContext ctx, boolean lspManaged, Runnable gutterRefresh) {
+    CodeLensController(MTypeCodeArea codeArea, Path path, AppContext ctx, boolean lspManaged, Runnable gutterRefresh,
+                       Runnable flushDidChange) {
         this.codeArea = codeArea;
         this.path = path;
         this.ctx = ctx;
         this.lspManaged = lspManaged;
         this.gutterRefresh = gutterRefresh;
+        this.flushDidChange = flushDidChange;
         referencesMenu.getStyleClass().add("mt-references");
     }
 
@@ -179,6 +183,7 @@ final class CodeLensController {
             ctx.getStatusBar().setMessage("LSP not ready");
             return;
         }
+        flushDidChange.run();
         lsp.references(path, lens.line(), lens.character(), false).thenAcceptAsync(locations -> {
             if (locations == null || locations.isEmpty()) {
                 ctx.getStatusBar().setMessage("No references");

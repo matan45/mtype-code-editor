@@ -19,29 +19,69 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
+/**
+ * Owns the language-server process and every message sent to it.
+ *
+ * <p><b>Ordering (MYT-422).</b> Each session has one {@link Outbox}: a single outgoing thread
+ * ({@code mtype-lsp-out}) writes every notification and request, one at a time, in the order the
+ * public methods were called. Callers never write to the pipe themselves, the FX thread included. A
+ * caller that queues a didChange and then a request from the same thread therefore puts them on the
+ * wire in that order, and the server (which reads messages one by one) answers the request against
+ * that text. Parameters, including the document text, are captured when the call is made.
+ *
+ * <p><b>Versions.</b> The outbox remembers the last version sent per document and drops a didChange
+ * that is not newer ({@link DocumentVersions}); a didOpen resets it.
+ *
+ * <p><b>Requests</b> return a future that always completes: with the mapped response, with the
+ * method's fallback when the server fails, the request can't be sent or the session is closing, or
+ * cancelled by the caller. Cancelling before the request is written means it is never sent; after,
+ * lsp4j writes {@code $/cancelRequest} (on the outgoing thread).
+ */
 public class LspBridge {
     private final AppContext ctx;
+    /** Where the bridge reports dropped or failed sends. Called on the outgoing thread. */
+    private final Consumer<String> log;
 
     private Process process;
-    private LanguageServer server;
     private Launcher<LanguageServer> launcher;
     private Future<?> listening;
     private ExecutorService rpcExecutor;
     private MTypeLanguageClient client;
-    private boolean ready;
-    private long session;
-    private SemanticTokensLegend semanticLegend;
+    /** The session whose initialize is in flight (or failed), so {@link #stop()} can tear it down. */
+    private Outbox starting;
+    /** The ready session; null while stopped or initializing. */
+    private volatile Outbox outbox;
+    private volatile long session;
+    private volatile SemanticTokensLegend semanticLegend;
     private Map<String, Long> watchedMtFiles = Collections.emptyMap();
 
     public LspBridge(AppContext ctx) {
         this.ctx = ctx;
+        this.log = line -> {
+            if (ctx.getOutputPane() != null) ctx.getOutputPane().appendLspLog(line);
+        };
     }
 
-    public boolean isReady() { return ready; }
-    public synchronized long getSession() { return session; }
-    public synchronized SemanticTokensLegend getSemanticLegend() { return semanticLegend; }
+    /**
+     * A bridge that is ready at once and talks to {@code server} through {@code out}, for tests. No
+     * process and no JavaFX. {@code out} must run one task at a time, in submission order (the
+     * ordering and cancellation guarantees depend on it).
+     */
+    LspBridge(LanguageServer server, Executor out, Consumer<String> log) {
+        this.ctx = null;
+        this.log = log;
+        this.session = 1;
+        this.outbox = new Outbox(server, out, null);
+    }
+
+    public boolean isReady() { return outbox != null; }
+    public long getSession() { return session; }
+    public SemanticTokensLegend getSemanticLegend() { return semanticLegend; }
 
     public synchronized void start(Workspace ws) throws IOException {
         stop();
@@ -73,7 +113,14 @@ public class LspBridge {
                 consumer -> consumer);
         listening = launcher.startListening();
         LanguageServer startedServer = launcher.getRemoteProxy();
-        server = startedServer;
+
+        ExecutorService outThread = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "mtype-lsp-out");
+            t.setDaemon(true);
+            return t;
+        });
+        Outbox box = new Outbox(startedServer, outThread, outThread);
+        starting = box;
 
         InitializeParams init = new InitializeParams();
         init.setProcessId((int) ProcessHandle.current().pid());
@@ -123,31 +170,48 @@ public class LspBridge {
         caps.setWorkspace(wc);
         init.setCapabilities(caps);
 
-        startedServer.initialize(init).whenComplete((InitializeResult result, Throwable err) -> {
-            synchronized (LspBridge.this) {
-                if (startSession != session || server != startedServer) return;
-            }
-            if (err != null) {
-                Platform.runLater(() -> {
-                    ctx.getStatusBar().setLspState("LSP: error");
-                    ctx.getOutputPane().appendLspLog("[init error] " + err.getMessage());
+        // initialize is written by the outgoing thread like everything else; its response is handled
+        // on the FX thread, which is where start()/stop() run, so the two never contend for the lock.
+        CompletableFuture<InitializeResult> initResponse = new CompletableFuture<>();
+        boolean queued = box.execute(() -> {
+            try {
+                startedServer.initialize(init).whenComplete((result, err) -> {
+                    if (err != null) initResponse.completeExceptionally(err);
+                    else initResponse.complete(result);
                 });
-                return;
+            } catch (RuntimeException e) {
+                initResponse.completeExceptionally(e);
             }
-            startedServer.initialized(new InitializedParams());
-            synchronized (LspBridge.this) {
-                if (startSession != session || server != startedServer) return;
-                ready = true;
+        });
+        if (!queued) initResponse.completeExceptionally(new RejectedExecutionException("LSP outbox closed"));
+        initResponse.whenCompleteAsync(
+                (result, err) -> onInitialized(box, startSession, result, err),
+                Platform::runLater);
+    }
+
+    /** FX thread: the initialize response (or its failure) for the session {@code box} belongs to. */
+    private void onInitialized(Outbox box, long startSession, InitializeResult result, Throwable err) {
+        synchronized (this) {
+            if (starting != box || session != startSession) return;
+            if (err == null) {
+                // Queued before the outbox is published, so every didOpen and request queues behind it.
+                box.execute(() -> send(box, b -> b.server.initialized(new InitializedParams())));
                 if (result != null && result.getCapabilities() != null
                         && result.getCapabilities().getSemanticTokensProvider() != null) {
                     semanticLegend = result.getCapabilities().getSemanticTokensProvider().getLegend();
                 }
+                starting = null;
+                outbox = box;
             }
-            Platform.runLater(() -> {
-                ctx.getStatusBar().setLspState("LSP: ready");
-                if (ctx.getTabPane() != null) ctx.getTabPane().syncOpenDocumentsWithLsp();
-            });
-        });
+            // On error the session stays in `starting`, so stop() still shuts it down.
+        }
+        if (err != null) {
+            ctx.getStatusBar().setLspState("LSP: error");
+            ctx.getOutputPane().appendLspLog("[init error] " + err.getMessage());
+            return;
+        }
+        ctx.getStatusBar().setLspState("LSP: ready");
+        if (ctx.getTabPane() != null) ctx.getTabPane().syncOpenDocumentsWithLsp();
     }
 
     private static SemanticTokensCapabilities getSemanticTokensCapabilities() {
@@ -235,13 +299,13 @@ public class LspBridge {
 
     public synchronized void stop() {
         session++;
-        ready = false;
-        LanguageServer serverToStop = server;
+        Outbox box = outbox != null ? outbox : starting;
+        outbox = null;
+        starting = null;
         Future<?> listeningToStop = listening;
         Process processToStop = process;
         ExecutorService executorToStop = rpcExecutor;
 
-        server = null;
         listening = null;
         process = null;
         rpcExecutor = null;
@@ -249,47 +313,197 @@ public class LspBridge {
         launcher = null;
         watchedMtFiles = Collections.emptyMap();
 
-        if (serverToStop != null) {
-            try { serverToStop.shutdown().get(1, TimeUnit.SECONDS); } catch (Exception ignored) {}
-            try { serverToStop.exit(); } catch (Exception ignored) {}
+        if (box != null) {
+            // From here on, queued requests complete with their fallback without being sent. Queued
+            // notifications (e.g. the didClose of every tab closed on exit) are still written, in
+            // order, ahead of shutdown/exit.
+            box.closing = true;
+            FutureTask<Void> teardown = new FutureTask<>(() -> {
+                try { box.server.shutdown().get(1, TimeUnit.SECONDS); } catch (Exception ignored) {}
+                try { box.server.exit(); } catch (Exception ignored) {}
+                return null;
+            });
+            if (box.execute(teardown)) {
+                try {
+                    teardown.get(2, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (Exception ignored) {
+                }
+            }
+            box.dead = true;
         }
         if (listeningToStop != null) {
             listeningToStop.cancel(true);
         }
         if (processToStop != null) {
+            // Destroy BEFORE closing the streams: an outgoing write blocked on a full pipe holds the
+            // stream's lock, and close() (which flushes) would wait for it forever. Killing the
+            // process breaks the pipe and fails that write.
             try {
-                try { processToStop.getOutputStream().close(); } catch (Exception ignored) {}
-                try { processToStop.getInputStream().close(); } catch (Exception ignored) {}
                 processToStop.destroy();
                 if (!processToStop.waitFor(2, TimeUnit.SECONDS)) processToStop.destroyForcibly();
+            } catch (InterruptedException e) {
+                processToStop.destroyForcibly();
+                Thread.currentThread().interrupt();
             } catch (Exception ignored) {
                 processToStop.destroyForcibly();
             }
+            try { processToStop.getOutputStream().close(); } catch (Exception ignored) {}
+            try { processToStop.getInputStream().close(); } catch (Exception ignored) {}
         }
         if (executorToStop != null) {
             executorToStop.shutdownNow();
         }
+        if (box != null && box.service != null) {
+            box.service.shutdownNow();
+        }
+    }
+
+    /* ============================== outbox ============================== */
+
+    /**
+     * One session's outgoing side: every notification and request is written by {@link #out}, one
+     * task at a time, in submission order.
+     */
+    static final class Outbox {
+        final LanguageServer server;
+        private final Executor out;
+        /** Shut down with the session; null when the caller owns {@link #out} (tests). */
+        final ExecutorService service;
+        /** Last version sent per URI. Touched only by tasks running on {@link #out}. */
+        final DocumentVersions versions = new DocumentVersions();
+        /** stop() has begun: queued requests complete with their fallback instead of being sent. */
+        volatile boolean closing;
+        /** shutdown/exit were sent: nothing else may be written. */
+        volatile boolean dead;
+
+        Outbox(LanguageServer server, Executor out, ExecutorService service) {
+            this.server = server;
+            this.out = out;
+            this.service = service;
+        }
+
+        /** Queue {@code task}; false when the session's executor no longer accepts work. */
+        boolean execute(Runnable task) {
+            try {
+                out.execute(task);
+                return true;
+            } catch (RejectedExecutionException e) {
+                return false;
+            }
+        }
+    }
+
+    /** Queue a notification on the ready session; does nothing when the LSP isn't ready. */
+    private void post(Consumer<Outbox> notification) {
+        Outbox box = outbox;
+        if (box == null) return;
+        box.execute(() -> send(box, notification));
+    }
+
+    /** Outgoing thread: write one notification unless the session already sent shutdown/exit. */
+    private void send(Outbox box, Consumer<Outbox> notification) {
+        if (box.dead) return;
+        try {
+            notification.accept(box);
+        } catch (RuntimeException e) {
+            log.accept("[lsp] send failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Queue a request on the ready session. The returned future completes with {@code map} applied to
+     * the response, or with {@code fallback} when the LSP isn't ready, the session is closing, the
+     * request can't be sent, or the server answers with an error. Cancelling it before the request is
+     * written means it is never sent; after, the lsp4j request is cancelled too ($/cancelRequest),
+     * from the outgoing thread.
+     */
+    private <R, T> CompletableFuture<T> call(Function<LanguageServer, CompletableFuture<R>> send,
+                                             Function<? super R, ? extends T> map, T fallback) {
+        Outbox box = outbox;
+        if (box == null) return CompletableFuture.completedFuture(fallback);
+        CompletableFuture<T> result = new CompletableFuture<>();
+        AtomicReference<CompletableFuture<R>> sent = new AtomicReference<>();
+        result.whenComplete((_, _) -> {
+            if (!result.isCancelled()) return;
+            box.execute(() -> {
+                CompletableFuture<R> request = sent.get();
+                if (box.dead || request == null || request.isDone()) return;
+                try {
+                    request.cancel(true);
+                } catch (RuntimeException e) {
+                    log.accept("[lsp] cancel failed: " + e.getMessage());
+                }
+            });
+        });
+        boolean queued = box.execute(() -> {
+            if (result.isDone()) return;   // cancelled before it was sent: never written
+            if (box.closing) {
+                result.complete(fallback);
+                return;
+            }
+            CompletableFuture<R> request;
+            try {
+                request = send.apply(box.server);
+            } catch (RuntimeException e) {
+                log.accept("[lsp] request failed: " + e.getMessage());
+                request = null;
+            }
+            if (request == null) {
+                result.complete(fallback);
+                return;
+            }
+            sent.set(request);
+            request.whenComplete((response, err) -> {
+                T value = fallback;
+                if (err == null) {
+                    try {
+                        value = map.apply(response);
+                    } catch (RuntimeException ignored) {
+                    }
+                }
+                result.complete(value);
+            });
+        });
+        if (!queued) result.complete(fallback);
+        return result;
     }
 
     /* ============================== sync ============================== */
 
     public void didOpen(Path path, String text, int version) {
-        if (!ready || server == null) return;
-        TextDocumentItem item = new TextDocumentItem(path.toUri().toString(), "mtype", version, text);
-        server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(item));
+        String uri = path.toUri().toString();
+        DidOpenTextDocumentParams params = new DidOpenTextDocumentParams(
+                new TextDocumentItem(uri, "mtype", version, text));
+        post(box -> {
+            box.versions.opened(uri, version);
+            box.server.getTextDocumentService().didOpen(params);
+        });
     }
 
     public void didChange(Path path, String text, int version) {
-        if (!ready || server == null) return;
-        VersionedTextDocumentIdentifier id = new VersionedTextDocumentIdentifier(path.toUri().toString(), version);
+        String uri = path.toUri().toString();
+        VersionedTextDocumentIdentifier id = new VersionedTextDocumentIdentifier(uri, version);
         TextDocumentContentChangeEvent change = new TextDocumentContentChangeEvent(text);
-        server.getTextDocumentService().didChange(new DidChangeTextDocumentParams(id, Collections.singletonList(change)));
+        DidChangeTextDocumentParams params = new DidChangeTextDocumentParams(id, Collections.singletonList(change));
+        post(box -> {
+            if (!box.versions.acceptChange(uri, version)) {
+                log.accept("[lsp] dropped stale didChange v" + version + " for " + path.getFileName()
+                        + " (last sent v" + box.versions.lastSent(uri) + ")");
+                return;
+            }
+            box.server.getTextDocumentService().didChange(params);
+        });
     }
 
     public void didClose(Path path) {
-        if (!ready || server == null) return;
-        TextDocumentIdentifier id = new TextDocumentIdentifier(path.toUri().toString());
-        server.getTextDocumentService().didClose(new DidCloseTextDocumentParams(id));
+        String uri = path.toUri().toString();
+        DidCloseTextDocumentParams params = new DidCloseTextDocumentParams(new TextDocumentIdentifier(uri));
+        post(box -> {
+            box.versions.closed(uri);
+            box.server.getTextDocumentService().didClose(params);
+        });
     }
 
     public void refreshWatchedMtFiles() {
@@ -321,8 +535,9 @@ public class LspBridge {
     }
 
     public void didChangeWatchedFiles(List<FileEvent> changes) {
-        if (!ready || server == null || changes == null || changes.isEmpty()) return;
-        server.getWorkspaceService().didChangeWatchedFiles(new DidChangeWatchedFilesParams(changes));
+        if (changes == null || changes.isEmpty()) return;
+        DidChangeWatchedFilesParams params = new DidChangeWatchedFilesParams(new ArrayList<>(changes));
+        post(box -> box.server.getWorkspaceService().didChangeWatchedFiles(params));
     }
 
     private static Map<String, Long> scanMtFiles(Path root) {
@@ -352,7 +567,6 @@ public class LspBridge {
     /* ============================== completion ============================== */
 
     public CompletableFuture<List<CompletionItem>> completion(Path path, int line, int col, String triggerChar) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         CompletionParams params = new CompletionParams(
                 new TextDocumentIdentifier(path.toUri().toString()),
                 new Position(line, col));
@@ -364,31 +578,26 @@ public class LspBridge {
             context.setTriggerKind(CompletionTriggerKind.Invoked);
         }
         params.setContext(context);
-        return server.getTextDocumentService().completion(params).thenApply(either -> {
+        return call(s -> s.getTextDocumentService().completion(params), either -> {
             if (either == null) return Collections.<CompletionItem>emptyList();
             if (either.isLeft()) return either.getLeft();
             CompletionList list = either.getRight();
             return list != null ? list.getItems() : Collections.<CompletionItem>emptyList();
-        }).exceptionally(_ -> Collections.emptyList());
+        }, Collections.emptyList());
     }
 
     public CompletableFuture<CompletionItem> resolveCompletion(CompletionItem item) {
-        if (!ready || server == null || item == null) {
-            return CompletableFuture.completedFuture(item);
-        }
-        return server.getTextDocumentService().resolveCompletionItem(item)
-                .exceptionally(_ -> item);
+        if (item == null) return CompletableFuture.completedFuture(null);
+        return call(s -> s.getTextDocumentService().resolveCompletionItem(item), resolved -> resolved, item);
     }
 
     /* ============================== hover ============================== */
 
     public CompletableFuture<String> hover(Path path, int line, int col) {
-        if (!ready || server == null) return CompletableFuture.completedFuture("");
         HoverParams params = new HoverParams(
                 new TextDocumentIdentifier(path.toUri().toString()),
                 new Position(line, col));
-        return server.getTextDocumentService().hover(params).thenApply(LspBridge::renderHover)
-                .exceptionally(_ -> "");
+        return call(s -> s.getTextDocumentService().hover(params), LspBridge::renderHover, "");
     }
 
     private static String renderHover(Hover h) {
@@ -434,23 +643,21 @@ public class LspBridge {
     /* ============================== formatting ============================== */
 
     public CompletableFuture<List<? extends TextEdit>> format(Path path, int tabSize, boolean insertSpaces) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         FormattingOptions opts = new FormattingOptions(tabSize, insertSpaces);
         DocumentFormattingParams params = new DocumentFormattingParams(
                 new TextDocumentIdentifier(path.toUri().toString()),
                 opts);
-        return server.getTextDocumentService().formatting(params)
-                .exceptionally(_ -> Collections.emptyList());
+        return call(s -> s.getTextDocumentService().formatting(params), edits -> edits,
+                Collections.<TextEdit>emptyList());
     }
 
     /* ============================== definition ============================== */
 
     public CompletableFuture<Location> definition(Path path, int line, int col) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(null);
         DefinitionParams params = new DefinitionParams(
                 new TextDocumentIdentifier(path.toUri().toString()),
                 new Position(line, col));
-        return server.getTextDocumentService().definition(params).thenApply(either -> {
+        return call(s -> s.getTextDocumentService().definition(params), either -> {
             if (either == null) return null;
             if (either.isLeft()) {
                 List<? extends Location> locs = either.getLeft();
@@ -464,50 +671,45 @@ public class LspBridge {
                 }
             }
             return null;
-        }).exceptionally(_ -> null);
+        }, null);
     }
 
     /* ============================== code lens ============================== */
 
     public CompletableFuture<List<? extends CodeLens>> codeLens(Path path) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         CodeLensParams params = new CodeLensParams(new TextDocumentIdentifier(path.toUri().toString()));
-        return server.getTextDocumentService().codeLens(params)
-                .thenApply(list -> list == null ? Collections.<CodeLens>emptyList() : list)
-                .exceptionally(_ -> Collections.emptyList());
+        return call(s -> s.getTextDocumentService().codeLens(params),
+                list -> list == null ? Collections.<CodeLens>emptyList() : list,
+                Collections.<CodeLens>emptyList());
     }
 
     public CompletableFuture<List<InlayHint>> inlayHints(Path path, Range range) {
-        if (!ready || server == null || range == null) {
-            return CompletableFuture.completedFuture(Collections.emptyList());
-        }
+        if (range == null) return CompletableFuture.completedFuture(Collections.emptyList());
         InlayHintParams params = new InlayHintParams();
         params.setTextDocument(new TextDocumentIdentifier(path.toUri().toString()));
         params.setRange(range);
-        return server.getTextDocumentService().inlayHint(params)
-                .thenApply(list -> list == null ? Collections.<InlayHint>emptyList() : list)
-                .exceptionally(_ -> Collections.emptyList());
+        return call(s -> s.getTextDocumentService().inlayHint(params),
+                list -> list == null ? Collections.<InlayHint>emptyList() : list,
+                Collections.<InlayHint>emptyList());
     }
 
     public CompletableFuture<List<? extends Location>> references(Path path, int line, int col, boolean includeDeclaration) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         ReferenceParams params = new ReferenceParams();
         params.setTextDocument(new TextDocumentIdentifier(path.toUri().toString()));
         params.setPosition(new Position(line, col));
         params.setContext(new ReferenceContext(includeDeclaration));
-        return server.getTextDocumentService().references(params)
-                .thenApply(list -> list == null ? Collections.<Location>emptyList() : list)
-                .exceptionally(_ -> Collections.emptyList());
+        return call(s -> s.getTextDocumentService().references(params),
+                list -> list == null ? Collections.<Location>emptyList() : list,
+                Collections.<Location>emptyList());
     }
 
     /* ============================== rename ============================== */
 
     public CompletableFuture<PrepareInfo> prepareRename(Path path, int line, int col) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(null);
         PrepareRenameParams params = new PrepareRenameParams();
         params.setTextDocument(new TextDocumentIdentifier(path.toUri().toString()));
         params.setPosition(new Position(line, col));
-        return server.getTextDocumentService().prepareRename(params).thenApply(either -> {
+        return call(s -> s.getTextDocumentService().prepareRename(params), either -> {
             if (either == null) return null;
             if (either.isFirst()) {
                 Range r = either.getFirst();
@@ -518,16 +720,15 @@ public class LspBridge {
                 return new PrepareInfo(res.getRange(), res.getPlaceholder());
             }
             return null;
-        }).exceptionally(_ -> null);
+        }, null);
     }
 
     public CompletableFuture<WorkspaceEdit> rename(Path path, int line, int col, String newName) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(null);
         RenameParams params = new RenameParams();
         params.setTextDocument(new TextDocumentIdentifier(path.toUri().toString()));
         params.setPosition(new Position(line, col));
         params.setNewName(newName);
-        return server.getTextDocumentService().rename(params).exceptionally(_ -> null);
+        return call(s -> s.getTextDocumentService().rename(params), edit -> edit, null);
     }
 
     public record PrepareInfo(Range range, String placeholder) {
@@ -536,53 +737,48 @@ public class LspBridge {
     /* ============================== call hierarchy ============================== */
 
     public CompletableFuture<List<CallHierarchyItem>> prepareCallHierarchy(Path path, int line, int col) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         CallHierarchyPrepareParams params = new CallHierarchyPrepareParams();
         params.setTextDocument(new TextDocumentIdentifier(path.toUri().toString()));
         params.setPosition(new Position(line, col));
-        return server.getTextDocumentService().prepareCallHierarchy(params)
-                .thenApply(list -> list == null ? Collections.<CallHierarchyItem>emptyList() : list)
-                .exceptionally(_ -> Collections.emptyList());
+        return call(s -> s.getTextDocumentService().prepareCallHierarchy(params),
+                list -> list == null ? Collections.<CallHierarchyItem>emptyList() : list,
+                Collections.<CallHierarchyItem>emptyList());
     }
 
     public CompletableFuture<List<CallHierarchyIncomingCall>> incomingCalls(CallHierarchyItem item) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         CallHierarchyIncomingCallsParams params = new CallHierarchyIncomingCallsParams();
         params.setItem(item);
-        return server.getTextDocumentService().callHierarchyIncomingCalls(params)
-                .thenApply(list -> list == null ? Collections.<CallHierarchyIncomingCall>emptyList() : list)
-                .exceptionally(_ -> Collections.emptyList());
+        return call(s -> s.getTextDocumentService().callHierarchyIncomingCalls(params),
+                list -> list == null ? Collections.<CallHierarchyIncomingCall>emptyList() : list,
+                Collections.<CallHierarchyIncomingCall>emptyList());
     }
 
     public CompletableFuture<List<CallHierarchyOutgoingCall>> outgoingCalls(CallHierarchyItem item) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         CallHierarchyOutgoingCallsParams params = new CallHierarchyOutgoingCallsParams();
         params.setItem(item);
-        return server.getTextDocumentService().callHierarchyOutgoingCalls(params)
-                .thenApply(list -> list == null ? Collections.<CallHierarchyOutgoingCall>emptyList() : list)
-                .exceptionally(_ -> Collections.emptyList());
+        return call(s -> s.getTextDocumentService().callHierarchyOutgoingCalls(params),
+                list -> list == null ? Collections.<CallHierarchyOutgoingCall>emptyList() : list,
+                Collections.<CallHierarchyOutgoingCall>emptyList());
     }
 
     /* ============================== code actions ============================== */
 
     public CompletableFuture<List<Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction>>>
     codeAction(Path path, Range range, List<org.eclipse.lsp4j.Diagnostic> contextDiagnostics) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         org.eclipse.lsp4j.CodeActionParams params = new org.eclipse.lsp4j.CodeActionParams();
         params.setTextDocument(new TextDocumentIdentifier(path.toUri().toString()));
         params.setRange(range);
         org.eclipse.lsp4j.CodeActionContext cctx = new org.eclipse.lsp4j.CodeActionContext();
         cctx.setDiagnostics(contextDiagnostics == null ? Collections.emptyList() : contextDiagnostics);
         params.setContext(cctx);
-        return server.getTextDocumentService().codeAction(params)
-                .thenApply(list -> list == null ? Collections.<Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction>>emptyList() : list)
-                .exceptionally(_ -> Collections.emptyList());
+        return call(s -> s.getTextDocumentService().codeAction(params),
+                list -> list == null ? Collections.<Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction>>emptyList() : list,
+                Collections.<Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction>>emptyList());
     }
 
     /* ============================== signature help ============================== */
 
     public CompletableFuture<SignatureHelp> signatureHelp(Path path, int line, int col, String triggerChar) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(null);
         SignatureHelpParams params = new SignatureHelpParams(
                 new TextDocumentIdentifier(path.toUri().toString()),
                 new Position(line, col));
@@ -595,60 +791,47 @@ public class LspBridge {
         }
         shCtx.setIsRetrigger(false);
         params.setContext(shCtx);
-        return server.getTextDocumentService().signatureHelp(params)
-                .exceptionally(_ -> null);
+        return call(s -> s.getTextDocumentService().signatureHelp(params), help -> help, null);
     }
 
     /* ============================== document symbols ============================== */
 
     public CompletableFuture<List<DocumentSymbol>> documentSymbol(Path path) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         DocumentSymbolParams params = new DocumentSymbolParams(
                 new TextDocumentIdentifier(path.toUri().toString()));
-        return server.getTextDocumentService().documentSymbol(params)
-                .thenApply(list -> {
-                    if (list == null || list.isEmpty()) return Collections.<DocumentSymbol>emptyList();
-                    List<DocumentSymbol> out = new ArrayList<>(list.size());
-                    for (Either<SymbolInformation, DocumentSymbol> e : list) {
-                        if (e != null && e.isRight() && e.getRight() != null) out.add(e.getRight());
-                    }
-                    return out;
-                })
-                .exceptionally(_ -> Collections.emptyList());
+        return call(s -> s.getTextDocumentService().documentSymbol(params), list -> {
+            if (list == null || list.isEmpty()) return Collections.<DocumentSymbol>emptyList();
+            List<DocumentSymbol> out = new ArrayList<>(list.size());
+            for (Either<SymbolInformation, DocumentSymbol> e : list) {
+                if (e != null && e.isRight() && e.getRight() != null) out.add(e.getRight());
+            }
+            return out;
+        }, Collections.<DocumentSymbol>emptyList());
     }
 
     /* ============================== workspace symbols ============================== */
 
     public CompletableFuture<List<WorkspaceSymbol>> workspaceSymbol(String query) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(Collections.emptyList());
         WorkspaceSymbolParams params = new WorkspaceSymbolParams(query == null ? "" : query);
         // The mType server sends SymbolInformation-shaped entries ({name, kind, location}); lsp4j
         // decodes them as WorkspaceSymbol[] unless an element carries `deprecated`, in which case
         // they arrive on the legacy left side. Accept both shapes (MYT-447).
-        return server.getWorkspaceService().symbol(params)
-                .thenApply(WorkspaceSymbols::fromEither)
-                .exceptionally(_ -> Collections.emptyList());
+        return call(s -> s.getWorkspaceService().symbol(params), WorkspaceSymbols::fromEither,
+                Collections.<WorkspaceSymbol>emptyList());
     }
 
     /* ============================== semantic tokens ============================== */
 
     public CompletableFuture<SemanticTokens> semanticTokensFull(Path path) {
-        if (!ready || server == null) return CompletableFuture.completedFuture(null);
         SemanticTokensParams params = new SemanticTokensParams(
                 new TextDocumentIdentifier(path.toUri().toString()));
-        return server.getTextDocumentService().semanticTokensFull(params)
-                .exceptionally(_ -> null);
+        return call(s -> s.getTextDocumentService().semanticTokensFull(params), tokens -> tokens, null);
     }
 
     public void executeCommand(String command, List<Object> args) {
-        if (!ready || server == null) {
-            CompletableFuture.completedFuture(null);
-            return;
-        }
         org.eclipse.lsp4j.ExecuteCommandParams params = new org.eclipse.lsp4j.ExecuteCommandParams();
         params.setCommand(command);
         params.setArguments(args == null ? Collections.emptyList() : args);
-        server.getWorkspaceService().executeCommand(params)
-                .exceptionally(_ -> null);
+        call(s -> s.getWorkspaceService().executeCommand(params), _ -> null, null);
     }
 }
