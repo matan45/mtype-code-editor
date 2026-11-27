@@ -16,7 +16,7 @@ final class SnippetSession {
         this.finalOffset = finalOffset;
     }
 
-    static SnippetSession parse(String snippet, int insertionOffset) {
+    static SnippetSession parse(String snippet) {
         StringBuilder out = new StringBuilder();
         List<Placeholder> placeholders = new ArrayList<>();
         int finalRelativeOffset = -1;
@@ -44,7 +44,7 @@ final class SnippetSession {
                 if (index == 0) {
                     finalRelativeOffset = out.length();
                 } else {
-                    placeholders.add(new Placeholder(index, insertionOffset + out.length(), insertionOffset + out.length()));
+                    placeholders.add(new Placeholder(index, out.length(), out.length()));
                 }
                 i = digitsEnd;
                 continue;
@@ -79,11 +79,11 @@ final class SnippetSession {
                     continue;
                 }
 
-                int start = insertionOffset + out.length();
+                int start = out.length();
                 out.append(defaultValue);
-                int end = insertionOffset + out.length();
+                int end = out.length();
                 if (index == 0) {
-                    finalRelativeOffset = end - insertionOffset;
+                    finalRelativeOffset = end;
                 } else {
                     placeholders.add(new Placeholder(index, start, end));
                 }
@@ -98,12 +98,23 @@ final class SnippetSession {
         placeholders.sort(Comparator
                 .comparingInt((Placeholder p) -> p.index)
                 .thenComparingInt(p -> p.start));
-        int finalOffset = insertionOffset + (finalRelativeOffset >= 0 ? finalRelativeOffset : out.length());
+        int finalOffset = (finalRelativeOffset >= 0 ? finalRelativeOffset : out.length());
         return new SnippetSession(out.toString(), placeholders, finalOffset);
     }
 
     String text() {
         return text;
+    }
+
+    /**
+     * Moves every tab stop and the final caret by {@code delta} (e.g. from source to display offsets once
+     * the text is in the document). Mutates this session and returns it.
+     */
+    SnippetSession shift(int delta) {
+        if (delta == 0) return this;
+        for (Placeholder placeholder : placeholders) placeholder.shift(delta);
+        finalOffset += delta;
+        return this;
     }
 
     Selection firstSelection() {

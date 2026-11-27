@@ -138,8 +138,10 @@ public class LspBridge {
         CompletionCapabilities completion = new CompletionCapabilities();
         CompletionItemCapabilities itemCaps = new CompletionItemCapabilities();
         itemCaps.setSnippetSupport(true);
-        itemCaps.setResolveSupport(new CompletionItemResolveSupportCapabilities(
-                List.of("additionalTextEdits", "detail", "documentation")));
+        // Accepting an item applies it as received, with no completionItem/resolve (MYT-423), so only the
+        // documentation may be left for resolve; additionalTextEdits (auto-imports) and detail must come
+        // with the list.
+        itemCaps.setResolveSupport(new CompletionItemResolveSupportCapabilities(List.of("documentation")));
         completion.setCompletionItem(itemCaps);
         td.setCompletion(completion);
 
@@ -579,16 +581,11 @@ public class LspBridge {
         }
         params.setContext(context);
         return call(s -> s.getTextDocumentService().completion(params), either -> {
-            if (either == null) return Collections.<CompletionItem>emptyList();
+            if (either == null) return Collections.emptyList();
             if (either.isLeft()) return either.getLeft();
             CompletionList list = either.getRight();
-            return list != null ? list.getItems() : Collections.<CompletionItem>emptyList();
+            return list != null ? list.getItems() : Collections.emptyList();
         }, Collections.emptyList());
-    }
-
-    public CompletableFuture<CompletionItem> resolveCompletion(CompletionItem item) {
-        if (item == null) return CompletableFuture.completedFuture(null);
-        return call(s -> s.getTextDocumentService().resolveCompletionItem(item), resolved -> resolved, item);
     }
 
     /* ============================== hover ============================== */
@@ -648,7 +645,7 @@ public class LspBridge {
                 new TextDocumentIdentifier(path.toUri().toString()),
                 opts);
         return call(s -> s.getTextDocumentService().formatting(params), edits -> edits,
-                Collections.<TextEdit>emptyList());
+                Collections.emptyList());
     }
 
     /* ============================== definition ============================== */
@@ -679,8 +676,8 @@ public class LspBridge {
     public CompletableFuture<List<? extends CodeLens>> codeLens(Path path) {
         CodeLensParams params = new CodeLensParams(new TextDocumentIdentifier(path.toUri().toString()));
         return call(s -> s.getTextDocumentService().codeLens(params),
-                list -> list == null ? Collections.<CodeLens>emptyList() : list,
-                Collections.<CodeLens>emptyList());
+                list -> list == null ? Collections.emptyList() : list,
+                Collections.emptyList());
     }
 
     public CompletableFuture<List<InlayHint>> inlayHints(Path path, Range range) {
@@ -689,8 +686,8 @@ public class LspBridge {
         params.setTextDocument(new TextDocumentIdentifier(path.toUri().toString()));
         params.setRange(range);
         return call(s -> s.getTextDocumentService().inlayHint(params),
-                list -> list == null ? Collections.<InlayHint>emptyList() : list,
-                Collections.<InlayHint>emptyList());
+                list -> list == null ? Collections.emptyList() : list,
+                Collections.emptyList());
     }
 
     public CompletableFuture<List<? extends Location>> references(Path path, int line, int col, boolean includeDeclaration) {
@@ -699,8 +696,8 @@ public class LspBridge {
         params.setPosition(new Position(line, col));
         params.setContext(new ReferenceContext(includeDeclaration));
         return call(s -> s.getTextDocumentService().references(params),
-                list -> list == null ? Collections.<Location>emptyList() : list,
-                Collections.<Location>emptyList());
+                list -> list == null ? Collections.emptyList() : list,
+                Collections.emptyList());
     }
 
     /* ============================== rename ============================== */
@@ -741,24 +738,24 @@ public class LspBridge {
         params.setTextDocument(new TextDocumentIdentifier(path.toUri().toString()));
         params.setPosition(new Position(line, col));
         return call(s -> s.getTextDocumentService().prepareCallHierarchy(params),
-                list -> list == null ? Collections.<CallHierarchyItem>emptyList() : list,
-                Collections.<CallHierarchyItem>emptyList());
+                list -> list == null ? Collections.emptyList() : list,
+                Collections.emptyList());
     }
 
     public CompletableFuture<List<CallHierarchyIncomingCall>> incomingCalls(CallHierarchyItem item) {
         CallHierarchyIncomingCallsParams params = new CallHierarchyIncomingCallsParams();
         params.setItem(item);
         return call(s -> s.getTextDocumentService().callHierarchyIncomingCalls(params),
-                list -> list == null ? Collections.<CallHierarchyIncomingCall>emptyList() : list,
-                Collections.<CallHierarchyIncomingCall>emptyList());
+                list -> list == null ? Collections.emptyList() : list,
+                Collections.emptyList());
     }
 
     public CompletableFuture<List<CallHierarchyOutgoingCall>> outgoingCalls(CallHierarchyItem item) {
         CallHierarchyOutgoingCallsParams params = new CallHierarchyOutgoingCallsParams();
         params.setItem(item);
         return call(s -> s.getTextDocumentService().callHierarchyOutgoingCalls(params),
-                list -> list == null ? Collections.<CallHierarchyOutgoingCall>emptyList() : list,
-                Collections.<CallHierarchyOutgoingCall>emptyList());
+                list -> list == null ? Collections.emptyList() : list,
+                Collections.emptyList());
     }
 
     /* ============================== code actions ============================== */
@@ -772,8 +769,8 @@ public class LspBridge {
         cctx.setDiagnostics(contextDiagnostics == null ? Collections.emptyList() : contextDiagnostics);
         params.setContext(cctx);
         return call(s -> s.getTextDocumentService().codeAction(params),
-                list -> list == null ? Collections.<Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction>>emptyList() : list,
-                Collections.<Either<org.eclipse.lsp4j.Command, org.eclipse.lsp4j.CodeAction>>emptyList());
+                list -> list == null ? Collections.emptyList() : list,
+                Collections.emptyList());
     }
 
     /* ============================== signature help ============================== */
@@ -800,13 +797,13 @@ public class LspBridge {
         DocumentSymbolParams params = new DocumentSymbolParams(
                 new TextDocumentIdentifier(path.toUri().toString()));
         return call(s -> s.getTextDocumentService().documentSymbol(params), list -> {
-            if (list == null || list.isEmpty()) return Collections.<DocumentSymbol>emptyList();
+            if (list == null || list.isEmpty()) return Collections.emptyList();
             List<DocumentSymbol> out = new ArrayList<>(list.size());
             for (Either<SymbolInformation, DocumentSymbol> e : list) {
                 if (e != null && e.isRight() && e.getRight() != null) out.add(e.getRight());
             }
             return out;
-        }, Collections.<DocumentSymbol>emptyList());
+        }, Collections.emptyList());
     }
 
     /* ============================== workspace symbols ============================== */
@@ -817,7 +814,7 @@ public class LspBridge {
         // decodes them as WorkspaceSymbol[] unless an element carries `deprecated`, in which case
         // they arrive on the legacy left side. Accept both shapes (MYT-447).
         return call(s -> s.getWorkspaceService().symbol(params), WorkspaceSymbols::fromEither,
-                Collections.<WorkspaceSymbol>emptyList());
+                Collections.emptyList());
     }
 
     /* ============================== semantic tokens ============================== */

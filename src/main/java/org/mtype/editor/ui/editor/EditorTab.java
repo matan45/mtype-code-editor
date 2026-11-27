@@ -120,7 +120,7 @@ public class EditorTab extends Tab {
         diagnostics = new DiagnosticsController(codeArea, compositor, this::refreshGutter);
         semanticTokens = new SemanticTokensController(codeArea, path, ctx, compositor, lspManaged);
         completion = new CompletionController(codeArea, path, ctx, compositor, semanticTokens, lspManaged,
-                this::flushPendingDidChange);
+                this::flushPendingDidChange, new ContextMenuCompletionView(codeArea, codeArea::getCaretBounds));
         signatureHelp = new SignatureHelpController(codeArea, path, ctx, lspManaged, this::flushPendingDidChange);
         hover = new HoverController(codeArea, path, ctx, lspManaged, compositor);
         codeLens = new CodeLensController(codeArea, path, ctx, lspManaged, this::refreshGutter,
@@ -164,6 +164,9 @@ public class EditorTab extends Tab {
         // RichTextFX's default caret placement, which uses raw hit() and lands
         // on the wrong source offset on lines shifted by inlay-hint overlays.
         codeArea.addEventFilter(MouseEvent.MOUSE_PRESSED, e -> {
+            // Any press (Ctrl+Click included, which is consumed below) ends the completion session: the
+            // popup closes and a request in flight can't pop it up at the new caret.
+            completion.cancel();
             if (e.getButton() == MouseButton.PRIMARY && e.isControlDown()) {
                 CharacterHit hit = codeArea.hit(e.getX(), e.getY());
                 codeArea.moveTo(hit.getInsertionIndex());
@@ -186,8 +189,6 @@ public class EditorTab extends Tab {
                 }
                 commands.requestQuickFix(clickedOffset);
             }
-            // Also drops a completion request in flight, so it can't pop up at the new caret.
-            completion.hideMenu();
             commands.hideQuickFixPopup();
         });
 
@@ -372,6 +373,7 @@ public class EditorTab extends Tab {
     }
 
     private void applyExternalText(String text) {
+        completion.cancel(); // the edit below is internal, so the text listener won't do it
         folding.unfoldAll();
         int sourceCaret = codeArea.displayToSource(codeArea.getCaretPosition());
         double sx = codeArea.estimatedScrollXProperty().getValue();
@@ -640,27 +642,26 @@ public class EditorTab extends Tab {
             }
         }
         if (e.getCode() == KeyCode.PERIOD && e.isShortcutDown() && !e.isAltDown()) {
-            completion.hideMenu();
+            completion.cancel();
             commands.showQuickFixAtCaret();
             e.consume();
             return;
         }
         if (completion.isMenuShowing()) {
             if (e.getCode() == KeyCode.ESCAPE) {
-                completion.hideMenu();
+                completion.cancel();
                 e.consume();
                 return;
             }
-            if (e.getCode() == KeyCode.ENTER || e.getCode() == KeyCode.TAB) {
-                if (completion.fireFocusedItem()) {
-                    e.consume();
-                    return;
-                }
+            // Accepts only an item that still matches the word; otherwise ENTER / TAB act as usual.
+            if ((e.getCode() == KeyCode.ENTER || e.getCode() == KeyCode.TAB) && completion.acceptSelected()) {
+                e.consume();
+                return;
             }
         } else if (e.getCode() == KeyCode.ESCAPE) {
             // No menu yet, but a completion may be scheduled or in flight: ESC cancels it. Not
             // consumed, so ESC still reaches anything else that handles it.
-            completion.cancelRequest();
+            completion.cancel();
         }
         if (e.getCode() == KeyCode.TAB && completion.hasActiveSnippet()) {
             if (completion.advanceSnippet()) {
@@ -674,7 +675,7 @@ public class EditorTab extends Tab {
             return;
         }
         if (e.getCode() == KeyCode.SPACE && e.isControlDown()) {
-            completion.requestCompletionNow();
+            completion.invoke();
             e.consume();
             return;
         }

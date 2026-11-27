@@ -125,6 +125,35 @@ public final class MTypeCodeArea
         return Math.min(d, t.length());
     }
 
+    /**
+     * Like {@link #sourceToDisplay} but landing BEFORE any hint at that gap. Use it for the end of a
+     * replaced range (and for inserts at a line start), so a hint at the boundary isn't swallowed by the
+     * edit — undo would put it back as a literal {@code ￼}.
+     */
+    public int sourceToDisplayBefore(int sourceOffset) {
+        String t = getText();
+        int d = sourceToDisplay(sourceOffset);
+        while (d > 0 && t.charAt(d - 1) == HINT_CHAR) d--;
+        return d;
+    }
+
+    /** Paragraph {@code p} without hint characters, i.e. line {@code p} of {@link #getSourceText()}. */
+    public String sourceParagraphText(int p) {
+        String t = getParagraph(p).getText();
+        return t.indexOf(HINT_CHAR) < 0 ? t : t.replace(String.valueOf(HINT_CHAR), "");
+    }
+
+    /** SOURCE column of display column {@code displayColumn} in paragraph {@code p}. */
+    public int displayToSourceColumn(int p, int displayColumn) {
+        String t = getParagraph(p).getText();
+        int lim = Math.max(0, Math.min(displayColumn, t.length()));
+        int hints = 0;
+        for (int i = 0; i < lim; i++) {
+            if (t.charAt(i) == HINT_CHAR) hints++;
+        }
+        return lim - hints;
+    }
+
     /** (line, character) in the SOURCE document for a display offset (lines are identical; only column differs). */
     public int[] displayToSourceLineChar(int displayOffset) {
         int src = displayToSource(displayOffset);
@@ -197,9 +226,9 @@ public final class MTypeCodeArea
     void insertHint(int offset, InlayHintSeg seg) {
         int paragraph = offsetToPosition(offset, TwoDimensional.Bias.Forward).getMajor();
         replace(offset, offset, ReadOnlyStyledDocument.fromSegment(
-                Either.<String, InlayHintSeg>right(seg),
+                Either.right(seg),
                 getParagraph(paragraph).getParagraphStyle(),
-                Collections.<String>emptyList(),
+                Collections.emptyList(),
                 SEGMENT_OPS));
     }
 

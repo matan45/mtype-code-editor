@@ -40,15 +40,6 @@ final class Words {
         return text.substring(start, end);
     }
 
-    /** The word characters immediately before the caret in DISPLAY text (the completion prefix). */
-    static String currentWordPrefix(MTypeCodeArea area) {
-        int caret = area.getCaretPosition();
-        String text = area.getText();
-        int start = caret;
-        while (start > 0 && isWordChar(text.charAt(start - 1))) start--;
-        return text.substring(start, caret);
-    }
-
     /**
      * DISPLAY-offset range {@code [start, end)} of the identifier at {@code offset}, or null when the
      * offset isn't inside an identifier (the first char must be a letter or underscore, not a digit).
