@@ -18,6 +18,8 @@ final class FakeLanguageServer implements LanguageServer {
     /** The future returned for each completion request, in order; the test completes or inspects them. */
     final List<CompletableFuture<Either<List<CompletionItem>, CompletionList>>> completions =
             Collections.synchronizedList(new ArrayList<>());
+    /** The params of each completion request, in order (MYT-424: the trigger context it carried). */
+    final List<CompletionParams> completionParams = Collections.synchronizedList(new ArrayList<>());
     /** When set, the next completion requests throw it instead of returning a future. */
     volatile RuntimeException completionThrows;
 
@@ -41,6 +43,7 @@ final class FakeLanguageServer implements LanguageServer {
         @Override
         public CompletableFuture<Either<List<CompletionItem>, CompletionList>> completion(CompletionParams params) {
             log.add("completion");
+            completionParams.add(params);
             RuntimeException failure = completionThrows;
             if (failure != null) throw failure;
             CompletableFuture<Either<List<CompletionItem>, CompletionList>> response = new CompletableFuture<>();

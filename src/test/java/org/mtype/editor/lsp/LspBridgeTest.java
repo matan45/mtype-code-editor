@@ -1,14 +1,22 @@
 package org.mtype.editor.lsp;
 
+import org.eclipse.lsp4j.CompletionCapabilities;
+import org.eclipse.lsp4j.CompletionContext;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionList;
+import org.eclipse.lsp4j.CompletionOptions;
+import org.eclipse.lsp4j.CompletionTriggerKind;
+import org.eclipse.lsp4j.InitializeResult;
+import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -32,8 +40,8 @@ class LspBridgeTest {
     }
 
     /** Open the document and deliver everything queued so far, then forget the recorded traffic. */
-    private void openAt(int version) {
-        bridge.didOpen(file, "", version);
+    private void openAt() {
+        bridge.didOpen(file, "", 1);
         out.runAll();
         server.log.clear();
     }
@@ -53,7 +61,7 @@ class LspBridgeTest {
 
     @Test
     void flushThenCompleteSendsDidChangeBeforeCompletion() {
-        openAt(1);
+        openAt();
 
         // What EditorTab does: flushPendingDidChange() queues the pending didChange, then the request.
         bridge.didChange(file, "Dog d = new Dog();\nd.", 5);
@@ -67,7 +75,7 @@ class LspBridgeTest {
 
     @Test
     void staleDidChangeIsDropped() {
-        openAt(1);
+        openAt();
 
         bridge.didChange(file, "v5", 5);
         bridge.didChange(file, "v4", 4);
@@ -94,7 +102,7 @@ class LspBridgeTest {
 
     @Test
     void didCloseForgetsBaseline() {
-        openAt(1);
+        openAt();
         bridge.didChange(file, "v5", 5);
         bridge.didClose(file);
         bridge.didChange(file, "v3", 3);
@@ -105,7 +113,7 @@ class LspBridgeTest {
 
     @Test
     void completionCancelledBeforeSendNeverReachesServer() {
-        openAt(1);
+        openAt();
         CompletableFuture<List<CompletionItem>> result = bridge.completion(file, 0, 0, null);
 
         assertTrue(result.cancel(true));
@@ -118,7 +126,7 @@ class LspBridgeTest {
 
     @Test
     void completionCancelledAfterSendCancelsServerRequest() {
-        openAt(1);
+        openAt();
         CompletableFuture<List<CompletionItem>> result = bridge.completion(file, 0, 0, null);
         out.runAll();
         CompletableFuture<Either<List<CompletionItem>, CompletionList>> sent = server.completions.getFirst();
@@ -134,7 +142,7 @@ class LspBridgeTest {
 
     @Test
     void responseAfterCancelIsIgnored() {
-        openAt(1);
+        openAt();
         CompletableFuture<List<CompletionItem>> result = bridge.completion(file, 0, 0, null);
         out.runAll();
         CompletableFuture<Either<List<CompletionItem>, CompletionList>> sent = server.completions.getFirst();
@@ -149,7 +157,7 @@ class LspBridgeTest {
 
     @Test
     void serverErrorAndThrowingSendFallBack() {
-        openAt(1);
+        openAt();
         CompletableFuture<List<CompletionItem>> failed = bridge.completion(file, 0, 0, null);
         out.runAll();
         server.completions.getFirst().completeExceptionally(new RuntimeException("server error"));
@@ -180,7 +188,7 @@ class LspBridgeTest {
 
     @Test
     void stopDeliversQueuedNotificationsAndAnswersUnsentRequestsLocally() throws Exception {
-        openAt(1);
+        openAt();
         bridge.didClose(file);   // e.g. every tab closed on exit, just before stop()
         CompletableFuture<List<CompletionItem>> unsent = bridge.completion(file, 0, 0, null);
 
@@ -202,5 +210,70 @@ class LspBridgeTest {
         bridge.didChange(file, "x", 9);
         assertEquals(List.of(), afterStop.getNow(null));
         assertEquals(0, out.size(), "nothing is queued once stopped");
+    }
+
+    /* ----- MYT-424: trigger characters and trigger kind ----- */
+
+    private static InitializeResult advertising(List<String> triggers) {
+        ServerCapabilities capabilities = new ServerCapabilities();
+        capabilities.setCompletionProvider(new CompletionOptions(true, triggers));
+        return new InitializeResult(capabilities);
+    }
+
+    @Test
+    void triggerCharactersComeFromTheInitializeResult() {
+        assertEquals(Set.of(".", ":", "\"", "/", "@"),
+                LspBridge.completionTriggerCharacters(advertising(List.of(".", ":", "\"", "/", "@"))));
+    }
+
+    @Test
+    void onlySingleCharacterTriggersAreKept() {
+        assertEquals(Set.of(".", "@"),
+                LspBridge.completionTriggerCharacters(advertising(Arrays.asList(".", null, "", "::", "@"))));
+    }
+
+    @Test
+    void noAdvertisedTriggersMeansNone() {
+        assertEquals(Set.of(), LspBridge.completionTriggerCharacters(null));
+        assertEquals(Set.of(), LspBridge.completionTriggerCharacters(new InitializeResult()));
+        assertEquals(Set.of(), LspBridge.completionTriggerCharacters(new InitializeResult(new ServerCapabilities())));
+        assertEquals(Set.of(), LspBridge.completionTriggerCharacters(advertising(null)));
+    }
+
+    @Test
+    void noTriggerCharactersBeforeInitialize() {
+        assertEquals(Set.of(), bridge.getCompletionTriggerCharacters());
+    }
+
+    @Test
+    void completionWithoutTriggerCharacterIsInvoked() {
+        openAt();
+
+        bridge.completion(file, 0, 2, null);
+        out.runAll();
+
+        CompletionContext context = server.completionParams.getFirst().getContext();
+        assertEquals(CompletionTriggerKind.Invoked, context.getTriggerKind());
+        assertNull(context.getTriggerCharacter());
+    }
+
+    @Test
+    void completionWithTriggerCharacterSaysSo() {
+        openAt();
+
+        bridge.completion(file, 0, 5, ":");
+        out.runAll();
+
+        CompletionContext context = server.completionParams.getFirst().getContext();
+        assertEquals(CompletionTriggerKind.TriggerCharacter, context.getTriggerKind());
+        assertEquals(":", context.getTriggerCharacter());
+    }
+
+    @Test
+    void clientAdvertisesCompletionContextSupport() {
+        CompletionCapabilities capabilities = LspBridge.completionCapabilities();
+
+        assertTrue(capabilities.getContextSupport());
+        assertTrue(capabilities.getCompletionItem().getSnippetSupport());
     }
 }

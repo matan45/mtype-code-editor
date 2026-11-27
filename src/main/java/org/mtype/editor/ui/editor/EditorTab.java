@@ -120,7 +120,8 @@ public class EditorTab extends Tab {
         diagnostics = new DiagnosticsController(codeArea, compositor, this::refreshGutter);
         semanticTokens = new SemanticTokensController(codeArea, path, ctx, compositor, lspManaged);
         completion = new CompletionController(codeArea, path, ctx, compositor, semanticTokens, lspManaged,
-                this::flushPendingDidChange, new ContextMenuCompletionView(codeArea, codeArea::getCaretBounds));
+                this::flushPendingDidChange, this::isInternalEditActive,
+                new ContextMenuCompletionView(codeArea, codeArea::getCaretBounds));
         signatureHelp = new SignatureHelpController(codeArea, path, ctx, lspManaged, this::flushPendingDidChange);
         hover = new HoverController(codeArea, path, ctx, lspManaged, compositor);
         codeLens = new CodeLensController(codeArea, path, ctx, lspManaged, this::refreshGutter,
@@ -148,7 +149,7 @@ public class EditorTab extends Tab {
             scheduleInlayHintsRefresh();
             documentSymbols.schedule();
             semanticTokens.schedule();
-            completion.maybeAutoCompletion(oldText, newText);
+            // Completion listens to the exact edits itself (CompletionController.onTextChanges, MYT-424).
             signatureHelp.maybeSignatureHelp(oldText, newText);
         });
 

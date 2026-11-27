@@ -43,13 +43,6 @@ record CompletionAnchor(int line, int wordStartCol) {
         return lineText.substring(Math.min(wordStartCol, end), end);
     }
 
-    /** {@code "."} or {@code ":"} when that character sits right before the word (member access), else null. */
-    String triggerCharacter(String lineText) {
-        if (wordStartCol <= 0 || wordStartCol > lineText.length()) return null;
-        char prior = lineText.charAt(wordStartCol - 1);
-        return prior == '.' || prior == ':' ? String.valueOf(prior) : null;
-    }
-
     private static int clamp(String lineText, int col) {
         return Math.max(0, Math.min(col, lineText.length()));
     }

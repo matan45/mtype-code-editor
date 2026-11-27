@@ -2,14 +2,20 @@ package org.mtype.editor.ui.editor;
 
 import javafx.application.Platform;
 import org.eclipse.lsp4j.CompletionItem;
+import org.fxmisc.richtext.model.PlainTextChange;
+import org.fxmisc.richtext.model.TwoDimensional;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.lsp.LspBridge;
+import org.reactfx.Subscription;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /**
  * Auto-completion and snippet placeholder navigation, "honest" (MYT-423): Enter only ever accepts an
@@ -23,15 +29,17 @@ import java.util.concurrent.TimeUnit;
  * {@link CompletionFilter} on every keystroke and hidden when nothing matches. Accepting applies the
  * item at once — no resolve round-trip — with {@link CompletionEditPlanner}: the import edits and the
  * main edit go into one multi-change, i.e. one undo step.
+ *
+ * <p><b>Triggers (MYT-424).</b> Every user edit (from {@code multiPlainChanges}) goes through
+ * {@link CompletionTriggerPolicy}: the server's trigger characters, {@code :} only as {@code ::}, and no
+ * auto-popup in comments or plain strings ({@link LexicalContext}); Ctrl+Space works everywhere. Each
+ * request reports what caused it: TriggerCharacter for the trigger just typed, Invoked otherwise.
+ *
+ * <p><b>Snippets.</b> The {@link SnippetStack} sees every edit, so completing inside a placeholder keeps
+ * the snippet and its later stops; a snippet accepted inside a snippet nests.
  */
 final class CompletionController {
     private static final long DEBOUNCE_MS = 180;
-    /**
-     * Typed while a completion was about to fire, these re-arm it at the new caret (as the leftover timer
-     * used to), so {@code Foo::} and {@code "./} typed quickly still complete. Temporary: MYT-424 replaces
-     * it with the server's trigger characters and lexical context.
-     */
-    private static final String BRIDGE_TRIGGERS = ":\"/@";
 
     private final MTypeCodeArea codeArea;
     private final Path path;
@@ -41,26 +49,30 @@ final class CompletionController {
     private final boolean lspManaged;
     /** Sends the tab's pending didChange, so the server completes on the text the user sees. */
     private final Runnable flushDidChange;
+    /** True while the tab applies an internal edit (inlay hints, external reload): not the user typing. */
+    private final BooleanSupplier internalEdit;
     private final CompletionView view;
     private final LatestRequest<List<CompletionItem>> inFlight = new LatestRequest<>();
+    private final SnippetStack snippets = new SnippetStack();
+    private final Subscription textChanges;
 
     /** The word being completed; null when idle (then no timer, no request, popup hidden). */
     private Session session;
     private ScheduledFuture<?> timer;
     /** Bumped by every arm/cancel, so a timer tick already queued on the FX thread can't fire late. */
     private long timerSerial;
-    private boolean timerArmed;
-    /** Our own accept edit is being applied: the text listener must not treat it as typing. */
+    /** Our own accept edit is being applied: the edit listener must not treat it as typing. */
     private boolean applying;
     private boolean reconcileQueued;
     private boolean disposed;
-    private SnippetSession activeSnippet;
 
     private static final class Session {
         final CompletionAnchor anchor;
         List<CompletionItem> items = List.of();
         /** The caret column the server answered for (-1 until a reply arrives). */
         int requestCol = -1;
+        /** The trigger character the next request reports (TriggerCharacter); null means Invoked. */
+        String nextTrigger;
 
         Session(CompletionAnchor anchor) {
             this.anchor = anchor;
@@ -72,7 +84,7 @@ final class CompletionController {
 
     CompletionController(MTypeCodeArea codeArea, Path path, AppContext ctx,
                          StyleCompositor compositor, SemanticTokensController semanticTokens, boolean lspManaged,
-                         Runnable flushDidChange, CompletionView view) {
+                         Runnable flushDidChange, BooleanSupplier internalEdit, CompletionView view) {
         this.codeArea = codeArea;
         this.path = path;
         this.ctx = ctx;
@@ -80,6 +92,7 @@ final class CompletionController {
         this.semanticTokens = semanticTokens;
         this.lspManaged = lspManaged;
         this.flushDidChange = flushDidChange;
+        this.internalEdit = internalEdit;
         this.view = view;
         view.setListener(new CompletionView.Listener() {
             @Override
@@ -92,6 +105,7 @@ final class CompletionController {
                 cancel();
             }
         });
+        textChanges = codeArea.multiPlainChanges().subscribe(this::onTextChanges);
         codeArea.caretPositionProperty().addListener((_, _, _) -> queueReconcile());
         codeArea.focusedProperty().addListener((_, _, focused) -> {
             // Deferred: focus can move into the popup's own window, which is not a dismissal.
@@ -106,17 +120,12 @@ final class CompletionController {
     }
 
     boolean hasActiveSnippet() {
-        return activeSnippet != null;
+        return snippets.isActive();
     }
 
     /** Drop the session: the debounce timer, the request in flight (the server request too) and the popup. */
     void cancel() {
-        timerSerial++;
-        timerArmed = false;
-        if (timer != null) {
-            timer.cancel(false);
-            timer = null;
-        }
+        disarm();
         inFlight.cancel();
         session = null;
         view.hide();
@@ -133,57 +142,81 @@ final class CompletionController {
         return accept(view.selected());
     }
 
-    /** Ctrl+Space: complete the word at the caret now. */
+    /** Ctrl+Space: complete the word at the caret now, wherever it is (comments and strings too). */
     void invoke() {
         if (!lspManaged || disposed) return;
         ensureSession(caret());
+        session.nextTrigger = null; // Invoked, even right after a trigger character
         disarm();
         requestNow();
     }
 
     /* ----- triggering ----- */
 
-    /** Called by EditorTab's text listener for every edit that isn't internal. */
-    void maybeAutoCompletion(String oldText, String newText) {
-        if (applying || disposed || !lspManaged) return;
-        if (activeSnippet != null) {
-            cancel(); // no auto-completion during a snippet session (until MYT-424)
+    /**
+     * One edit of the text: a single change, or the changes of one multi-change (our accept, or its undo /
+     * redo), in the order applied, each position relative to the text after the ones before it. RichTextFX
+     * applies all of them before notifying. The snippet stops are mapped through every change; only a
+     * single-change edit by the user can trigger completion.
+     */
+    private void onTextChanges(List<PlainTextChange> changes) {
+        if (disposed) return;
+        for (PlainTextChange change : changes) {
+            if (change.isIdentity()) continue;
+            String removed = change.getRemoved();
+            String inserted = change.getInserted();
+            snippets.onEdit(change.getPosition(), removed.length(), inserted.length(),
+                    isHintsOnly(removed) && isHintsOnly(inserted));
+        }
+        if (applying || internalEdit.getAsBoolean() || !lspManaged) return;
+        if (changes.size() != 1) {
+            cancel(); // undo / redo of an accept: never typing
             return;
         }
-        int delta = newText.length() - oldText.length();
-        int caretPos = codeArea.getCaretPosition();
-        if (delta == 1 && caretPos > 0 && caretPos <= newText.length()) {
-            char typed = newText.charAt(caretPos - 1);
-            if (Words.isWordChar(typed)) {
-                Caret now = caret();
+        PlainTextChange change = changes.getFirst();
+        onUserEdit(change.getPosition() + change.getInserted().length(), change.getRemoved(), change.getInserted());
+    }
+
+    /**
+     * A user edit that leaves the caret at DISPLAY offset {@code caretDisplay}. The caret is derived from
+     * the change, not read from the area, because RichTextFX may move it after this runs.
+     */
+    private void onUserEdit(int caretDisplay, String removed, String inserted) {
+        Caret now = caretAt(caretDisplay);
+        boolean inSession = session != null && session.anchor.contains(now.lineText(), now.line(), now.col());
+        int beforeCol = now.col() - 2; // the source character before the one just typed
+        char before = beforeCol >= 0 && beforeCol < now.lineText().length() ? now.lineText().charAt(beforeCol) : '\0';
+        Supplier<LexicalContext.Kind> context =
+                () -> LexicalContext.at(codeArea.getSourceText(), codeArea.displayToSource(caretDisplay));
+        LspBridge lsp = ctx.getLspBridge();
+        Set<String> triggers = lsp == null ? Set.of() : lsp.getCompletionTriggerCharacters();
+
+        CompletionTriggerPolicy.Decision decision =
+                CompletionTriggerPolicy.onEdit(removed, inserted, before, context, triggers, inSession);
+        switch (decision.action()) {
+            case CONTINUE -> {
                 ensureSession(now);
                 refilter(now); // now, not on the next pulse: Enter right after this sees the new list
-                arm();
-            } else if (typed == '.') {
-                cancel();
-                startSession(caret());
-                arm();
-            } else {
-                boolean wasArmed = timerArmed;
-                cancel();
-                if (wasArmed && BRIDGE_TRIGGERS.indexOf(typed) >= 0) {
-                    startSession(caret());
-                    arm();
-                }
+                arm(null);
             }
-            return;
-        }
-        if (delta == -1 && session != null) {
-            Caret now = caret();
-            if (session.anchor.contains(now.lineText(), now.line(), now.col())) {
+            case START -> {
+                cancel();
+                startSession(now);
+                arm(decision.triggerCharacter());
+            }
+            case RERANK -> {
                 refilter(now);
-                arm(); // refresh from the server for the shorter prefix
-            } else {
-                cancel();
+                arm(null); // refresh from the server for the shorter prefix
             }
-            return;
+            case CANCEL -> cancel(); // paste, undo, a multi-character edit, no completion here, ...
         }
-        cancel(); // paste, undo, a multi-character edit, ...
+    }
+
+    private static boolean isHintsOnly(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) != MTypeCodeArea.HINT_CHAR) return false;
+        }
+        return true;
     }
 
     private void ensureSession(Caret now) {
@@ -197,11 +230,12 @@ final class CompletionController {
         session = new Session(CompletionAnchor.at(now.lineText(), now.line(), now.col()));
     }
 
-    private void arm() {
+    /** (Re)start the debounce; the request then reports {@code trigger} (null: Invoked). */
+    private void arm(String trigger) {
         if (session == null) return;
+        session.nextTrigger = trigger;
         if (timer != null) timer.cancel(false);
         long serial = ++timerSerial;
-        timerArmed = true;
         timer = EditorTab.BG_EXEC.schedule(
                 () -> Platform.runLater(() -> onTimer(serial)),
                 DEBOUNCE_MS, TimeUnit.MILLISECONDS);
@@ -209,7 +243,6 @@ final class CompletionController {
 
     private void disarm() {
         timerSerial++;
-        timerArmed = false;
         if (timer != null) {
             timer.cancel(false);
             timer = null;
@@ -218,7 +251,6 @@ final class CompletionController {
 
     private void onTimer(long serial) {
         if (serial != timerSerial || disposed) return;
-        timerArmed = false;
         timer = null;
         requestNow();
     }
@@ -237,8 +269,9 @@ final class CompletionController {
             return;
         }
         int requestCol = now.col();
-        CompletableFuture<List<CompletionItem>> request =
-                lsp.completion(path, now.line(), requestCol, anchor.triggerCharacter(now.lineText()));
+        String trigger = session.nextTrigger;
+        session.nextTrigger = null; // a re-request for the same word is Invoked
+        CompletableFuture<List<CompletionItem>> request = lsp.completion(path, now.line(), requestCol, trigger);
         long token = inFlight.begin(request);
         request.thenAcceptAsync(items -> onReply(token, anchor, requestCol, items), Platform::runLater);
     }
@@ -307,6 +340,15 @@ final class CompletionController {
         return new Caret(paragraph, col, codeArea.sourceParagraphText(paragraph));
     }
 
+    /** The caret a DISPLAY offset stands for, in SOURCE coordinates. */
+    private Caret caretAt(int displayOffset) {
+        int offset = Math.max(0, Math.min(displayOffset, codeArea.getLength()));
+        TwoDimensional.Position position = codeArea.offsetToPosition(offset, TwoDimensional.Bias.Forward);
+        int paragraph = position.getMajor();
+        int col = codeArea.displayToSourceColumn(paragraph, position.getMinor());
+        return new Caret(paragraph, col, codeArea.sourceParagraphText(paragraph));
+    }
+
     /* ----- accepting ----- */
 
     private boolean accept(CompletionItem item) {
@@ -351,6 +393,7 @@ final class CompletionController {
      * Apply the plan as ONE multi-change (one undo step), then place the caret / first tab stop: a
      * multi-change commit doesn't place it. Display offsets are all computed on the text before the commit;
      * the changes come in descending order, so each one's original offsets are still exact when applied.
+     * A snippet already running stays: the commit's changes reach it through {@link #onTextChanges}.
      */
     private void applyPlan(CompletionEditPlanner.Plan plan, int caretDisplay) {
         List<CompletionEditPlanner.Change> changes = plan.changes();
@@ -374,7 +417,6 @@ final class CompletionController {
             }
         }
 
-        activeSnippet = null;
         var undo = codeArea.getUndoManager();
         undo.preventMerge(); // don't merge into the prefix typed just before
         applying = true;
@@ -400,22 +442,17 @@ final class CompletionController {
         int selectionEnd = Math.max(0, Math.min(plan.selectionEnd() + delta, length));
         codeArea.selectRange(selectionStart, selectionEnd);
         codeArea.requestFollowCaret();
-        if (plan.snippet() != null) activeSnippet = plan.snippet().shift(delta);
+        // Pushed after the commit: its offsets already describe the text with the completion in it.
+        if (plan.snippet() != null) snippets.push(plan.snippet().shift(delta));
     }
 
     /* ----- snippets ----- */
 
+    /** Tab with no popup: the next tab stop of the innermost snippet; false when there is none. */
     boolean advanceSnippet() {
-        if (activeSnippet == null) return false;
-        javafx.scene.control.IndexRange selection = codeArea.getSelection();
-        SnippetSession.Selection next = activeSnippet.advance(
-                codeArea.getCaretPosition(),
-                selection.getStart(),
-                selection.getEnd());
-        if (next == null) {
-            activeSnippet = null;
-            return false;
-        }
+        if (!snippets.isActive()) return false;
+        SnippetSession.Selection next = snippets.advance(codeArea.getCaretPosition());
+        if (next == null) return false;
         applySnippetSelection(next);
         return true;
     }
@@ -425,14 +462,13 @@ final class CompletionController {
         int start = Math.max(0, Math.min(selection.start(), length));
         int end = Math.max(0, Math.min(selection.end(), length));
         codeArea.selectRange(start, end);
-        if (selection.finalCaret()) {
-            activeSnippet = null;
-        }
     }
 
     void dispose() {
         disposed = true;
         cancel();
+        textChanges.unsubscribe();
+        snippets.clear();
         view.dispose();
     }
 }

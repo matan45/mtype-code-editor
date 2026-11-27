@@ -244,10 +244,38 @@ class CompletionEditPlannerTest {
 
         SnippetSession session = plan.snippet();
         assertNotNull(session);
-        SnippetSession.Selection second = session.advance(start + 5, start + 4, start + 5);
+        SnippetSession.Selection second = session.advance(start + 5); // caret at the end of selected "a"
         assertEquals(new SnippetSession.Selection(start + 7, start + 8, false), second); // "b"
-        SnippetSession.Selection last = session.advance(start + 8, start + 7, start + 8);
+        SnippetSession.Selection last = session.advance(start + 8);
         assertEquals(new SnippetSession.Selection(start + 9, start + 9, true), last);
+    }
+
+    /**
+     * MYT-424: completing inside a running snippet's placeholder keeps the snippet. The plan's changes,
+     * in the order applied (main edit first, then the auto-import above), are exactly what the snippet
+     * maps, and its next stop is still right.
+     */
+    @Test
+    void planChangesKeepOuterSnippetStops() {
+        // The outer snippet "print(${1:value}, ${2:x})" was inserted at offset 1; "ne" was typed over "value".
+        SnippetSession outer = SnippetSession.parse("print(${1:value}, ${2:x})").shift(1);
+        assertTrue(outer.onEdit(7, 5, 1, false)); // "n" over the selected "value"
+        assertTrue(outer.onEdit(8, 0, 1, false)); // "e"
+        String marked = "\nprint(ne|, x)";
+        CompletionItem item = new CompletionItem("newValue");
+        item.setAdditionalTextEdits(List.of(insertAt(0, 0, IMPORT_FOO)));
+        CompletionEditPlanner.Plan plan = plan(marked, item);
+        assertEquals(IMPORT_FOO + "\nprint(newValue, x)", apply(marked, plan));
+        assertNull(plan.snippet());
+
+        for (CompletionEditPlanner.Change change : plan.changes()) {
+            assertTrue(outer.onEdit(change.start(), change.end() - change.start(), change.text().length(), false));
+        }
+
+        int shift = IMPORT_FOO.length();
+        int caretAfterAccept = shift + 1 + "print(newValue".length();
+        int x = shift + 1 + "print(newValue, ".length();
+        assertEquals(new SnippetSession.Selection(x, x + 1, false), outer.advance(caretAfterAccept));
     }
 
     @Test

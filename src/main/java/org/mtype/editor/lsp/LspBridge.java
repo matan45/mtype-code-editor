@@ -16,8 +16,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -58,6 +60,8 @@ public class LspBridge {
     private volatile Outbox outbox;
     private volatile long session;
     private volatile SemanticTokensLegend semanticLegend;
+    /** The server's completion trigger characters (MYT-424); empty until a session is initialized. */
+    private volatile Set<String> completionTriggers = Set.of();
     private Map<String, Long> watchedMtFiles = Collections.emptyMap();
 
     public LspBridge(AppContext ctx) {
@@ -82,6 +86,8 @@ public class LspBridge {
     public boolean isReady() { return outbox != null; }
     public long getSession() { return session; }
     public SemanticTokensLegend getSemanticLegend() { return semanticLegend; }
+    /** The single-character completion triggers the server advertised; never null, empty before init. */
+    public Set<String> getCompletionTriggerCharacters() { return completionTriggers; }
 
     public synchronized void start(Workspace ws) throws IOException {
         stop();
@@ -135,15 +141,7 @@ public class LspBridge {
         td.setSynchronization(new org.eclipse.lsp4j.SynchronizationCapabilities(false, false, false));
         td.setHover(new org.eclipse.lsp4j.HoverCapabilities());
 
-        CompletionCapabilities completion = new CompletionCapabilities();
-        CompletionItemCapabilities itemCaps = new CompletionItemCapabilities();
-        itemCaps.setSnippetSupport(true);
-        // Accepting an item applies it as received, with no completionItem/resolve (MYT-423), so only the
-        // documentation may be left for resolve; additionalTextEdits (auto-imports) and detail must come
-        // with the list.
-        itemCaps.setResolveSupport(new CompletionItemResolveSupportCapabilities(List.of("documentation")));
-        completion.setCompletionItem(itemCaps);
-        td.setCompletion(completion);
+        td.setCompletion(completionCapabilities());
 
         td.setPublishDiagnostics(new org.eclipse.lsp4j.PublishDiagnosticsCapabilities());
         td.setDefinition(new org.eclipse.lsp4j.DefinitionCapabilities());
@@ -202,6 +200,7 @@ public class LspBridge {
                         && result.getCapabilities().getSemanticTokensProvider() != null) {
                     semanticLegend = result.getCapabilities().getSemanticTokensProvider().getLegend();
                 }
+                completionTriggers = completionTriggerCharacters(result);
                 starting = null;
                 outbox = box;
             }
@@ -214,6 +213,36 @@ public class LspBridge {
         }
         ctx.getStatusBar().setLspState("LSP: ready");
         if (ctx.getTabPane() != null) ctx.getTabPane().syncOpenDocumentsWithLsp();
+    }
+
+    /** What the client supports in textDocument/completion. */
+    static CompletionCapabilities completionCapabilities() {
+        CompletionCapabilities completion = new CompletionCapabilities();
+        CompletionItemCapabilities itemCaps = new CompletionItemCapabilities();
+        itemCaps.setSnippetSupport(true);
+        // Accepting an item applies it as received, with no completionItem/resolve (MYT-423), so only the
+        // documentation may be left for resolve; additionalTextEdits (auto-imports) and detail must come
+        // with the list.
+        itemCaps.setResolveSupport(new CompletionItemResolveSupportCapabilities(List.of("documentation")));
+        completion.setCompletionItem(itemCaps);
+        // Every request carries a CompletionContext whose trigger kind says what caused it (MYT-424).
+        completion.setContextSupport(true);
+        return completion;
+    }
+
+    /**
+     * The completion trigger characters in the server's initialize result (MYT-424). Only single
+     * characters are kept, since the editor matches them against the one character typed. Never null.
+     */
+    static Set<String> completionTriggerCharacters(InitializeResult result) {
+        if (result == null || result.getCapabilities() == null) return Set.of();
+        CompletionOptions options = result.getCapabilities().getCompletionProvider();
+        if (options == null || options.getTriggerCharacters() == null) return Set.of();
+        Set<String> triggers = new LinkedHashSet<>();
+        for (String trigger : options.getTriggerCharacters()) {
+            if (trigger != null && trigger.length() == 1) triggers.add(trigger);
+        }
+        return Collections.unmodifiableSet(triggers);
     }
 
     private static SemanticTokensCapabilities getSemanticTokensCapabilities() {
@@ -568,6 +597,11 @@ public class LspBridge {
 
     /* ============================== completion ============================== */
 
+    /**
+     * textDocument/completion at a SOURCE position. {@code triggerChar} is the trigger character whose
+     * typing caused this very request (TriggerCharacter); null or empty means Invoked: identifier typing,
+     * backspace or Ctrl+Space (MYT-424).
+     */
     public CompletableFuture<List<CompletionItem>> completion(Path path, int line, int col, String triggerChar) {
         CompletionParams params = new CompletionParams(
                 new TextDocumentIdentifier(path.toUri().toString()),

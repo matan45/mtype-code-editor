@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CompletionAnchorTest {
@@ -101,13 +100,5 @@ class CompletionAnchorTest {
     void wordEndStopsAtNonWordChar() {
         assertEquals(5, CompletionAnchor.wordEnd("print(x)", 2));
         assertEquals(5, CompletionAnchor.wordEnd("print(x)", 5));
-    }
-
-    @Test
-    void triggerCharacterIsCharBeforeWord() {
-        assertEquals(".", CompletionAnchor.at("d.ba", 0, 4).triggerCharacter("d.ba"));
-        assertEquals(":", CompletionAnchor.at("Foo::b", 0, 6).triggerCharacter("Foo::b"));
-        assertNull(CompletionAnchor.at("x b", 0, 3).triggerCharacter("x b"));
-        assertNull(CompletionAnchor.at("ab", 0, 2).triggerCharacter("ab"));
     }
 }
