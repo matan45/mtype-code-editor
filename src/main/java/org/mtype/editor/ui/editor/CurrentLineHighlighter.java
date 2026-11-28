@@ -8,10 +8,6 @@ import javafx.scene.layout.Pane;
 import javafx.scene.layout.Region;
 import org.reactfx.Subscription;
 
-import java.util.Comparator;
-import java.util.List;
-import java.util.stream.Collectors;
-
 /**
  * Draws the current (caret) line highlight as a single full-width translucent band in an overlay
  * {@code layer} that sits on top of the {@link MTypeCodeArea} text but below the inlay-hint labels.
@@ -68,28 +64,15 @@ final class CurrentLineHighlighter {
         }
         int line = area.getCurrentParagraph();
 
-        List<Node> boxes = sortedByScreenY();
-        int visibleCount = Math.min(boxes.size(), area.getVisibleParagraphs().size());
-        if (visibleCount == 0) {
-            band.setVisible(false);
-            return;
+        // Ask RichTextFX for the caret paragraph's box directly (empty when it isn't on screen).
+        // Matching .paragraph-box nodes sorted by screen Y to visible-paragraph indices broke with
+        // folds: hidden paragraphs have zero-height boxes that tie with the next row.
+        Bounds boxScreen;
+        try {
+            boxScreen = area.getParagraphBoundsOnScreen(line).orElse(null);
+        } catch (Exception ignored) {
+            boxScreen = null;
         }
-
-        int target = -1;
-        for (int visible = 0; visible < visibleCount; visible++) {
-            try {
-                if (area.visibleParToAllParIndex(visible) == line) {
-                    target = visible;
-                    break;
-                }
-            } catch (Exception ignored) {}
-        }
-        if (target < 0) {
-            band.setVisible(false);
-            return;
-        }
-
-        Bounds boxScreen = boxes.get(target).localToScreen(boxes.get(target).getBoundsInLocal());
         if (boxScreen == null) {
             band.setVisible(false);
             return;
@@ -136,16 +119,5 @@ final class CurrentLineHighlighter {
 
     private static double max(double a, double b, double c, double d) {
         return Math.max(Math.max(a, b), Math.max(c, d));
-    }
-
-    private List<Node> sortedByScreenY() {
-        return area.lookupAll(".paragraph-box").stream()
-                .sorted(Comparator.comparingDouble(this::screenMinY))
-                .collect(Collectors.toList());
-    }
-
-    private double screenMinY(Node node) {
-        Bounds b = node.localToScreen(node.getBoundsInLocal());
-        return b == null ? 0.0 : b.getMinY();
     }
 }

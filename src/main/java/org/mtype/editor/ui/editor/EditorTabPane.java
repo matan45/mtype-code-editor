@@ -112,6 +112,11 @@ public class EditorTabPane extends TabPane {
         if (t != null) t.showCallHierarchyAtCaret();
     }
 
+    public void quickFixActive() {
+        EditorTab t = activeTab();
+        if (t != null) t.showQuickFixAtCaret();
+    }
+
     public EditorTab activeTab() {
         Tab t = getSelectionModel().getSelectedItem();
         return (t instanceof EditorTab et) ? et : null;

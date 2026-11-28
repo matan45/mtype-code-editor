@@ -28,7 +28,6 @@ import org.mtype.editor.syntax.Tokenizers;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -85,6 +84,8 @@ public class EditorTab extends Tab {
 
     // Schedulers kept on the tab: LSP document sync and inlay-hint requests.
     private ScheduledFuture<?> pendingDidChange;
+    /** FX-thread only: the text changed since the last didOpen/didChange sent to the server. */
+    private boolean didChangePending;
     private ScheduledFuture<?> pendingInlayHints;
     private int inlayHintRequestSerial;
 
@@ -118,13 +119,17 @@ public class EditorTab extends Tab {
         compositor = new StyleCompositor(codeArea, path);
         diagnostics = new DiagnosticsController(codeArea, compositor, this::refreshGutter);
         semanticTokens = new SemanticTokensController(codeArea, path, ctx, compositor, lspManaged);
-        completion = new CompletionController(codeArea, path, ctx, compositor, semanticTokens, lspManaged);
-        signatureHelp = new SignatureHelpController(codeArea, path, ctx, lspManaged);
+        completion = new CompletionController(codeArea, path, ctx, compositor, semanticTokens, lspManaged,
+                this::flushPendingDidChange, this::isInternalEditActive,
+                new ContextMenuCompletionView(codeArea, codeArea::getCaretBounds));
+        signatureHelp = new SignatureHelpController(codeArea, path, ctx, lspManaged, this::flushPendingDidChange);
         hover = new HoverController(codeArea, path, ctx, lspManaged, compositor);
-        codeLens = new CodeLensController(codeArea, path, ctx, lspManaged, this::refreshGutter);
-        folding = new CodeFoldingController(codeArea, this, compositor, semanticTokens, this::refreshGutter);
+        codeLens = new CodeLensController(codeArea, path, ctx, lspManaged, this::refreshGutter,
+                this::flushPendingDidChange);
+        folding = new CodeFoldingController(codeArea, this, this::refreshGutter);
         documentSymbols = new DocumentSymbolController(codeArea, path, ctx, lspManaged, breadcrumbBar, folding, this);
-        commands = new EditorCommands(codeArea, path, ctx, lspManaged, compositor, semanticTokens);
+        commands = new EditorCommands(codeArea, path, ctx, lspManaged, compositor, semanticTokens,
+                this::flushPendingDidChange);
         gutter = new GutterFactory(path, ctx, diagnostics, codeLens, folding, () -> executionLine);
         inlayHintsController = new InlayHintsController(codeArea, this);
         currentLineHighlighter = new CurrentLineHighlighter(codeArea, currentLineLayer);
@@ -144,7 +149,7 @@ public class EditorTab extends Tab {
             scheduleInlayHintsRefresh();
             documentSymbols.schedule();
             semanticTokens.schedule();
-            completion.maybeAutoCompletion(oldText, newText);
+            // Completion listens to the exact edits itself (CompletionController.onTextChanges, MYT-424).
             signatureHelp.maybeSignatureHelp(oldText, newText);
         });
 
@@ -160,6 +165,9 @@ public class EditorTab extends Tab {
         // RichTextFX's default caret placement, which uses raw hit() and lands
         // on the wrong source offset on lines shifted by inlay-hint overlays.
         codeArea.addEventFilter(MouseEvent.MOUSE_PRESSED, e -> {
+            // Any press (Ctrl+Click included, which is consumed below) ends the completion session: the
+            // popup closes and a request in flight can't pop it up at the new caret.
+            completion.cancel();
             if (e.getButton() == MouseButton.PRIMARY && e.isControlDown()) {
                 CharacterHit hit = codeArea.hit(e.getX(), e.getY());
                 codeArea.moveTo(hit.getInsertionIndex());
@@ -182,7 +190,7 @@ public class EditorTab extends Tab {
                 }
                 commands.requestQuickFix(clickedOffset);
             }
-            if (completion.isMenuShowing()) completion.hideMenu();
+            commands.hideQuickFixPopup();
         });
 
         codeArea.setContextMenu(commands.buildCodeContextMenu());
@@ -219,11 +227,7 @@ public class EditorTab extends Tab {
                     return;
                 }
                 updateExecutionLine(e.line());
-                int line0 = e.line();
-                if (line0 >= 0 && line0 < codeArea.getParagraphs().size()) {
-                    codeArea.moveTo(line0, 0);
-                    codeArea.requestFollowCaret();
-                }
+                revealLine(e.line());
             });
             bus.onResumed(() -> updateExecutionLine(-1));
             bus.onTerminated(() -> updateExecutionLine(-1));
@@ -233,19 +237,9 @@ public class EditorTab extends Tab {
     private void updateExecutionLine(int newLine) {
         int old = executionLine;
         executionLine = newLine;
-        int paragraphCount = codeArea.getParagraphs().size();
-        if (old >= 0 && old < paragraphCount && old != newLine) {
-            codeArea.setParagraphStyle(old,
-                    codeLens.isCodeLensParagraph(old)
-                            ? Collections.singletonList("mt-code-lens-paragraph")
-                            : Collections.emptyList());
-        }
-        if (newLine >= 0 && newLine < paragraphCount) {
-            List<String> classes = new ArrayList<>(2);
-            classes.add("mt-execution-line");
-            if (codeLens.isCodeLensParagraph(newLine)) classes.add("mt-code-lens-paragraph");
-            codeArea.setParagraphStyle(newLine, classes);
-        }
+        // Merge-safe: the paragraph may also carry the code-lens padding or a fold's collapse class.
+        if (old != newLine) codeArea.updateParagraphClasses(old, null, "mt-execution-line");
+        codeArea.updateParagraphClasses(newLine, "mt-execution-line", null);
         refreshGutter();
     }
 
@@ -260,16 +254,28 @@ public class EditorTab extends Tab {
     /* ----- file I/O ----- */
 
     public void save() {
-        folding.unfoldAll();
+        // Folding is visual-only (paragraph styles), so the area text is always the full source: no
+        // unfold needed, and folds survive the save.
+        flushPendingDidChange();
         boolean formatFirst = lspManaged
                 && ctx.getSettings() != null
                 && ctx.getSettings().editor != null
                 && ctx.getSettings().editor.formatOnSave;
         LspBridge lsp = ctx.getLspBridge();
         if (formatFirst && lsp != null && lsp.isReady()) {
+            // The flush above put the current text on the wire before this request, so the server
+            // formats exactly `requested`. If the text changes while the request is in flight, the
+            // edits describe an older document: don't apply them, save what the user has.
+            String requested = codeArea.getSourceText();
             lsp.format(path, 4, true).thenAcceptAsync(edits -> {
-                if (edits != null && !edits.isEmpty()) {
-                    LspEdits.applyToCodeArea(codeArea, edits);
+                if (!requested.equals(codeArea.getSourceText())) {
+                    if (writeToDisk()) {
+                        ctx.getStatusBar().setMessage("Saved " + path.getFileName()
+                                + " without formatting (document changed during format)");
+                    }
+                    return;
+                }
+                if (LspEdits.applyToCodeArea(codeArea, edits) > 0) {
                     compositor.invalidateOverlays();
                     compositor.applyHighlightingNow();
                     semanticTokens.schedule();
@@ -295,15 +301,18 @@ public class EditorTab extends Tab {
         if (!sb.isEmpty()) codeArea.setStyle(sb.toString());
     }
 
-    private void writeToDisk() {
+    /** Write the source text (inlay hints stripped) to disk; returns whether it succeeded. */
+    private boolean writeToDisk() {
         try {
             Files.writeString(path, codeArea.getSourceText(), StandardCharsets.UTF_8);
             dirty.set(false);
             setText(path.getFileName().toString());
             ctx.getStatusBar().setMessage("Saved " + path.getFileName());
             if (ctx.getGitChangesView() != null) ctx.getGitChangesView().refresh();
+            return true;
         } catch (Exception ex) {
             ctx.getStatusBar().setMessage("Save failed: " + ex.getMessage());
+            return false;
         }
     }
 
@@ -365,6 +374,7 @@ public class EditorTab extends Tab {
     }
 
     private void applyExternalText(String text) {
+        completion.cancel(); // the edit below is internal, so the text listener won't do it
         folding.unfoldAll();
         int sourceCaret = codeArea.displayToSource(codeArea.getCaretPosition());
         double sx = codeArea.estimatedScrollXProperty().getValue();
@@ -418,6 +428,9 @@ public class EditorTab extends Tab {
         if (openedLspSession == lspSession) return;
         lsp.didOpen(path, codeArea.getSourceText(), version.get());
         openedLspSession = lspSession;
+        // didOpen carried the current text, so nothing is pending any more.
+        didChangePending = false;
+        if (pendingDidChange != null) pendingDidChange.cancel(false);
         codeLens.schedule();
         scheduleInlayHintsRefresh();
         documentSymbols.schedule();
@@ -425,10 +438,12 @@ public class EditorTab extends Tab {
     }
 
     void onClosed() {
+        didChangePending = false;
         if (pendingDidChange != null) pendingDidChange.cancel(false);
         if (pendingInlayHints != null) pendingInlayHints.cancel(false);
         compositor.dispose();
         completion.dispose();
+        commands.dispose();
         signatureHelp.dispose();
         hover.dispose();
         codeLens.dispose();
@@ -441,22 +456,51 @@ public class EditorTab extends Tab {
         }
     }
 
+    /**
+     * Debounce a didChange for the edit that just happened. The version is bumped per edit (so stale
+     * responses can be detected against {@link #getVersion()}), but the text is read only when the
+     * debounce fires, ON THE FX THREAD, through {@link #flushPendingDidChange()}. LspBridge writes every
+     * message from one ordered outgoing thread in the order it was queued, so a didChange queued here
+     * before a request reaches the server before that request (MYT-422). LspBridge and the server
+     * both drop a didChange whose version is not newer than the last one.
+     */
     private void scheduleDidChange() {
         if (!lspManaged) return;
+        version.incrementAndGet();
+        didChangePending = true;
         if (pendingDidChange != null) pendingDidChange.cancel(false);
-        String snapshot = codeArea.getSourceText();
-        int v = version.incrementAndGet();
-        pendingDidChange = BG_EXEC.schedule(() -> {
-            if (ctx.getLspBridge() != null) ctx.getLspBridge().didChange(path, snapshot, v);
-        }, 200, TimeUnit.MILLISECONDS);
+        pendingDidChange = BG_EXEC.schedule(
+                () -> Platform.runLater(this::flushPendingDidChange),
+                200, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Make sure the server holds exactly the current text before a request that depends on it
+     * (completion, signature help, format, rename, definition, references, code actions, …): queues
+     * any pending didChange now, ahead of the request, or didOpen if this tab isn't open in the
+     * current LSP session. Does nothing when nothing is pending or the LSP isn't ready (the didOpen
+     * sent once it becomes ready carries the current text). FX thread only: it reads FX-only state and
+     * the code area's text.
+     */
+    void flushPendingDidChange() {
+        if (!lspManaged) return;
+        LspBridge lsp = ctx.getLspBridge();
+        if (lsp == null || !lsp.isReady()) return;
+        if (openedLspSession != lsp.getSession()) {
+            onLspReady();
+            return;
+        }
+        if (!didChangePending) return;
+        if (pendingDidChange != null) pendingDidChange.cancel(false);
+        didChangePending = false;
+        lsp.didChange(path, codeArea.getSourceText(), version.get());
     }
 
     private void sendDidChangeNow() {
         if (!lspManaged) return;
-        if (pendingDidChange != null) pendingDidChange.cancel(false);
-        String snapshot = codeArea.getSourceText();
-        int v = version.incrementAndGet();
-        if (ctx.getLspBridge() != null) ctx.getLspBridge().didChange(path, snapshot, v);
+        version.incrementAndGet();
+        didChangePending = true;
+        flushPendingDidChange();
     }
 
     /* ----- inlay hints (request scheduling; rendering lives in InlayHintsController) ----- */
@@ -549,36 +593,76 @@ public class EditorTab extends Tab {
         }
     }
 
+    /** True while {@link #runInternalEdit} / {@link #runHintMutation} runs (not a user or LSP edit). */
+    boolean isInternalEditActive() {
+        return isInternalEdit;
+    }
+
     /* ----- navigation (public API; also reachable via context menu + keys) ----- */
 
     public void formatDocument() { commands.formatDocument(); }
     public void goToDefinitionAtCaret() { commands.goToDefinitionAtCaret(); }
     public void renameAtCaret() { commands.renameAtCaret(); }
     public void showCallHierarchyAtCaret() { commands.showCallHierarchyAtCaret(); }
+    public void showQuickFixAtCaret() { commands.showQuickFixAtCaret(); }
 
-    /** Move the caret to a 0-based LSP position and ensure visible. */
+    /** Move the caret to a 0-based LSP position and ensure visible, opening any fold that hides it. */
     public void revealPosition(int line, int character) {
+        folding.unfoldContaining(line); // a moveTo into hidden text would be pushed out of the fold
         int offset = codeArea.sourceLineCharToDisplay(line, character);
         codeArea.moveTo(offset);
         codeArea.requestFollowCaret();
         codeArea.requestFocus();
     }
 
+    /**
+     * Move the caret to the start of 0-based line {@code line0}, opening any fold that hides it, and
+     * scroll it into view WITHOUT taking focus (debugger stops, breakpoint list).
+     */
+    public void revealLine(int line0) {
+        if (line0 < 0 || line0 >= codeArea.getParagraphs().size()) return;
+        folding.unfoldContaining(line0);
+        codeArea.moveTo(line0, 0);
+        codeArea.requestFollowCaret();
+    }
+
     /* ----- key + mouse helpers ----- */
 
     private void handleKey(KeyEvent e) {
-        if (completion.isMenuShowing()) {
+        // The Ctrl+. popup doesn't take focus from the code area, so ESC / ENTER land here (same as
+        // the completion menu below).
+        if (commands.isQuickFixPopupShowing()) {
             if (e.getCode() == KeyCode.ESCAPE) {
-                completion.hideMenu();
+                commands.hideQuickFixPopup();
                 e.consume();
                 return;
             }
-            if (e.getCode() == KeyCode.ENTER || e.getCode() == KeyCode.TAB) {
-                if (completion.fireFocusedItem()) {
-                    e.consume();
-                    return;
-                }
+            if (e.getCode() == KeyCode.ENTER && commands.fireFocusedQuickFix()) {
+                e.consume();
+                return;
             }
+        }
+        if (e.getCode() == KeyCode.PERIOD && e.isShortcutDown() && !e.isAltDown()) {
+            completion.cancel();
+            commands.showQuickFixAtCaret();
+            e.consume();
+            return;
+        }
+        if (completion.isMenuShowing()) {
+            if (e.getCode() == KeyCode.ESCAPE) {
+                completion.cancel();
+                e.consume();
+                return;
+            }
+            // Accepts only an item that still matches the word; otherwise ENTER / TAB act as usual.
+            if ((e.getCode() == KeyCode.ENTER || e.getCode() == KeyCode.TAB) && completion.acceptSelected()) {
+                e.consume();
+                return;
+            }
+        } else if (e.getCode() == KeyCode.ESCAPE) {
+            // No menu yet, but a completion may be scheduled or in flight: ESC cancels it. Not
+            // consumed, so ESC still reaches anything else that handles it.
+            completion.cancel();
         }
         if (e.getCode() == KeyCode.TAB && completion.hasActiveSnippet()) {
             if (completion.advanceSnippet()) {
@@ -592,7 +676,7 @@ public class EditorTab extends Tab {
             return;
         }
         if (e.getCode() == KeyCode.SPACE && e.isControlDown()) {
-            completion.requestCompletionNow();
+            completion.invoke();
             e.consume();
             return;
         }

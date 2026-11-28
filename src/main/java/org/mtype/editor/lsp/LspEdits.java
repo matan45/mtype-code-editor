@@ -14,8 +14,6 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
@@ -30,32 +28,28 @@ public final class LspEdits {
      * Apply a list of edits to a single area. Edits must not overlap. Edit ranges are in SOURCE
      * coordinates (no inlay hints); they are mapped to the area's display offsets before applying so
      * that embedded inlay-hint segments are preserved (or correctly removed when their code is replaced).
+     *
+     * <p>Edits are first shrunk to the spans that really change ({@link SourceEdits#minimize}): the mType
+     * formatter answers with one whole-document edit, and replacing the whole area would reset every
+     * paragraph style (folds, code-lens padding, execution line) even when nothing changed. The caret is
+     * mapped through the applied edits so it stays on the same code ({@code replaceText} itself always
+     * moves it to the end of the inserted text).
+     *
+     * @return the number of (minimal) edits applied; 0 means the document is unchanged
      */
-    public static void applyToCodeArea(MTypeCodeArea area, List<? extends TextEdit> edits) {
-        if (edits == null || edits.isEmpty()) return;
-        String source = area.getSourceText();
-        List<? extends TextEdit> sorted = new ArrayList<>(edits);
-        // Apply in reverse offset order so earlier positions stay valid
-        sorted.sort(Comparator
-                .comparingInt((TextEdit e) -> e.getRange().getStart().getLine()).reversed()
-                .thenComparing(Comparator.comparingInt((TextEdit e) -> e.getRange().getStart().getCharacter()).reversed()));
-        int caretBefore = area.getCaretPosition();
-        for (TextEdit e : sorted) {
-            int sStart = Positions.offset(source, e.getRange().getStart());
-            int sEnd = Positions.offset(source, e.getRange().getEnd());
-            if (sStart > sEnd) {
-                int t = sStart;
-                sStart = sEnd;
-                sEnd = t;
-            }
-            // Map source offsets to current display offsets each iteration (descending order keeps
-            // earlier positions valid as the document shrinks/grows).
-            int start = area.sourceToDisplay(sStart);
-            int end = area.sourceToDisplay(sEnd);
-            area.replaceText(start, end, e.getNewText() == null ? "" : e.getNewText());
+    public static int applyToCodeArea(MTypeCodeArea area, List<? extends TextEdit> edits) {
+        if (edits == null || edits.isEmpty()) return 0;
+        List<SourceEdits.Edit> minimal = SourceEdits.minimize(area.getSourceText(), edits);
+        if (minimal.isEmpty()) return 0;
+        int sourceCaret = area.displayToSource(area.getCaretPosition());
+        // Descending order: mapping each edit's source offsets to display offsets stays valid because
+        // only text AFTER the current edit has changed so far.
+        for (SourceEdits.Edit e : minimal) {
+            area.replaceText(area.sourceToDisplay(e.start()), area.sourceToDisplay(e.end()), e.text());
         }
-        int finalLen = area.getLength();
-        area.moveTo(Math.min(caretBefore, finalLen));
+        int caret = area.sourceToDisplay(SourceEdits.mapOffset(sourceCaret, minimal));
+        area.moveTo(Math.min(caret, area.getLength()));
+        return minimal.size();
     }
 
     /**
@@ -110,21 +104,6 @@ public final class LspEdits {
     }
 
     private static String applyToString(String text, List<? extends TextEdit> edits) {
-        List<? extends TextEdit> sorted = new ArrayList<>(edits);
-        sorted.sort(Comparator
-                .comparingInt((TextEdit e) -> e.getRange().getStart().getLine()).reversed()
-                .thenComparing(Comparator.comparingInt((TextEdit e) -> e.getRange().getStart().getCharacter()).reversed()));
-        StringBuilder sb = new StringBuilder(text);
-        for (TextEdit e : sorted) {
-            int start = Positions.offset(text, e.getRange().getStart());
-            int end = Positions.offset(text, e.getRange().getEnd());
-            if (start > end) {
-                int t = start;
-                start = end;
-                end = t;
-            }
-            sb.replace(start, end, e.getNewText() == null ? "" : e.getNewText());
-        }
-        return sb.toString();
+        return SourceEdits.apply(text, SourceEdits.minimize(text, edits));
     }
 }

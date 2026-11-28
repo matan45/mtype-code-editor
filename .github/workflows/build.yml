@@ -54,6 +54,9 @@ jobs:
           sips -z 1024 1024 "$src" --out icon.iconset/icon_512x512@2x.png
           iconutil -c icns icon.iconset -o src/main/resources/icons/mtype-logo.icns
 
+      - name: Unit tests
+        run: mvn -B test
+
       - name: Build distribution
         run: mvn -B -Pdist -DskipTests package
 

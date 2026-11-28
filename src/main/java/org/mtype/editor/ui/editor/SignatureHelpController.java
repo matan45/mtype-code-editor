@@ -1,34 +1,41 @@
 package org.mtype.editor.ui.editor;
 
 import javafx.application.Platform;
+import org.eclipse.lsp4j.SignatureHelp;
 import org.mtype.editor.app.AppContext;
 import org.mtype.editor.lsp.LspBridge;
 
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
  * Signature-help popup. Auto-triggers on {@code (} / {@code ,} (and refreshes on backspace while
- * showing), hides on {@code )}, and can be invoked explicitly with Ctrl+Shift+Space. A request serial
- * discards stale responses.
+ * showing), hides on {@code )}, and can be invoked explicitly with Ctrl+Shift+Space. Only the latest
+ * request's response is shown; a newer request, {@code )} or closing the tab cancels the older one.
  */
 final class SignatureHelpController {
     private final MTypeCodeArea codeArea;
     private final Path path;
     private final AppContext ctx;
     private final boolean lspManaged;
+    /** Sends the tab's pending didChange, so the server sees the {@code (} that triggered the request. */
+    private final Runnable flushDidChange;
     private final SignatureHelpPopup popup = new SignatureHelpPopup();
+    private final LatestRequest<SignatureHelp> inFlight = new LatestRequest<>();
 
     private ScheduledFuture<?> pending;
-    private int requestSerial;
+    private boolean disposed;
 
-    SignatureHelpController(MTypeCodeArea codeArea, Path path, AppContext ctx, boolean lspManaged) {
+    SignatureHelpController(MTypeCodeArea codeArea, Path path, AppContext ctx, boolean lspManaged,
+                            Runnable flushDidChange) {
         this.codeArea = codeArea;
         this.path = path;
         this.ctx = ctx;
         this.lspManaged = lspManaged;
+        this.flushDidChange = flushDidChange;
     }
 
     void maybeSignatureHelp(String oldText, String newText) {
@@ -41,6 +48,9 @@ final class SignatureHelpController {
                 return;
             }
             if (c == ')') {
+                // The call is closed: a request scheduled or in flight for it must not show the popup.
+                if (pending != null) pending.cancel(false);
+                inFlight.cancel();
                 popup.hide();
                 return;
             }
@@ -63,13 +73,16 @@ final class SignatureHelpController {
     }
 
     private void requestSignatureHelpNow(String triggerChar) {
-        if (!lspManaged) return;
+        if (!lspManaged || disposed) return;
         LspBridge lsp = ctx.getLspBridge();
         if (lsp == null || !lsp.isReady()) return;
+        // Put the text the user sees on the wire first: the server answers requests in order (MYT-422).
+        flushDidChange.run();
         int[] lc = codeArea.displayToSourceLineChar(codeArea.getCaretPosition());
-        final int request = ++requestSerial;
-        lsp.signatureHelp(path, lc[0], lc[1], triggerChar).thenAcceptAsync(help -> {
-            if (request != requestSerial) return;
+        CompletableFuture<SignatureHelp> request = lsp.signatureHelp(path, lc[0], lc[1], triggerChar);
+        long token = inFlight.begin(request);
+        request.thenAcceptAsync(help -> {
+            if (!inFlight.isCurrent(token)) return;
             if (help == null || help.getSignatures() == null || help.getSignatures().isEmpty()) {
                 popup.hide();
                 return;
@@ -82,7 +95,9 @@ final class SignatureHelpController {
     }
 
     void dispose() {
+        disposed = true;
         if (pending != null) pending.cancel(false);
+        inFlight.cancel();
         popup.hide();
     }
 }

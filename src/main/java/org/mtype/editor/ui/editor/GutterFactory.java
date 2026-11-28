@@ -42,6 +42,9 @@ final class GutterFactory {
     }
 
     Node paragraphGraphic(int paragraphIndex) {
+        // Folded (hidden) rows are laid out at zero height without clipping, so any graphic would
+        // overlap the neighbouring line numbers: hidden rows get no gutter at all.
+        if (folding.isHidden(paragraphIndex)) return null;
         Node lineNumber = lineNumber(paragraphIndex);
         String lensTitle = codeLens.lensTitleAt(paragraphIndex);
         if (lensTitle == null) return lineNumber;
@@ -69,6 +72,8 @@ final class GutterFactory {
     private Node lineNumber(int paragraphIndex) {
         Label label = new Label(Integer.toString(paragraphIndex + 1));
         label.getStyleClass().add("lineno");
+        // Folding is visual-only, so the folded look lives in the gutter (not on the header text).
+        if (folding.isFoldedAt(paragraphIndex)) label.getStyleClass().add("mt-lineno-folded");
 
         Region breakpoint = new Region();
         breakpoint.getStyleClass().add("mt-gutter-breakpoint");
@@ -109,6 +114,7 @@ final class GutterFactory {
         boolean folded = folding.isFoldedAt(paragraphIndex);
         Label arrow = new Label(folded ? "▶" : "▼");
         arrow.getStyleClass().add("mt-gutter-fold-arrow");
+        if (folded) arrow.getStyleClass().add("mt-gutter-fold-arrow-folded");
         arrow.setOnMouseClicked(e -> {
             if (e.getButton() == MouseButton.PRIMARY) {
                 folding.toggleFoldAt(paragraphIndex);

@@ -1,7 +1,9 @@
 package org.mtype.editor.ui.dialogs;
 
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.stage.Window;
+import javafx.util.Duration;
 import org.eclipse.lsp4j.Location;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.SymbolKind;
@@ -9,14 +11,22 @@ import org.eclipse.lsp4j.WorkspaceSymbol;
 import org.eclipse.lsp4j.WorkspaceSymbolLocation;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.mtype.editor.app.AppContext;
+import org.mtype.editor.lsp.LspBridge;
+import org.mtype.editor.lsp.WorkspaceSymbols;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Ctrl+T "Go to Symbol in Workspace" (MYT-447). The dialog opens at once and lists the server's
+ * empty-query result (every symbol, capped); typing re-queries the server after a short pause so
+ * symbols past the cap are reachable, while the dialog's own filter narrows the list instantly.
+ */
 public final class WorkspaceSymbolPicker {
+
+    private static final Duration REQUERY_DELAY = Duration.millis(150);
 
     private WorkspaceSymbolPicker() {}
 
@@ -26,24 +36,84 @@ public final class WorkspaceSymbolPicker {
             ctx.getStatusBar().setMessage("LSP not ready");
             return;
         }
-        ctx.getStatusBar().setMessage("Loading workspace symbols...");
-        lsp.workspaceSymbol("").thenAcceptAsync(symbols -> {
-            ctx.getStatusBar().setMessage("");
-            List<WorkspaceSymbol> items = symbols == null ? Collections.emptyList() : symbols;
-            if (items.isEmpty()) {
-                ctx.getStatusBar().setMessage("No workspace symbols");
+        QuickPickDialog<WorkspaceSymbol> dlg = new QuickPickDialog<>(
+                owner,
+                "Workspace Symbols",
+                List.of(),
+                WorkspaceSymbolPicker::labelOf,
+                WorkspaceSymbolPicker::descriptionOf,
+                WorkspaceSymbolPicker::groupOf);
+        dlg.setPlaceholder("Loading workspace symbols…");
+        Search search = new Search(lsp, dlg);
+        dlg.setOnQueryChanged(search::queryChanged);
+        search.start();
+        Optional<WorkspaceSymbol> chosen = dlg.showAndWait();
+        search.close();
+        chosen.ifPresent(si -> openSymbol(ctx, si));
+    }
+
+    /**
+     * One picker session: the {@code ""} base list plus debounced re-queries. A generation counter
+     * drops responses for text the user has since changed (the FindInFilesWindow idiom), and
+     * nothing touches the dialog once it has closed. Runs on the FX thread.
+     */
+    private static final class Search {
+        private final LspBridge lsp;
+        private final QuickPickDialog<WorkspaceSymbol> dlg;
+        private final PauseTransition debounce = new PauseTransition(REQUERY_DELAY);
+        private List<WorkspaceSymbol> base = List.of();
+        private List<WorkspaceSymbol> latest = List.of();
+        private String query = "";
+        private long generation;
+        private boolean closed;
+
+        Search(LspBridge lsp, QuickPickDialog<WorkspaceSymbol> dlg) {
+            this.lsp = lsp;
+            this.dlg = dlg;
+            debounce.setOnFinished(_ -> requery());
+        }
+
+        void start() {
+            lsp.workspaceSymbol("").thenAcceptAsync(symbols -> {
+                if (closed) return;
+                base = symbols;
+                show();
+            }, Platform::runLater);
+        }
+
+        void queryChanged(String text) {
+            query = text == null ? "" : text.trim();
+            if (query.isEmpty()) {
+                debounce.stop();
+                ++generation; // any in-flight result is for text that is gone
+                latest = List.of();
+                show();
                 return;
             }
-            QuickPickDialog<WorkspaceSymbol> dlg = new QuickPickDialog<>(
-                    owner,
-                    "Workspace Symbols",
-                    items,
-                    WorkspaceSymbolPicker::labelOf,
-                    WorkspaceSymbolPicker::descriptionOf,
-                    WorkspaceSymbolPicker::groupOf);
-            Optional<WorkspaceSymbol> chosen = dlg.showAndWait();
-            chosen.ifPresent(si -> openSymbol(ctx, si));
-        }, Platform::runLater);
+            debounce.playFromStart();
+        }
+
+        void close() {
+            closed = true;
+            ++generation;
+            debounce.stop();
+        }
+
+        private void requery() {
+            final long myGen = ++generation;
+            lsp.workspaceSymbol(query).thenAcceptAsync(symbols -> {
+                if (closed || myGen != generation) return; // superseded, or dialog gone
+                latest = symbols;
+                show();
+            }, Platform::runLater);
+        }
+
+        private void show() {
+            dlg.setItems(WorkspaceSymbols.merge(latest, base));
+            dlg.setPlaceholder(base.isEmpty() && latest.isEmpty()
+                    ? "No workspace symbols"
+                    : "No matching symbols");
+        }
     }
 
     private static void openSymbol(AppContext ctx, WorkspaceSymbol si) {

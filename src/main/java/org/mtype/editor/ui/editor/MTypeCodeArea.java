@@ -7,13 +7,18 @@ import org.eclipse.lsp4j.InlayHintKind;
 import org.fxmisc.richtext.GenericStyledArea;
 import org.fxmisc.richtext.StyledTextArea;
 import org.fxmisc.richtext.model.NodeSegmentOpsBase;
+import org.fxmisc.richtext.model.ReadOnlyStyledDocument;
 import org.fxmisc.richtext.model.SegmentOps;
 import org.fxmisc.richtext.model.StyledSegment;
 import org.fxmisc.richtext.model.TextOps;
+import org.fxmisc.richtext.model.TwoDimensional;
+import org.fxmisc.richtext.util.UndoUtils;
 import org.reactfx.util.Either;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -34,6 +39,13 @@ public final class MTypeCodeArea
     /** Unicode OBJECT REPLACEMENT CHARACTER — what an inlay-hint segment contributes to the text. */
     static final char HINT_CHAR = '￼';
 
+    /**
+     * Paragraph style class of a folded (hidden) line. RichTextFX's bundled stylesheet hides it
+     * ({@code .styled-text-area .collapse { visibility: collapse; }}) and its paragraph box then has zero
+     * height; the text itself is untouched.
+     */
+    static final String COLLAPSE = "collapse";
+
     private static final TextOps<Either<String, InlayHintSeg>, Collection<String>> SEGMENT_OPS = buildSegmentOps();
 
     MTypeCodeArea() {
@@ -44,6 +56,10 @@ public final class MTypeCodeArea
                 MTypeCodeArea::createNode);
         getStyleClass().add("code-area");
         setUseInitialStyleForInsertion(true);
+        // Plain-text undo, like CodeArea. The default for this constructor (preserveStyle=true) is the
+        // rich-text undo manager, which records every style-only change — token highlighting, code-lens
+        // padding, folds — as an undo step, so Ctrl+Z would replay highlighting and unfold code.
+        setUndoManager(UndoUtils.plainTextUndoManager(this));
     }
 
     private static TextOps<Either<String, InlayHintSeg>, Collection<String>> buildSegmentOps() {
@@ -109,6 +125,35 @@ public final class MTypeCodeArea
         return Math.min(d, t.length());
     }
 
+    /**
+     * Like {@link #sourceToDisplay} but landing BEFORE any hint at that gap. Use it for the end of a
+     * replaced range (and for inserts at a line start), so a hint at the boundary isn't swallowed by the
+     * edit — undo would put it back as a literal {@code ￼}.
+     */
+    public int sourceToDisplayBefore(int sourceOffset) {
+        String t = getText();
+        int d = sourceToDisplay(sourceOffset);
+        while (d > 0 && t.charAt(d - 1) == HINT_CHAR) d--;
+        return d;
+    }
+
+    /** Paragraph {@code p} without hint characters, i.e. line {@code p} of {@link #getSourceText()}. */
+    public String sourceParagraphText(int p) {
+        String t = getParagraph(p).getText();
+        return t.indexOf(HINT_CHAR) < 0 ? t : t.replace(String.valueOf(HINT_CHAR), "");
+    }
+
+    /** SOURCE column of display column {@code displayColumn} in paragraph {@code p}. */
+    public int displayToSourceColumn(int p, int displayColumn) {
+        String t = getParagraph(p).getText();
+        int lim = Math.max(0, Math.min(displayColumn, t.length()));
+        int hints = 0;
+        for (int i = 0; i < lim; i++) {
+            if (t.charAt(i) == HINT_CHAR) hints++;
+        }
+        return lim - hints;
+    }
+
     /** (line, character) in the SOURCE document for a display offset (lines are identical; only column differs). */
     public int[] displayToSourceLineChar(int displayOffset) {
         int src = displayToSource(displayOffset);
@@ -136,6 +181,70 @@ public final class MTypeCodeArea
         if (lineEnd < 0) lineEnd = s.length();
         int srcOffset = Math.min(i + Math.max(0, character), lineEnd);
         return sourceToDisplay(srcOffset);
+    }
+
+    // ---- folding & paragraph style classes -------------------------------------------------------
+
+    /** Whether paragraph {@code p} is hidden by a fold (false when out of range). */
+    boolean isParagraphFolded(int p) {
+        return p >= 0 && p < getParagraphs().size() && getParagraph(p).getParagraphStyle().contains(COLLAPSE);
+    }
+
+    /**
+     * Hide paragraphs {@code header+1 .. lastHidden}; {@code header} stays visible. Only paragraph styles
+     * change (the replace RichTextFX does internally is text-identical), but the caret is moved to the
+     * header — callers restore it.
+     */
+    void foldLines(int header, int lastHidden) {
+        foldParagraphs(header, lastHidden, ps -> withClass(ps, COLLAPSE));
+    }
+
+    /** Un-hide the run of folded paragraphs directly below {@code header}. Moves the caret — callers restore it. */
+    void unfoldRunAfter(int header) {
+        unfoldParagraphs(header, ps -> ps.contains(COLLAPSE), ps -> withoutClass(ps, COLLAPSE));
+    }
+
+    /**
+     * Add and/or remove one style class on paragraph {@code p}, keeping its other classes. Paragraph style
+     * classes are shared state (folds, code-lens padding, the execution line): never replace the whole
+     * collection. Out-of-range paragraphs are ignored.
+     */
+    void updateParagraphClasses(int p, String add, String remove) {
+        if (p < 0 || p >= getParagraphs().size()) return;
+        Collection<String> current = getParagraph(p).getParagraphStyle();
+        Collection<String> next = current;
+        if (remove != null) next = withoutClass(next, remove);
+        if (add != null) next = withClass(next, add);
+        if (next != current) setParagraphStyle(p, next);
+    }
+
+    /**
+     * Insert an inlay-hint segment at display {@code offset}. The segment carries the paragraph's own
+     * style: inserted text normally gets the INITIAL (empty) paragraph style, which would un-hide a folded
+     * line when the hint lands in column 0.
+     */
+    void insertHint(int offset, InlayHintSeg seg) {
+        int paragraph = offsetToPosition(offset, TwoDimensional.Bias.Forward).getMajor();
+        replace(offset, offset, ReadOnlyStyledDocument.fromSegment(
+                Either.right(seg),
+                getParagraph(paragraph).getParagraphStyle(),
+                Collections.emptyList(),
+                SEGMENT_OPS));
+    }
+
+    /** {@code ps} plus {@code c}, copied (paragraph styles can be immutable, e.g. the initial empty list). */
+    private static Collection<String> withClass(Collection<String> ps, String c) {
+        if (ps.contains(c)) return ps;
+        List<String> copy = new ArrayList<>(ps);
+        copy.add(c);
+        return copy;
+    }
+
+    private static Collection<String> withoutClass(Collection<String> ps, String c) {
+        if (!ps.contains(c)) return ps;
+        List<String> copy = new ArrayList<>(ps);
+        copy.removeIf(c::equals);
+        return copy;
     }
 
     /** SegmentOps for the embedded inlay-hint segments: one character, never merges, renders as {@code ￼}. */
